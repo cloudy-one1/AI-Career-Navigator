@@ -1,0 +1,183 @@
+"""
+诊断维度动态权重 v2.6
+根据 JD 分析四个诊断维度的相对重要性，输出加权配置。
+
+设计约束（CODEBUDDY.md）：
+- 诊断四维度本身不可变，此模块只调整四维度的**权重**，不新增/删除维度。
+- 权重和恒为 1.0，缺省退化为等权（0.25 x 4），保证行为向后兼容。
+"""
+
+import asyncio
+import json
+import logging
+
+logger = logging.getLogger(__name__)
+
+DIM_KEYS = [
+    "star_completeness",
+    "quantification",
+    "logic_coherence",
+    "job_relevance",
+]
+
+DIM_NAMES = {
+    "star_completeness": "STAR 完整度",
+    "quantification": "量化程度",
+    "logic_coherence": "逻辑连贯性",
+    "job_relevance": "岗位相关性",
+}
+
+# 等权基线：无 JD 或分析失败时使用
+DEFAULT_WEIGHTS = {k: 0.25 for k in DIM_KEYS}
+
+# 单维权重的合理区间，防止 LLM 输出极端值把某一维度压到无效
+MIN_WEIGHT = 0.10
+MAX_WEIGHT = 0.45
+
+WEIGHT_SYSTEM_PROMPT = """你是一位面试评估体系设计专家。
+你的任务是根据岗位描述（JD），判断在评估该岗位候选人的面试回答时，
+以下四个诊断维度各自应占多大权重。
+
+四个维度的含义：
+1. star_completeness（STAR 完整度）：回答是否具备情境-任务-行动-结果的完整结构
+2. quantification（量化程度）：是否用具体数据、指标佐证成果
+3. logic_coherence（逻辑连贯性）：因果链条是否清晰、表达是否有条理
+4. job_relevance（岗位相关性）：回答是否紧扣该岗位的核心能力要求
+
+权重判断参考：
+- 偏数据/算法/增长类岗位 → 量化程度更重要
+- 偏架构/研发/技术攻坚岗位 → 逻辑连贯性更重要
+- 偏管理/项目/咨询/售前岗位 → STAR 完整度更重要
+- 岗位技能要求写得非常具体、门槛明确 → 岗位相关性更重要
+
+输出严格 JSON，四个权重之和必须等于 1.0，每个权重在 0.10 到 0.45 之间：
+{
+  "weights": {
+    "star_completeness": 0.25,
+    "quantification": 0.25,
+    "logic_coherence": 0.25,
+    "job_relevance": 0.25
+  },
+  "reason": "一句话说明为什么这样分配（不超过 60 字）"
+}"""
+
+WEIGHT_USER_PROMPT = """请为以下岗位设计四个诊断维度的权重：
+
+【岗位描述】
+{jd}
+
+请输出 JSON。"""
+
+
+def normalize_weights(raw: dict | None) -> dict:
+    """
+    将任意权重字典规整为合法权重：
+    - 补齐缺失维度
+    - 非数值/负数视为无效
+    - 裁剪到 [MIN_WEIGHT, MAX_WEIGHT]
+    - 归一化到和为 1.0
+    """
+    if not isinstance(raw, dict):
+        return dict(DEFAULT_WEIGHTS)
+
+    cleaned = {}
+    for k in DIM_KEYS:
+        v = raw.get(k)
+        try:
+            v = float(v)
+        except (TypeError, ValueError):
+            v = DEFAULT_WEIGHTS[k]
+        if v <= 0:
+            v = DEFAULT_WEIGHTS[k]
+        cleaned[k] = min(max(v, MIN_WEIGHT), MAX_WEIGHT)
+
+    total = sum(cleaned.values())
+    if total <= 0:
+        return dict(DEFAULT_WEIGHTS)
+
+    return {k: round(v / total, 4) for k, v in cleaned.items()}
+
+
+def weighted_score(dimensions: dict, weights: dict | None) -> float:
+    """
+    按权重计算总分。dimensions 为 {维度: 分数}。
+    只对实际存在且有效（>0）的维度加权，避免解析失败的 0 分拉低结果。
+    """
+    if not dimensions:
+        return 0.0
+
+    w = weights if weights else DEFAULT_WEIGHTS
+    total_w = 0.0
+    acc = 0.0
+    for k, score in dimensions.items():
+        try:
+            s = float(score)
+        except (TypeError, ValueError):
+            continue
+        if s <= 0:
+            continue
+        wk = float(w.get(k, DEFAULT_WEIGHTS.get(k, 0.25)))
+        acc += s * wk
+        total_w += wk
+
+    if total_w <= 0:
+        return 0.0
+    return round(acc / total_w, 2)
+
+
+def describe_weights(weights: dict) -> str:
+    """生成人类可读的权重说明，用于注入 Prompt 与前端展示。"""
+    parts = [f"{DIM_NAMES[k]} {weights.get(k, 0.25) * 100:.0f}%" for k in DIM_KEYS]
+    return " / ".join(parts)
+
+
+def top_dimension(weights: dict) -> str:
+    """返回权重最高的维度 key。"""
+    if not weights:
+        return "job_relevance"
+    return max(DIM_KEYS, key=lambda k: weights.get(k, 0))
+
+
+async def analyze_jd_weights(llm_client, jd_text: str) -> dict:
+    """
+    分析 JD 得出四维度权重。
+    返回 {"weights": {...}, "reason": str, "source": "llm"|"default"}
+    任何异常都退化为等权，不阻断面试流程。
+    """
+    # 中文 JD 信息密度高，8 字即可判断岗位方向（如"数据分析岗，要求量化"）
+    if not jd_text or len(jd_text.strip()) < 8:
+        return {
+            "weights": dict(DEFAULT_WEIGHTS),
+            "reason": "未提供有效岗位描述，采用四维等权评估",
+            "source": "default",
+        }
+
+    try:
+        raw = await asyncio.to_thread(
+            llm_client.chat_json,
+            WEIGHT_SYSTEM_PROMPT,
+            WEIGHT_USER_PROMPT.format(jd=jd_text[:2000]),
+            0.2,
+            600,
+        )
+    except Exception as e:
+        logger.warning(f"JD 权重分析调用失败，退化等权: {e}")
+        return {
+            "weights": dict(DEFAULT_WEIGHTS),
+            "reason": "权重分析失败，采用四维等权评估",
+            "source": "default",
+        }
+
+    if not isinstance(raw, dict) or raw.get("error"):
+        logger.warning(f"JD 权重分析返回异常，退化等权: {str(raw)[:200]}")
+        return {
+            "weights": dict(DEFAULT_WEIGHTS),
+            "reason": "权重分析结果无效，采用四维等权评估",
+            "source": "default",
+        }
+
+    weights = normalize_weights(raw.get("weights"))
+    reason = str(raw.get("reason", "")).strip() or "根据岗位描述动态分配"
+
+    logger.info(f"JD 动态权重: {describe_weights(weights)} | {reason}")
+    return {"weights": weights, "reason": reason, "source": "llm"}

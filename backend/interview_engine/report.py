@@ -1,0 +1,202 @@
+"""
+面试报告生成模块 v2.6
+从诊断数据中提取四维度趋势、强项弱项、提升建议。
+
+v2.6 变更：
+  - 总分改为按 JD 动态权重加权，与面试过程中的评分口径一致
+  - 强弱项判定引入权重（加权失分），高权重维度失分优先被点名
+  - 报告输出携带权重明细，供前端展示"这个岗位更看重什么"
+"""
+
+import logging
+
+from ..dimension_weights import (
+    DEFAULT_WEIGHTS,
+    DIM_KEYS,
+    DIM_NAMES,
+    describe_weights,
+    weighted_score,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def build_report(session) -> dict:
+    """
+    生成综合面试报告。
+    参数 session 需包含: session_id, mode, style, interviewer_history,
+                     rounds, all_diagnoses, dim_weights
+    """
+    weights = getattr(session, "dim_weights", None) or dict(DEFAULT_WEIGHTS)
+
+    all_scores = []
+    dimension_trends = {k: {"scores": [], "rounds": []} for k in DIM_KEYS}
+
+    round_summaries = {}
+    for d in session.all_diagnoses:
+        r = d.get("round", 0)
+        dims = d.get("dimensions", {}) or {}
+        if not dims:
+            continue
+
+        # v2.6: 优先复用诊断时已算好的加权分，缺失时按当前权重补算
+        score = d.get("overall_score")
+        if not score or score <= 0:
+            score = weighted_score(dims, weights)
+        if score <= 0:
+            continue
+
+        all_scores.append(score)
+        if r not in round_summaries:
+            round_summaries[r] = {"scores": [], "count": 0}
+        round_summaries[r]["scores"].append(score)
+        round_summaries[r]["count"] += 1
+
+        for k in dimension_trends:
+            if k in dims and dims[k]:
+                dimension_trends[k]["scores"].append(dims[k])
+                dimension_trends[k]["rounds"].append(r)
+
+    # 轮次汇总
+    rounds = []
+    for r_idx in sorted(round_summaries.keys()):
+        s = round_summaries[r_idx]
+        r_data = session.rounds[r_idx] if r_idx < len(session.rounds) else {}
+        rounds.append({
+            "round_index": r_idx,
+            "round_name": r_data.get("name", f"第{r_idx + 1}轮"),
+            "questions_count": r_data.get("question_count", 0),
+            "answers_count": s["count"],
+            "avg_score": round(sum(s["scores"]) / len(s["scores"]), 2) if s["scores"] else 0,
+        })
+
+    overall_avg = round(sum(all_scores) / len(all_scores), 2) if all_scores else 0
+
+    # 四维度均分（未加权，用于展示各维度真实水平）
+    dim_avgs = {}
+    for k, v in dimension_trends.items():
+        if v["scores"]:
+            dim_avgs[k] = round(sum(v["scores"]) / len(v["scores"]), 2)
+
+    strengths, weaknesses = analyze_trends(dimension_trends, weights)
+    suggestions = generate_suggestions(strengths, weaknesses, overall_avg, weights, dim_avgs)
+
+    # 四维度趋势
+    trends = []
+    for k, v in dimension_trends.items():
+        if v["scores"]:
+            trends.append({
+                "dimension": k,
+                "dimension_name": DIM_NAMES.get(k, k),
+                "weight": weights.get(k, 0.25),
+                "scores": v["scores"],
+                "rounds": v["rounds"],
+            })
+
+    return {
+        "session_id": session.session_id,
+        "mode": getattr(session, "mode", "simulation"),
+        "interviewer_style": getattr(session, "style", "friendly"),
+        "interviewer_history": getattr(session, "interviewer_history", []),
+        "total_rounds": len(rounds),
+        "rounds": rounds,
+        "overall_avg": overall_avg,
+        "scoring": {
+            "weighted": True,
+            "weights": dict(weights),
+            "weight_names": {k: DIM_NAMES[k] for k in DIM_KEYS},
+            "weight_desc": describe_weights(weights),
+            "weight_reason": getattr(session, "weight_reason", ""),
+            "weight_source": getattr(session, "weight_source", "default"),
+        },
+        "dimension_averages": dim_avgs,
+        "dimension_trends": trends,
+        "strengths": strengths,
+        "weaknesses": weaknesses,
+        "suggestions": suggestions,
+    }
+
+
+def analyze_trends(dimension_trends: dict, weights: dict | None = None) -> tuple[list[str], list[str]]:
+    """
+    分析维度趋势，找出强项弱项。
+    v2.6: 弱项按"加权失分"排序 —— 同样是 2.8 分，岗位更看重的维度会被优先点名。
+    """
+    w = weights or DEFAULT_WEIGHTS
+    strengths, weaknesses = [], []
+    dim_avgs = {}
+
+    for k, v in dimension_trends.items():
+        if v["scores"]:
+            dim_avgs[k] = sum(v["scores"]) / len(v["scores"])
+
+    if not dim_avgs:
+        return strengths, weaknesses
+
+    avg_of_avgs = sum(dim_avgs.values()) / len(dim_avgs)
+
+    weak_items = []
+    strong_items = []
+    for k, avg in dim_avgs.items():
+        name = DIM_NAMES.get(k, k)
+        wk = w.get(k, 0.25)
+        label = f"{name}（平均 {avg:.1f} 分，权重 {wk * 100:.0f}%）"
+        if avg >= avg_of_avgs + 0.3:
+            strong_items.append((avg * wk, label))
+        elif avg <= avg_of_avgs - 0.3:
+            weak_items.append(((5.0 - avg) * wk, label))
+
+    strengths = [label for _, label in sorted(strong_items, key=lambda x: -x[0])]
+    weaknesses = [label for _, label in sorted(weak_items, key=lambda x: -x[0])]
+
+    return strengths, weaknesses
+
+
+def generate_suggestions(strengths: list[str], weaknesses: list[str],
+                         overall_avg: float, weights: dict | None = None,
+                         dim_avgs: dict | None = None) -> str:
+    """生成提升建议（v2.6: 结合岗位权重给出优先级）"""
+    w = weights or DEFAULT_WEIGHTS
+    parts = []
+
+    if overall_avg < 2.5:
+        parts.append("整体偏弱，建议先夯实基础知识，再练习面试表达。")
+    elif overall_avg < 3.5:
+        parts.append("整体及格水平，有提升空间。")
+    else:
+        parts.append("整体表现良好，继续保持。")
+
+    parts.append(f"本岗位评分权重：{describe_weights(w)}（总分按此加权计算）。")
+
+    if weaknesses:
+        parts.append("需要重点关注（按对本岗位的影响排序）：" + "；".join(weaknesses))
+    if strengths:
+        parts.append("你的优势：" + "；".join(strengths))
+
+    # 针对权重最高维度给出定向建议
+    if dim_avgs:
+        top_key = max(DIM_KEYS, key=lambda k: w.get(k, 0.25))
+        top_score = dim_avgs.get(top_key)
+        if top_score is not None and top_score < 3.5:
+            parts.append(
+                f"优先级最高：本岗位最看重「{DIM_NAMES[top_key]}」"
+                f"（权重 {w.get(top_key, 0.25) * 100:.0f}%），而你在该维度仅 {top_score:.1f} 分，"
+                f"{_dimension_advice(top_key)}"
+            )
+
+    parts.append(
+        "通用建议：多使用 STAR 方法组织回答（情境-任务-行动-结果），"
+        "每次回答尽量给出具体数字和量化指标。"
+    )
+
+    return "\n\n".join(parts)
+
+
+def _dimension_advice(key: str) -> str:
+    """针对单个维度的具体改进动作。"""
+    return {
+        "star_completeness": "建议每段经历都先交代背景与目标，最后必须收在可验证的结果上。",
+        "quantification": "建议提前整理每个项目的关键数字（提升比例、耗时、规模、成本），回答时主动带出。",
+        "logic_coherence": "建议采用'结论先行 + 分点论证'的结构，并说明方案取舍的原因。",
+        "job_relevance": "建议逐条对照 JD 要求，为每项核心能力准备一段对应的亲身经历。",
+    }.get(key, "建议围绕该维度做专项练习。")

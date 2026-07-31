@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>项目文档预览</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, "Segoe UI", "Microsoft YaHei", sans-serif;
+         background: #f6f8fa; color: #24292f; }
+  .layout { display: flex; min-height: 100vh; }
+  nav { width: 260px; flex: 0 0 260px; background: #fff; border-right: 1px solid #d0d7de;
+        padding: 20px 14px; position: sticky; top: 0; height: 100vh; overflow-y: auto; }
+  nav h2 { font-size: 14px; color: #57606a; margin: 0 0 10px; }
+  nav ul { list-style: none; margin: 0; padding: 0; }
+  nav li { margin: 2px 0; }
+  nav a { color: #0969da; text-decoration: none; font-size: 14px; display: block;
+          padding: 4px 8px; border-radius: 6px; }
+  nav a:hover { background: #eef1f4; }
+  main { flex: 1; padding: 32px 48px; overflow-x: auto; }
+  .content { max-width: 860px; margin: 0 auto; background: #fff; padding: 32px 40px;
+             border: 1px solid #d0d7de; border-radius: 8px; }
+  .file-title { border-bottom: 2px solid #d0d7de; padding-bottom: 8px; color: #cf222e; }
+  h1, h2, h3 { line-height: 1.3; }
+  h2 { border-bottom: 1px solid #eaecef; padding-bottom: 6px; margin-top: 28px; }
+  code { background: #eff1f3; padding: 2px 6px; border-radius: 4px; font-size: 90%;
+         font-family: "SFMono-Regular", Consolas, monospace; }
+  pre { background: #f6f8fa; padding: 14px 16px; border-radius: 8px; overflow-x: auto;
+        border: 1px solid #eaecef; }
+  pre code { background: none; padding: 0; }
+  blockquote { margin: 12px 0; padding: 8px 16px; border-left: 4px solid #d0d7de;
+               color: #57606a; background: #f6f8fa; }
+  a { color: #0969da; }
+  hr { border: none; border-top: 1px solid #d0d7de; margin: 24px 0; }
+  table { border-collapse: collapse; }
+  th, td { border: 1px solid #d0d7de; padding: 6px 10px; }
+</style>
+</head>
+<body>
+<div class="layout">
+  <nav>
+    <h2>文档导航</h2>
+    <ul><li><a href="#sec_项目前备知识_决策过程记录_md">项目前备知识_决策过程记录.md</a></li>
+<li><a href="#sec_AI面试官_核心框架_md">AI面试官_核心框架.md</a></li>
+<li><a href="#sec_CODEBUDDY_md">CODEBUDDY.md</a></li>
+<li><a href="#sec_PROJECT_CHARTER_md">PROJECT_CHARTER.md</a></li>
+<li><a href="#sec_PROJECT_GUIDE_md">PROJECT_GUIDE.md</a></li></ul>
+  </nav>
+  <main>
+    <div class="content"><section id="sec_项目前备知识_决策过程记录_md"><h1 class="file-title">项目前备知识_决策过程记录.md</h1><h1>AI模拟面试官项目 —— 前备知识与决策过程记录</h1>
+<blockquote><p>本文档整理了项目选题到框架确定的完整决策链路，供开发时理解&quot;为什么这么设计&quot;，也作为AI协作过程材料的依据之一。</p></blockquote>
+<hr>
+<h2>一、项目背景</h2>
+<p>本项目属于重庆大学大数据与软件学院《AI4SE实训一》课程作业。课程核心考核逻辑是&quot;不考手工编码速度，考与AI协同的深度与质量&quot;，AI交互日志是重要评分依据。项目案例分三档难度：基础级(0.9)、标准级(1.0)、挑战级(1.1)，最终成绩会乘以难度系数。</p>
+<p>评分构成：知识补强(10) + 平时表现(15) + 作业练习(15) + 项目验收答辩(60，其中AI协作占20分：批判性思维10+协作过程10) × 难度系数。</p>
+<hr>
+<h2>二、选题决策全过程</h2>
+<h3>2.1 初始方向探索</h3>
+<p>最先考虑的是挑战级(1.1)清单中的5个项目：多模态中草药识别、漫画多语言翻译、有声读物生成、独居老人安全检测与陪护、Roguelike游戏。经过对比，&quot;个性化有声读物智能生成&quot;因为是纯API编排型项目（情感分析→TTS→背景音乐匹配），工作量可控但演示效果花哨，一度被作为首选推荐。</p>
+<h3>2.2 转向&quot;AI模拟面试官&quot;</h3>
+<p>用户提出有声读物&quot;没有实际使用价值&quot;，转向标准级(1.0)的&quot;AI模拟面试官&quot;。经对比分析：</p>
+<ul><li>有声读物涉及音频+情感匹配等多模态环节，现场演示时任何违和感（如BGM情绪不匹配）会被评委直接感知，属于&quot;不需要追问就会暴露&quot;的硬伤</li><li>AI模拟面试官核心链路是纯文本对话（简历解析→大模型→文本反馈），没有音频/图像这种直接可感知的输出形式，输出质量即使一般也很难在现场被一耳朵听出问题</li><li>结论：面试官项目的<strong>失败模式更隐蔽</strong>，健壮性更高，即使技术含量本身不算深</li></ul>
+<h3>2.3 已有项目的复用尝试与否决</h3>
+<p>用户提出已完成一个&quot;招聘数据分析与可视化系统&quot;项目（job-crawler），技术深度远超基础级(0.9)要求，包含Playwright爬虫、KMeans聚类、双Agent简历审查（Critic诊断+Optimizer重写）、LLM双模型fallback、250个测试用例、Docker部署、CSRF/限流等安全加固。</p>
+<p><strong>该项目最终被否决直接复用，原因有二（均为硬性风险，非技术问题）：</strong></p>
+<ol><li><strong>该项目已交过其他课程作业</strong> —— 若原样复用于本次实训，构成学术诚信风险（同一成果重复提交），一旦查重会被认定为不端行为，而非单纯&quot;技术水平不够&quot;</li><li><strong>开发过程中与AI的对话记录已清空</strong> —— 无法举证评分表要求的&quot;AI协作过程&quot;20分，且事后无法安全补救（伪造记录风险更高）</li></ol>
+<p><strong>结论：不能直接复用代码或数据，但可以复用架构设计经验</strong>（如双Agent职责分离、LLM调用fallback机制的设计思路），因为设计思路本身不构成查重风险，代码需要在本次实训期间重新实现。</p>
+<h3>2.4 系数纠结与&quot;以面试官为主体，数据分析为支撑模块&quot;的定位</h3>
+<p>用户一度纠结0.9系数&quot;太吃亏&quot;，考虑过将&quot;招聘数据分析&quot;与&quot;AI模拟面试官&quot;合并为自定义组合选题，但该做法存在规则风险：课程案例清单未提及允许自由组合，系数认定需老师额外判断，存在&quot;两头不讨好&quot;的风险（数据分析不够深、面试官不够专注）。</p>
+<p><strong>最终明确定位：项目本质仍是1.0难度的&quot;AI模拟面试官&quot;，招聘数据分析不是独立并列模块，而是面试官项目内部的一个可选支撑功能</strong>（用于让生成的面试问题有真实岗位数据依据，避免大模型凭空编造技能要求）。系数按1.0计算，无需额外认定。</p>
+<p><strong>由此产生两条硬性约束</strong>：</p>
+<ul><li>若做数据支撑模块，<strong>数据必须重新采集</strong>，不能直接复用job-crawler已有的<code>data.db</code>（同一批数据资产复用同样构成查重风险）</li><li>数据支撑模块深度要克制，只做&quot;岗位关键词→技能要求速查&quot;级别的简单查询接口，不做聚类、热力图、相似度网络等高阶分析功能（那是job-crawler为了单独撑起0.9项目而做的，此处角色不同，不需要重复堆砌）</li></ul>
+<h3>2.5 第一性原理重新审视项目本质</h3>
+<p>对&quot;AI模拟面试官&quot;做第一性原理拆解，得到以下关键结论：</p>
+<ol><li><strong>面试表现差的根本原因分三类</strong>：不知道会被问什么（信息缺失）/ 知道但回答质量差（表达结构化能力缺失）/ 临场心理状态问题。本项目选择主攻第二类。</li></ol>
+<ol><li><strong>&quot;面试官&quot;是一种产品包装，不是必然逻辑</strong>——问问题（需要理解岗位、设计追问路径）和给反馈（需要评估回答质量）是两种不同能力，可以拆解为独立模块而非强行捆绑成一个拟人化角色。</li></ol>
+<ul><li>问题生成——不用大模型也能做到八成（题库+规则库），大模型的增量价值仅在于&quot;针对具体简历/JD个性化&quot;，属于锦上添花，<strong>不值得投入过多精力</strong></li><li>回答质量诊断——大模型不可替代（&quot;逻辑是否清晰&quot;难以规则化判断），<strong>是项目真正的核心价值所在</strong></li></ul><ol><li><strong>大模型必要性检验</strong>：</li></ol>
+<ol><li><strong>最终建议</strong>：资源向&quot;回答质量诊断引擎&quot;倾斜（占开发精力60%以上），问题生成模块做轻做浅，数据支撑模块先做最小实验验证必要性，不默认它是必需的。</li></ol>
+<hr>
+<h2>三、被否决的方案汇总（避免重复踩坑）</h2>
+<p>| 方案 | 否决原因 | |---|---| | 有声读物生成(1.1) | 多模态输出（音频+音乐匹配）现场演示违和感容易被直接感知，健壮性风险高于面试官 | | 独居老人陪护(1.1) | 需要硬件/嵌入式基础，用户完全没有相关经验，job-crawler的Agent架构经验也无法复用到硬件层 | | 中草药识别(1.1) | 技术栈（图像分类+知识图谱）与已有的job-crawler经验（纯后端+NLP+Agent）不重叠，复用价值低 | | 直接复用job-crawler项目 | 已交过其他课程（查重/学术诚信风险）+ AI交互记录已清空（无法举证协作过程分） | | 招聘数据分析+AI面试官自定义组合 | 课程规则未明确允许自由组合选题，系数认定存在不确定性，且容易显得&quot;硬拼凑&quot; | | 面试官项目功能堆砌（历史追踪/多语言/语音输入） | 第一性原理检验下，这些功能&quot;有没有AI都差不多&quot;或不解决核心问题，属于稀释核心亮点的边角料 |</p>
+<hr>
+<h2>四、最终确定的项目方向</h2>
+<p><strong>项目名称</strong>：AI模拟面试官（回答质量诊断为核心） <strong>难度系数</strong>：1.0（标准级） <strong>核心定位</strong>：不是&quot;像不像面试官&quot;，而是&quot;能不能像犀利教练一样精准诊断回答质量&quot; <strong>详细架构</strong>：见配套文档《AI面试官_核心框架.md》</p>
+<hr>
+<h2>五、给codebuddy的开发要求提醒</h2>
+<ol><li>所有代码需在本次实训期间原创实现，不得复用job-crawler仓库的任何代码或数据文件</li><li>如需实现数据支撑模块，须使用新采集或手动整理的小型静态数据集</li><li>诊断引擎须采用双Agent职责分离设计（Diagnostician只诊断，Rewriter只改写），避免自评式循环验证的逻辑漏洞</li><li>开发过程中每一轮需求确认、bug修复、prompt调优都应形成可追溯的对话记录，用于后续AI交互日志整理</li></ol></section>
+<section id="sec_AI面试官_核心框架_md"><h1 class="file-title">AI面试官_核心框架.md</h1><h1>AI模拟面试官 —— 核心框架设计文档</h1>
+<h2>一、产品定位</h2>
+<p><strong>核心价值不在&quot;像不像面试官&quot;,而在&quot;能不能像犀利教练一样精准诊断回答质量&quot;。</strong></p>
+<p>全部资源向&quot;回答质量诊断引擎&quot;倾斜，问题生成模块做轻做浅，不做数据支撑模块（除非最小验证证明必要）。</p>
+<hr>
+<h2>二、系统架构（三层）</h2>
+<pre><code>┌─────────────────────────────────────────┐
+│              前端交互层                    │
+│   简历/JD上传 → 对话界面 → 诊断报告展示        │
+└─────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────┐
+│              业务逻辑层 (核心)              │
+│  ┌───────────────┐  ┌──────────────────┐ │
+│  │  问题生成模块    │  │  回答诊断引擎(重点) │ │
+│  │  (轻量单Agent)  │  │  (双Agent协作)     │ │
+│  └───────────────┘  └──────────────────┘ │
+└─────────────────────────────────────────┘
+                    ↓
+┌─────────────────────────────────────────┐
+│              基础设施层                    │
+│   简历解析(PDF/DOCX) + LLM调用封装(fallback)│
+│   + 会话状态存储(SQLite)                   │
+└─────────────────────────────────────────┘</code></pre>
+<hr>
+<h2>三、核心模块详细设计</h2>
+<h3>3.1 回答质量诊断引擎（核心，占开发精力60%以上）</h3>
+<p><strong>采用双Agent协作模式</strong>（复用你在job-crawler里验证过的Critic+Optimizer思路）：</p>
+<pre><code>用户回答文本
+    ↓
+┌─────────────────────────┐
+│  Diagnostician Agent     │  职责：只诊断，不给答案
+│  （诊断者）                │  输出结构化问题清单
+└─────────────────────────┘
+    ↓ 诊断结果
+┌─────────────────────────┐
+│  Rewriter Agent          │  职责：基于诊断结果，给出
+│  （改写者）                │  具体修改示范（不是泛泛建议）
+└─────────────────────────┘
+    ↓
+结构化诊断报告</code></pre>
+<p><strong>诊断维度（固定4个，不要贪多）：</strong></p>
+<ol><li><strong>STAR完整度</strong> —— 情境/任务/行动/结果是否齐全，缺哪个明确指出</li><li><strong>量化程度</strong> —— 是否有具体数字支撑（&quot;提升了效率&quot;vs&quot;效率提升30%&quot;）</li><li><strong>逻辑连贯性</strong> —— 前后是否有因果断层</li><li><strong>岗位相关性</strong> —— 回答内容是否切中该岗位真正关心的能力点</li></ol>
+<p><strong>输出格式（务必结构化，不要让大模型自由发挥输出一段话）：</strong></p>
+<pre><code>{
+  &quot;star_check&quot;: {&quot;missing&quot;: [&quot;Result&quot;], &quot;comment&quot;: &quot;...&quot;},
+  &quot;quantification&quot;: {&quot;score&quot;: 2, &quot;suggestion&quot;: &quot;...&quot;},
+  &quot;logic_gaps&quot;: [&quot;第二句到第三句之间缺少因果说明&quot;],
+  &quot;relevance&quot;: {&quot;score&quot;: 4, &quot;comment&quot;: &quot;...&quot;},
+  &quot;rewritten_example&quot;: &quot;改写后的示范回答（150字内）&quot;
+}</code></pre>
+<p><strong>为什么这样设计是&quot;AI协作深度&quot;的加分点：</strong></p>
+<ul><li>Diagnostician和Rewriter职责分离，避免&quot;一个Agent既当裁判又当运动员&quot;的自评式漏洞（这正是之前分析中AI模拟面试官最大的技术硬伤，现在用架构设计解决掉）</li><li>结构化输出让&quot;批判性思维&quot;可举证——你可以在AI交互日志里展示&quot;我发现诊断结果里逻辑断层判断不准，于是调整了prompt&quot;这类真实迭代记录</li></ul>
+<h3>3.2 问题生成模块（做轻，单Agent即可）</h3>
+<pre><code>简历文本 + JD文本
+    ↓
+关键词提取（大模型一次调用，不需要额外NLP处理）
+    ↓
+生成5-8道针对性问题（一次性生成，不做复杂的动态追问树）</code></pre>
+<p>不做的事：多轮动态追问逻辑、追问路径规划——这些复杂度收益比低，第一性原理已验证增量价值有限。</p>
+<h3>3.3 数据支撑模块（先验证，后决定）</h3>
+<p><strong>做之前先跑这个最小实验：</strong></p>
+<ol><li>挑3个岗位（如Python开发、产品经理、数据分析），不接任何外部数据，直接让大模型生成面试问题</li><li>你自己判断：问题是否脱离实际、是否有编造的技能要求</li><li>如果问题质量合格 → <strong>砍掉这个模块</strong>，减少工作量和查重风险</li><li>如果确实有明显编造/过时问题 → 只做一个极简版本：给定岗位关键词，返回3-5条真实技能要求（可以是你手动整理的小型静态数据集，不需要重新做爬虫，规避复用job-crawler数据的风险）</li></ol>
+<hr>
+<h2>四、技术栈建议</h2>
+<p>| 层级 | 技术选型 | 理由 | |---|---|---| | 后端框架 | Python + FastAPI | 轻量，codebuddy生成效率高 | | LLM调用 | 单一大模型API（DeepSeek或其他），做简单try-except fallback | 不需要双模型，面试官场景对模型能力要求没那么极端 | | 简历解析 | PyPDF2 / python-docx | 成熟方案，直接抄job-crawler的resume_parser思路即可（代码可以重写，逻辑可以参考） | | 数据存储 | SQLite | 存会话记录、诊断历史 | | 前端 | 简单HTML+JS或React（视时间而定） | 优先把诊断报告的可读性做好，不需要花哨UI |</p>
+<hr>
+<h2>五、给codebuddy的任务拆解顺序</h2>
+<ol><li><strong>第一轮</strong>：让它产出需求文档+架构设计文档，你重点审查诊断维度设计是否合理、Agent职责划分是否清晰</li><li><strong>第二轮</strong>：先做诊断引擎（核心），用几段你自己写的模拟回答测试效果，反复调prompt——这一步的调试过程就是你的AI交互日志主体</li><li><strong>第三轮</strong>：做问题生成模块（轻量，一两天内应该能完成）</li><li><strong>第四轮</strong>：决定要不要做数据支撑模块（按上面3.3的验证结果）</li><li><strong>第五轮</strong>：前端串联+联调</li></ol>
+<h2>六、答辩时的核心叙事（提前想好）</h2>
+<p>一句话讲清楚项目价值：<strong>&quot;市面上的面试模拟工具大多停留在&#x27;问问题&#x27;，我们的核心创新是把重心放在&#x27;精准诊断回答质量&#x27;——用双Agent分离诊断与改写职责，避免AI自己既当裁判又当运动员的自评漏洞。&quot;</strong></p>
+<p>这句话直接把之前分析里&quot;自评式架构不严谨&quot;的风险点，转化成了你的技术亮点和批判性思维证据。</p></section>
+<section id="sec_CODEBUDDY_md"><h1 class="file-title">CODEBUDDY.md</h1><h1>AI模拟面试官</h1>
+<blockquote><p>本文档是 CodeBuddy 的项目记忆文件，每次新对话自动加载。请在接手本项目时严格遵循以下规范。</p></blockquote>
+<hr>
+<h2>项目概览</h2>
+<p><strong>核心价值</strong>：回答质量诊断，不是&quot;像不像面试官&quot;。资源优先级：</p>
+<ol><li><strong>诊断引擎</strong>（Diagnostician + Rewriter 双Agent）— 核心，占开发精力 60% 以上</li><li><strong>问题生成模块</strong> — 做轻做浅，单 Agent 一次性生成即可</li><li><strong>数据支撑模块</strong> — 非必需，需先做最小实验验证价值后再决定是否开发</li></ol>
+<p><strong>技术栈</strong>：Python 3.12 / FastAPI / SQLite (aiosqlite) / DeepSeek API (OpenAI 兼容) / 原生 HTML+JS 前端</p>
+<hr>
+<h2>项目结构</h2>
+<pre><code>AI模拟面试官/
+├── CODEBUDDY.md              # 项目记忆文件
+├── .env                      # 环境变量（不提交 Git）
+├── .env.example              # 环境变量模板
+├── .gitignore
+├── requirements.txt          # Python 依赖
+├── run.py                    # 一键启动脚本
+├── backend/
+│   ├── main.py               # FastAPI 入口 + 全部 API 路由
+│   ├── config.py             # 配置（从 .env 读取）
+│   ├── llm_client.py         # DeepSeek OpenAI 兼容客户端
+│   ├── db.py                 # SQLite 数据库操作
+│   ├── schemas.py            # Pydantic 请求/响应模型
+│   ├── resume_parser.py      # 简历解析（PDF/DOCX/TXT）
+│   ├── question_gen.py       # 问题生成
+│   ├── diagnosis_engine.py   # 双 Agent 诊断引擎
+│   ├── data_support.py       # 技能匹配
+│   └── skills_data.json      # 岗位技能静态数据
+├── frontend/
+│   └── index.html            # 单页前端
+├── data/
+│   └── interview.db          # SQLite 数据库
+└── docs/                     # 需求文档与周报</code></pre>
+<hr>
+<h2>常用命令</h2>
+<pre><code># 启动开发服务器（端口 8000，热重载）
+python run.py
+
+# 或直接启动
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 访问 API 文档
+# http://localhost:8000/docs</code></pre>
+<hr>
+<h2>架构约束（必须遵守）</h2>
+<h3>双 Agent 不可合并</h3>
+<p>Diagnostician + Rewriter 是两个独立 Agent，<strong>禁止合并为单一 Agent</strong>。诊断和改写必须分步进行，各自有独立的 prompt。</p>
+<h3>诊断四维度</h3>
+<p>诊断始终围绕四个维度评分：</p>
+<ol><li>STAR 完整性</li><li>量化程度</li><li>逻辑连贯性</li><li>岗位相关性</li></ol>
+<h3>范围纪律</h3>
+<ul><li><strong>禁止</strong>在未经用户明确批准的情况下新增功能模块（如语音、多面试官切换、历史趋势追踪等）</li><li>如认为某功能确有必要，只能以建议形式提出并等待用户批准，不得直接实现</li><li><strong>例外</strong>（无需额外批准即可做）：对现有 4 个诊断维度的参数化优化，例如按 JD 动态调整评分权重、增加&quot;回答过短触发追问&quot;这类轻量规则</li></ul>
+<hr>
+<h2>开发纪律</h2>
+<h3>模块开发前</h3>
+<p>每个功能模块开始前，先输出需求理解文档，存入：</p>
+<pre><code>docs/weekN_模块名_需求.md</code></pre>
+<p>内容包含：模块目标、技术方案、涉及的知识点。</p>
+<h3>修改迭代时</h3>
+<p>用户提出修改意见后，在对应需求文档里追加一段：</p>
+<pre><code>## 修改记录 [日期]
+- 原方案：...
+- 用户指出的问题：...
+- 修改后的方案：...</code></pre>
+<p>这是评分中&quot;批判性思维&quot;分项的核心证据，必须真实、具体，不能用&quot;优化了逻辑&quot;这种空泛表述。</p>
+<h3>Commit Message 规范</h3>
+<p>禁止使用&quot;fix bug&quot;、&quot;优化代码&quot;等空泛描述，必须写清楚：</p>
+<pre><code>改了什么: ...
+为什么改: ...</code></pre>
+<h3>变更前复述</h3>
+<p>用户指出问题后，须先复述问题本质，确认理解无误后再给出修改方案，不得跳过复述直接改代码。</p>
+<h3>周报</h3>
+<p>每周五（或用户指定的开发节点）自动生成周报，存入：</p>
+<pre><code>docs/weekN_周报.md</code></pre>
+<h3>项目收尾</h3>
+<p>项目开发结束前，自动汇总所有需求文档和周报，按时间线整理成一份完整的《AI协作过程记录》：</p>
+<pre><code>docs/AI协作过程记录_完整版.md</code></pre>
+<hr>
+<h2>边界声明</h2>
+<p>以下事项由用户本人负责，AI 只记录决策结果：</p>
+<ul><li>诊断维度的设计取舍</li><li>是否开发数据支撑模块</li><li>项目范围的增减</li><li>答辩叙事逻辑</li></ul>
+<hr>
+<h2>开工自查清单</h2>
+<p>在新对话/会话中接手本项目时，开始工作前请确认：</p>
+<ol><li>是否已阅读 <code>docs/</code> 目录下已有的需求文档和周报</li><li>是否清楚当前处于第几周、上一次的修改记录是什么</li><li>是否遵循本文件的记录规范</li></ol></section>
+<section id="sec_PROJECT_CHARTER_md"><h1 class="file-title">PROJECT_CHARTER.md</h1><h1>项目宪章 —— AI模拟面试官</h1>
+<blockquote><p>本文档是本项目的持续性开发规范。无论在哪次对话/会话中接手本项目，都必须遵循以下要求，不需要用户重复提醒。</p></blockquote>
+<hr>
+<h2>一、项目定位（不可偏离）</h2>
+<p>核心价值：<strong>回答质量诊断</strong>，不是&quot;像不像面试官&quot;。资源优先级：</p>
+<ol><li>诊断引擎（Diagnostician + Rewriter 双Agent架构）—— 核心，占开发精力60%以上</li><li>问题生成模块 —— 做轻做浅，单Agent一次性生成即可</li><li>数据支撑模块 —— 非必需，需先做最小实验验证价值后再决定是否开发</li></ol>
+<p>禁止事项：</p>
+<ul><li>不做历史追踪、多语言、语音输入等功能扩展，除非用户明确要求</li><li>不将Diagnostician和Rewriter合并为单一Agent</li><li>不复用外部已有项目（如job-crawler仓库）的任何代码或数据文件</li><li>若需岗位数据，必须重新采集或手动整理，不得导入历史数据库</li></ul>
+<hr>
+<h2>二、强制记录规范（每次开发都要执行，不需用户提醒）</h2>
+<h3>2.1 模块开发前</h3>
+<p>每个功能模块开始前，先输出需求理解文档，存入：</p>
+<pre><code>docs/weekN_模块名_需求.md</code></pre>
+<p>内容包含：模块目标、技术方案、涉及的知识点。</p>
+<h3>2.2 修改迭代时</h3>
+<p>用户提出修改意见后，在对应需求文档里追加一段，格式固定为：</p>
+<pre><code>## 修改记录 [日期]
+- 原方案：...
+- 用户指出的问题：...
+- 修改后的方案：...</code></pre>
+<p>这是评分中&quot;批判性思维&quot;分项的核心证据，必须真实、具体，不能用&quot;优化了逻辑&quot;这种空泛表述。</p>
+<h3>2.3 代码提交</h3>
+<p>commit message 禁止使用&quot;fix bug&quot;、&quot;优化代码&quot;等空泛描述，必须写清楚：</p>
+<pre><code>改了什么: ...
+为什么改: ...</code></pre>
+<h3>2.4 周报</h3>
+<p>每周五（或用户指定的开发节点）自动生成周报，存入：</p>
+<pre><code>docs/weekN_周报.md</code></pre>
+<p>内容：本周完成的工作、遇到的问题、解决方式、下周计划。</p>
+<h3>2.5 项目收尾</h3>
+<p>项目开发结束前，自动汇总所有需求文档和周报，按时间线整理成一份完整的《AI协作过程记录》，存入：</p>
+<pre><code>docs/AI协作过程记录_完整版.md</code></pre>
+<hr>
+<h2>三、工作模式纪律（强约束，违反即返工）</h2>
+<h3>3.1 范围纪律</h3>
+<ul><li>禁止在未经用户明确批准的情况下新增功能模块（如语音、多面试官切换、历史趋势追踪等），哪怕参考项目中存在类似功能</li><li>如认为某功能确有必要，只能以建议形式提出并等待用户批准，不得直接实现</li><li>例外（无需额外批准即可做）：对现有4个诊断维度的参数化优化，例如按JD动态调整评分权重、增加&quot;回答过短触发追问&quot;这类轻量规则——这类改动不构成范围扩张</li></ul>
+<h3>3.2 完工判定纪律</h3>
+<ul><li>任何模块标记为&quot;已完成&quot;之前，必须确认终端/控制台没有未处理的 Error</li><li>若存在已知但暂缓处理的问题，必须显式标注&quot;已知问题，暂缓处理&quot;及原因，不得沉默略过</li></ul>
+<h3>3.3 数据与代码来源纪律</h3>
+<ul><li>禁止复用外部仓库（包括但不限于 job-crawler）的任何代码文件或数据文件，只允许参考架构设计思路后重新实现</li><li>测试数据仅限使用用户提供的测试简历/JD，或手动整理的小型数据集，不得导入历史采集数据</li></ul>
+<h3>3.4 变更留痕纪律</h3>
+<ul><li>每次代码修改需说明&quot;改了什么 + 为什么改&quot;，禁止使用&quot;优化了逻辑&quot;&quot;修复了问题&quot;等空泛描述</li><li>用户指出问题后，须先复述问题本质，确认理解无误后再给出修改方案，不得跳过复述直接改代码</li></ul>
+<hr>
+<h2>四、边界声明</h2>
+<p>以下事项由用户本人负责，AI只负责记录用户的决策结果，不代替用户做出或解释设计决策：</p>
+<ul><li>诊断维度的设计取舍</li><li>是否开发数据支撑模块</li><li>项目范围的增减</li><li>答辩叙事逻辑</li></ul>
+<p>AI在记录中应准确复述用户的决策和理由（如果用户说明了理由），但不应替用户编造决策动机。</p>
+<hr>
+<h2>五、给新会话接手时的自查清单</h2>
+<p>如果你是在新的对话/会话中接手本项目，开始工作前请确认：</p>
+<ol><li>是否已阅读 <code>docs/</code> 目录下已有的需求文档和周报，理解项目当前进度</li><li>是否清楚当前处于第几周、上一次的修改记录是什么</li><li>是否遵循本宪章的记录规范，而不是从零约定</li></ol></section>
+<section id="sec_PROJECT_GUIDE_md"><h1 class="file-title">PROJECT_GUIDE.md</h1><h1>AI模拟面试官</h1>
+<blockquote><p>本文档是 CodeBuddy 的项目记忆文件，每次新对话自动加载。请在接手本项目时严格遵循以下规范。</p></blockquote>
+<hr>
+<h2>项目概览</h2>
+<p><strong>核心价值</strong>：回答质量诊断，不是&quot;像不像面试官&quot;。资源优先级：</p>
+<ol><li><strong>诊断引擎</strong>（Diagnostician + Rewriter 双Agent）— 核心，占开发精力 60% 以上</li><li><strong>问题生成模块</strong> — 做轻做浅，单 Agent 一次性生成即可</li><li><strong>数据支撑模块</strong> — 非必需，需先做最小实验验证价值后再决定是否开发</li></ol>
+<p><strong>技术栈</strong>：Python 3.12 / FastAPI / SQLite (aiosqlite) / DeepSeek API (OpenAI 兼容) / 原生 HTML+JS 前端</p>
+<hr>
+<h2>项目结构</h2>
+<pre><code>AI模拟面试官/
+├── CODEBUDDY.md              # 项目记忆文件
+├── .env                      # 环境变量（不提交 Git）
+├── .env.example              # 环境变量模板
+├── .gitignore
+├── requirements.txt          # Python 依赖
+├── run.py                    # 一键启动脚本
+├── backend/
+│   ├── main.py               # FastAPI 入口 + 全部 API 路由
+│   ├── config.py             # 配置（从 .env 读取）
+│   ├── llm_client.py         # DeepSeek OpenAI 兼容客户端
+│   ├── db.py                 # SQLite 数据库操作
+│   ├── schemas.py            # Pydantic 请求/响应模型
+│   ├── resume_parser.py      # 简历解析（PDF/DOCX/TXT）
+│   ├── question_gen.py       # 问题生成
+│   ├── diagnosis_engine.py   # 双 Agent 诊断引擎
+│   ├── data_support.py       # 技能匹配
+│   └── skills_data.json      # 岗位技能静态数据
+├── frontend/
+│   └── index.html            # 单页前端
+├── data/
+│   └── interview.db          # SQLite 数据库
+└── docs/                     # 需求文档与周报</code></pre>
+<hr>
+<h2>常用命令</h2>
+<pre><code># 启动开发服务器（端口 8000，热重载）
+python run.py
+
+# 或直接启动
+uvicorn backend.main:app --host 0.0.0.0 --port 8000 --reload
+
+# 安装依赖
+pip install -r requirements.txt
+
+# 访问 API 文档
+# http://localhost:8000/docs</code></pre>
+<hr>
+<h2>架构约束（必须遵守）</h2>
+<h3>双 Agent 不可合并</h3>
+<p>Diagnostician + Rewriter 是两个独立 Agent，<strong>禁止合并为单一 Agent</strong>。诊断和改写必须分步进行，各自有独立的 prompt。</p>
+<h3>诊断四维度</h3>
+<p>诊断始终围绕四个维度评分：</p>
+<ol><li>STAR 完整性</li><li>量化程度</li><li>逻辑连贯性</li><li>岗位相关性</li></ol>
+<h3>范围纪律</h3>
+<ul><li><strong>禁止</strong>在未经用户明确批准的情况下新增功能模块（如语音、多面试官切换、历史趋势追踪等）</li><li>如认为某功能确有必要，只能以建议形式提出并等待用户批准，不得直接实现</li><li><strong>例外</strong>（无需额外批准即可做）：对现有 4 个诊断维度的参数化优化，例如按 JD 动态调整评分权重、增加&quot;回答过短触发追问&quot;这类轻量规则</li></ul>
+<hr>
+<h2>开发纪律</h2>
+<h3>模块开发前</h3>
+<p>每个功能模块开始前，先输出需求理解文档，存入：</p>
+<pre><code>docs/weekN_模块名_需求.md</code></pre>
+<p>内容包含：模块目标、技术方案、涉及的知识点。</p>
+<h3>修改迭代时</h3>
+<p>用户提出修改意见后，在对应需求文档里追加一段：</p>
+<pre><code>## 修改记录 [日期]
+- 原方案：...
+- 用户指出的问题：...
+- 修改后的方案：...</code></pre>
+<p>这是评分中&quot;批判性思维&quot;分项的核心证据，必须真实、具体，不能用&quot;优化了逻辑&quot;这种空泛表述。</p>
+<h3>Commit Message 规范</h3>
+<p>禁止使用&quot;fix bug&quot;、&quot;优化代码&quot;等空泛描述，必须写清楚：</p>
+<pre><code>改了什么: ...
+为什么改: ...</code></pre>
+<h3>变更前复述</h3>
+<p>用户指出问题后，须先复述问题本质，确认理解无误后再给出修改方案，不得跳过复述直接改代码。</p>
+<h3>周报</h3>
+<p>每周五（或用户指定的开发节点）自动生成周报，存入：</p>
+<pre><code>docs/weekN_周报.md</code></pre>
+<h3>项目收尾</h3>
+<p>项目开发结束前，自动汇总所有需求文档和周报，按时间线整理成一份完整的《AI协作过程记录》：</p>
+<pre><code>docs/AI协作过程记录_完整版.md</code></pre>
+<hr>
+<h2>边界声明</h2>
+<p>以下事项由用户本人负责，AI 只记录决策结果：</p>
+<ul><li>诊断维度的设计取舍</li><li>是否开发数据支撑模块</li><li>项目范围的增减</li><li>答辩叙事逻辑</li></ul>
+<hr>
+<h2>开工自查清单</h2>
+<p>在新对话/会话中接手本项目时，开始工作前请确认：</p>
+<ol><li>是否已阅读 <code>docs/</code> 目录下已有的需求文档和周报</li><li>是否清楚当前处于第几周、上一次的修改记录是什么</li><li>是否遵循本文件的记录规范</li></ol></section></div>
+  </main>
+</div>
+</body>
+</html>

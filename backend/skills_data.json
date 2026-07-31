@@ -1,0 +1,73 @@
+{
+  "后端开发": {
+    "keywords": ["Java", "Spring", "Python", "Django", "FastAPI", "Go", "MySQL", "Redis", "微服务", "API设计", "数据库"],
+    "skills": [
+      "熟练掌握至少一门后端语言（Java/Python/Go），能独立完成接口开发",
+      "熟悉关系型数据库（MySQL/PostgreSQL）和 NoSQL（Redis/MongoDB）",
+      "了解微服务架构与容器化部署（Docker/K8s）",
+      "具备 API 设计规范意识（RESTful/GraphQL）"
+    ]
+  },
+  "前端开发": {
+    "keywords": ["JavaScript", "React", "Vue", "TypeScript", "CSS", "HTML", "Node.js", "Webpack", "小程序"],
+    "skills": [
+      "精通 HTML/CSS/JavaScript 基础，熟悉 ES6+ 语法",
+      "掌握至少一个主流框架（React/Vue/Angular）及其生态",
+      "了解前端工程化（Webpack/Vite）与性能优化",
+      "具备组件化开发思维与跨终端适配经验"
+    ]
+  },
+  "数据分析": {
+    "keywords": ["Python", "SQL", "Pandas", "NumPy", "数据可视化", "统计学", "Tableau", "Excel", "ETL"],
+    "skills": [
+      "熟练使用 Python（Pandas/NumPy）或 R 进行数据处理与分析",
+      "掌握 SQL 进行复杂查询与数据提取",
+      "能使用可视化工具（Tableau/PowerBI/Matplotlib）产出分析报告",
+      "具备统计学基础，能独立完成 A/B 测试等实验分析"
+    ]
+  },
+  "算法工程": {
+    "keywords": ["机器学习", "深度学习", "NLP", "CV", "PyTorch", "TensorFlow", "推荐系统", "模型部署", "特征工程"],
+    "skills": [
+      "扎实的机器学习/深度学习理论基础",
+      "熟练使用 PyTorch 或 TensorFlow 完成模型训练与调优",
+      "理解模型部署流程（ONNX/TensorRT/Triton）",
+      "有实际业务场景下的特征工程与效果评估经验"
+    ]
+  },
+  "产品经理": {
+    "keywords": ["需求分析", "PRD", "竞品分析", "用户研究", "原型设计", "数据驱动", "项目管理", "Axure", "Figma"],
+    "skills": [
+      "能独立撰写高质量 PRD 与产品需求文档",
+      "掌握用户调研方法（访谈/问卷/可用性测试）",
+      "熟练使用 Axure/Figma 等原型工具输出交互原型",
+      "具备数据驱动的产品迭代思维"
+    ]
+  },
+  "测试开发": {
+    "keywords": ["自动化测试", "Selenium", "Appium", "JMeter", "接口测试", "性能测试", "CI/CD", "测试用例"],
+    "skills": [
+      "能搭建自动化测试框架（Selenium/Appium/Pytest）",
+      "熟悉接口测试工具与方法（Postman/Requests）",
+      "了解 CI/CD 流程中的持续集成测试",
+      "具备性能测试实践经验（JMeter/Locust）"
+    ]
+  },
+  "运维/DevOps": {
+    "keywords": ["Linux", "Docker", "Kubernetes", "CI/CD", "Jenkins", "GitLab", "监控", "Shell", "Terraform"],
+    "skills": [
+      "精通 Linux 系统管理与 Shell 脚本编写",
+      "熟悉 Docker/K8s 容器化编排与部署",
+      "能搭建与维护 CI/CD 流水线（Jenkins/GitLab CI）",
+      "具备生产环境监控与故障排查经验（Prometheus/Grafana）"
+    ]
+  },
+  "通用": {
+    "keywords": [],
+    "skills": [
+      "具备良好的沟通协作与文档撰写能力",
+      "拥有较强的学习能力与问题解决能力",
+      "有团队协作与项目管理经验"
+    ]
+  }
+}
