@@ -68,7 +68,7 @@ class InterviewSession:
 
         # v2.6: 诊断维度动态权重
         self.dim_weights = dict(DEFAULT_WEIGHTS)
-        self.weight_reason = "尚未分析岗位，暂用四维等权"
+        self.weight_reason = "尚未分析岗位，暂用五维等权"
         self.weight_source = "default"
         self._weights_ready = False
 
@@ -76,7 +76,7 @@ class InterviewSession:
 
     async def init_weights(self) -> dict:
         """
-        分析 JD 得到四维度权重。会话建立后调用一次，失败自动退化等权。
+        分析 JD 得到五维度权重。会话建立后调用一次，失败自动退化等权。
         返回可直接推送给前端的权重事件数据。
         """
         if self._weights_ready:
@@ -516,7 +516,7 @@ class InterviewSession:
 
     def radar_snapshot(self) -> dict:
         """
-        面试进行中的实时雷达数据：四维度累计均分 + 最新一题得分。
+        面试进行中的实时雷达数据：各维度累计均分 + 最新一题得分。
         供前端每题诊断后即时刷新雷达图。
         """
         acc: dict[str, list[float]] = {k: [] for k in DIM_KEYS}

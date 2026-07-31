@@ -136,7 +136,7 @@ class ComprehensiveReport(BaseModel):
     interviewer_style: str
     rounds: list[RoundSummary]
     overall_avg: float
-    dimension_trends: list[dict]  # 四维度逐轮趋势数据
+    dimension_trends: list[dict]  # 各维度逐轮趋势数据
     strengths: list[str]
     weaknesses: list[str]
     suggestions: str  # 整体提升建议

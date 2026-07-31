@@ -50,7 +50,7 @@ AI模拟面试官/
 │       ├── api.js            # HTTP API + WebSocket 封装
 │       ├── interview.js      # 面试流程控制 (v2.6: 流式渲染 + 权重展示)
 │       ├── voice.js          # [v2.3 NEW] 语音交互（TTS + STT）
-│       ├── liveRadar.js      # [v2.6 NEW] 面试进行中的实时四维度雷达图
+│       ├── liveRadar.js      # [v2.6 NEW] 面试进行中的实时雷达图
 │       ├── report.js         # 综合报告 + Chart.js 雷达图 (v2.6: 权重说明)
 │       ├── history.js        # 历史记录查看
 │       ├── questionBank.js   # 题库管理界面
@@ -85,12 +85,13 @@ pip install -r requirements.txt
 ### 双 Agent 不可合并
 Diagnostician + Rewriter 是两个独立 Agent，**禁止合并为单一 Agent**。诊断和改写必须分步进行，各自有独立的 prompt。
 
-### 诊断四维度
-诊断始终围绕四个维度评分：
+### 诊断维度
+诊断始终围绕五个维度评分：
 1. STAR 完整性
 2. 量化程度
 3. 逻辑连贯性
 4. 岗位相关性
+5. 专业深度
 
 ### v2 新增架构组件
 
@@ -106,7 +107,7 @@ Diagnostician + Rewriter 是两个独立 Agent，**禁止合并为单一 Agent**
 - **v2.2: 6 阶段流程** — 借鉴 MockMate 多阶段设计，破冰→技术广度→技术深度→项目拷问→行为面→反问收尾
 - **v2.4: 双模式面试** — 新增传统5轮次模式（笔试→技术一面→技术二面→综合→自定义），前端可选
 - **v2.4: 7 种面试官角色** — 友好/严格/压力/专业/好奇/质疑/鼓励，各配攻击性等级和打断概率，每轮自动切换
-- 综合报告生成（四维度趋势 + 强项/弱项 + 建议 + 面试官历程）
+- 综合报告生成（各维度趋势 + 强项/弱项 + 建议 + 面试官历程）
 
 ### 安全防护（security.py）
 **v2.1: 4 层防护体系**：
@@ -133,7 +134,7 @@ Diagnostician + Rewriter 是两个独立 Agent，**禁止合并为单一 Agent**
 - 前端：独立的"题库"Tab 页面，含过滤栏、题目列表、新建/编辑表单、导入功能
 
 ### 前端模块化
-8 个 JS 模块（ES Module）+ 独立 CSS，使用 Chart.js 雷达图展示四维度趋势。
+8 个 JS 模块（ES Module）+ 独立 CSS，使用 Chart.js 雷达图展示各维度趋势。
 
 ### 语音交互（voice.js）[v2.3 NEW]
 基于浏览器内置 **Web Speech API**，无需后端支持：
@@ -180,7 +181,7 @@ Diagnostician + Rewriter 是两个独立 Agent，**禁止合并为单一 Agent**
 interview_engine/
 ├── __init__.py    # 导出 InterviewSession + build_report
 ├── session.py     # 核心状态机（Init/轮次控制/题目生成/追问/报告委托）
-└── report.py      # 报告生成（四维度趋势/强项弱项/建议）
+└── report.py      # 报告生成（各维度趋势/强项弱项/建议）
 ```
 向后兼容：`from .interview_engine import InterviewSession` 保持不变。
 
@@ -191,9 +192,9 @@ interview_engine/
 > 详见 `docs/week4_深化诊断核心_需求.md`。本次不新增功能面，而是纵向加深核心诊断能力。
 
 ### 诊断维度权重按 JD 动态化（dimension_weights.py）
-- **四维度本身不变**（架构约束），只调整其**权重**
-- `analyze_jd_weights()` 用 LLM 分析 JD → 输出四维权重 + 理由
-- 权重裁剪到 `[0.10, 0.45]` 并归一化到和为 1.0；任何失败路径退化等权
+- **维度数量由架构约束定义**，此模块只调整各维度的**权重**
+- `analyze_jd_weights()` 用 LLM 分析 JD → 输出五维权重 + 理由
+- 权重裁剪到 `[0.10, 0.40]` 并归一化到和为 1.0；任何失败路径退化等权
 - 贯穿全链路：注入 Diagnostician/Rewriter Prompt → 加权 `overall_score` → 轮次推进判定 → 报告总分 → 前端权重条
 - WebSocket 建立后推送 `dimension_weights` 事件
 
@@ -215,7 +216,7 @@ interview_engine/
 ### 弱项自动追加针对性题
 - `round_weak_dimension()` 按**加权失分** `(5 - 均分) × 权重` 定位薄弱维度
 - `generate_round_questions(focus_dimension=..., weak_evidence=...)` 定向出题
-- 四个维度各有专属出题策略，并注入该维度的**具体失分评语**
+- 各个维度各有专属出题策略，并注入该维度的**具体失分评语**
 - 追加题携带 `focus_dimension`，前端显示"🎯 补强"标记
 
 ### v2.6 同步修复的既有缺陷

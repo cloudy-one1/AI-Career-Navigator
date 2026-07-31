@@ -50,12 +50,13 @@ export function scoreClass(s) {
   return 'low';
 }
 
-/** 四维度中文名 */
+/** 五维度中文名 */
 export const DIM_NAMES = {
   star_completeness: 'STAR 完整度',
   quantification: '量化程度',
   logic_coherence: '逻辑连贯性',
   job_relevance: '岗位相关性',
+  professional_depth: '专业深度',
 };
 
 /** 深拷贝 */

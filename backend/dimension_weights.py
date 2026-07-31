@@ -1,10 +1,10 @@
 """
 诊断维度动态权重 v2.6
-根据 JD 分析四个诊断维度的相对重要性，输出加权配置。
+根据 JD 分析五个诊断维度的相对重要性，输出加权配置。
 
 设计约束（CODEBUDDY.md）：
-- 诊断四维度本身不可变，此模块只调整四维度的**权重**，不新增/删除维度。
-- 权重和恒为 1.0，缺省退化为等权（0.25 x 4），保证行为向后兼容。
+- 诊断维度不可变，此模块只调整各维度的**权重**，不新增/删除维度。
+- 权重和恒为 1.0，缺省退化为等权（0.20 x 5），保证行为向后兼容。
 """
 
 import asyncio
@@ -18,6 +18,7 @@ DIM_KEYS = [
     "quantification",
     "logic_coherence",
     "job_relevance",
+    "professional_depth",
 ]
 
 DIM_NAMES = {
@@ -25,43 +26,47 @@ DIM_NAMES = {
     "quantification": "量化程度",
     "logic_coherence": "逻辑连贯性",
     "job_relevance": "岗位相关性",
+    "professional_depth": "专业深度",
 }
 
 # 等权基线：无 JD 或分析失败时使用
-DEFAULT_WEIGHTS = {k: 0.25 for k in DIM_KEYS}
+DEFAULT_WEIGHTS = {k: 0.20 for k in DIM_KEYS}
 
 # 单维权重的合理区间，防止 LLM 输出极端值把某一维度压到无效
 MIN_WEIGHT = 0.10
-MAX_WEIGHT = 0.45
+MAX_WEIGHT = 0.40
 
 WEIGHT_SYSTEM_PROMPT = """你是一位面试评估体系设计专家。
 你的任务是根据岗位描述（JD），判断在评估该岗位候选人的面试回答时，
-以下四个诊断维度各自应占多大权重。
+以下五个诊断维度各自应占多大权重。
 
-四个维度的含义：
+五个维度的含义：
 1. star_completeness（STAR 完整度）：回答是否具备情境-任务-行动-结果的完整结构
 2. quantification（量化程度）：是否用具体数据、指标佐证成果
 3. logic_coherence（逻辑连贯性）：因果链条是否清晰、表达是否有条理
 4. job_relevance（岗位相关性）：回答是否紧扣该岗位的核心能力要求
+5. professional_depth（专业深度）：回答是否体现对技术/领域知识的深层理解，而非停留在表面描述
 
 权重判断参考：
-- 偏数据/算法/增长类岗位 → 量化程度更重要
-- 偏架构/研发/技术攻坚岗位 → 逻辑连贯性更重要
-- 偏管理/项目/咨询/售前岗位 → STAR 完整度更重要
-- 岗位技能要求写得非常具体、门槛明确 → 岗位相关性更重要
+- 偏数据/算法/增长/运营类岗位 → 量化程度更重要
+- 偏架构/研发/技术攻坚岗位 → 逻辑连贯性 + 专业深度更重要
+- 偏管理/项目/咨询/售前岗位 → STAR 完整度 + 岗位相关性更重要
+- 岗位技能要求写得非常具体、门槛明确 → 岗位相关性 + 专业深度更重要
+- 基础/初级岗位 → STAR 完整度更重要；高级/资深岗位 → 专业深度更重要
 
-输出严格 JSON，四个权重之和必须等于 1.0，每个权重在 0.10 到 0.45 之间：
+输出严格 JSON，五个权重之和必须等于 1.0，每个权重在 0.10 到 0.40 之间：
 {
   "weights": {
-    "star_completeness": 0.25,
-    "quantification": 0.25,
-    "logic_coherence": 0.25,
-    "job_relevance": 0.25
+    "star_completeness": 0.20,
+    "quantification": 0.20,
+    "logic_coherence": 0.20,
+    "job_relevance": 0.20,
+    "professional_depth": 0.20
   },
   "reason": "一句话说明为什么这样分配（不超过 60 字）"
 }"""
 
-WEIGHT_USER_PROMPT = """请为以下岗位设计四个诊断维度的权重：
+WEIGHT_USER_PROMPT = """请为以下岗位设计五个诊断维度的权重：
 
 【岗位描述】
 {jd}
@@ -116,7 +121,7 @@ def weighted_score(dimensions: dict, weights: dict | None) -> float:
             continue
         if s <= 0:
             continue
-        wk = float(w.get(k, DEFAULT_WEIGHTS.get(k, 0.25)))
+        wk = float(w.get(k, DEFAULT_WEIGHTS.get(k, 0.20)))
         acc += s * wk
         total_w += wk
 
@@ -127,7 +132,7 @@ def weighted_score(dimensions: dict, weights: dict | None) -> float:
 
 def describe_weights(weights: dict) -> str:
     """生成人类可读的权重说明，用于注入 Prompt 与前端展示。"""
-    parts = [f"{DIM_NAMES[k]} {weights.get(k, 0.25) * 100:.0f}%" for k in DIM_KEYS]
+    parts = [f"{DIM_NAMES[k]} {weights.get(k, 0.20) * 100:.0f}%" for k in DIM_KEYS]
     return " / ".join(parts)
 
 
@@ -140,7 +145,7 @@ def top_dimension(weights: dict) -> str:
 
 async def analyze_jd_weights(llm_client, jd_text: str) -> dict:
     """
-    分析 JD 得出四维度权重。
+    分析 JD 得出五维度权重。
     返回 {"weights": {...}, "reason": str, "source": "llm"|"default"}
     任何异常都退化为等权，不阻断面试流程。
     """
@@ -148,7 +153,7 @@ async def analyze_jd_weights(llm_client, jd_text: str) -> dict:
     if not jd_text or len(jd_text.strip()) < 8:
         return {
             "weights": dict(DEFAULT_WEIGHTS),
-            "reason": "未提供有效岗位描述，采用四维等权评估",
+            "reason": "未提供有效岗位描述，采用五维等权评估",
             "source": "default",
         }
 
@@ -164,7 +169,7 @@ async def analyze_jd_weights(llm_client, jd_text: str) -> dict:
         logger.warning(f"JD 权重分析调用失败，退化等权: {e}")
         return {
             "weights": dict(DEFAULT_WEIGHTS),
-            "reason": "权重分析失败，采用四维等权评估",
+            "reason": "权重分析失败，采用五维等权评估",
             "source": "default",
         }
 
@@ -172,7 +177,7 @@ async def analyze_jd_weights(llm_client, jd_text: str) -> dict:
         logger.warning(f"JD 权重分析返回异常，退化等权: {str(raw)[:200]}")
         return {
             "weights": dict(DEFAULT_WEIGHTS),
-            "reason": "权重分析结果无效，采用四维等权评估",
+            "reason": "权重分析结果无效，采用五维等权评估",
             "source": "default",
         }
 

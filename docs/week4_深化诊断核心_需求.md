@@ -15,7 +15,7 @@
 
 | # | 目标 | 解决的问题 |
 |---|------|-----------|
-| 1 | 诊断维度权重按 JD 动态化 | 四维等权对所有岗位一视同仁，无法体现"数据岗看重量化、架构岗看重逻辑" |
+| 1 | 诊断维度权重按 JD 动态化 | 等权对所有岗位一视同仁，无法体现"数据岗看重量化、架构岗看重逻辑与深度" |
 | 2 | 追问与诊断流式合并 | 追问需二次 LLM 往返，用户干等；且诊断结果一次性弹出，过程不可见 |
 | 3 | 雷达图实时更新 | 雷达图只在面试结束后出现，过程中无法感知自己的能力分布 |
 | 4 | 弱项自动追加针对性题 | 追加题与原题同质，没有针对薄弱维度补强，追加等于重复 |
@@ -62,7 +62,7 @@
 | 获取报告 | `/api/report/{id}` | `/api/reports/{id}` | 404 |
 | WS 消息体 | `{type, ...data}` 展开到顶层 | 读 `msg.data.text` | 回答永远读到空串 |
 | 回答字段 | `answer` | `text` | 同上 |
-| 诊断结构 | 读 `data.diagnosis[key].score` | 返回 `dimension_details` | 四维度全显示 0 分 |
+| 诊断结构 | 读 `data.diagnosis[key].score` | 返回 `dimension_details` | 各维度全显示 0 分 |
 | 改写字段 | `data.rewrite` | `rewritten_answer` | 改写示范不显示 |
 | 题号 | `data.index + 1` | 已是从 1 开始 | 题号多加 1 |
 | 报告数据 | `data.report` | data 即报告本体 | 报告为 undefined |
@@ -75,7 +75,7 @@
 
 **新增** `backend/dimension_weights.py`
 
-- `analyze_jd_weights(llm, jd)` → LLM 分析 JD，输出四维权重 + 理由
+- `analyze_jd_weights(llm, jd)` → LLM 分析 JD，输出五维权重 + 理由
 - `normalize_weights()` → 裁剪到 [0.10, 0.45] 并归一化到和为 1.0，防止某维被压到失效
 - `weighted_score(dims, weights)` → 加权总分；跳过解析失败的 0 分维度，避免误拉低
 - 任何异常路径（无 JD / 调用失败 / 返回非法）一律**退化为等权**，不阻断面试
@@ -93,7 +93,8 @@
 4. 轮次推进判定、报告总分、雷达图综合分统一采用加权口径
 5. 前端在面试区与报告页展示权重条
 
-> **约束遵守**：诊断四维度本身**未做任何增删改**，只调整其权重，符合 CODEBUDDY.md 的"诊断四维度"不变量。
+> **约束遵守**：诊断维度本身未做任何增删改，只调整其权重。<br>
+> v2.6 后续更新：维度从 4 个扩展为 5 个（新增"专业深度"），详见 CODEBUDDY.md。
 
 ### 3.2 追问与诊断流式合并
 
@@ -140,7 +141,7 @@ diagnosis_done ─────► 标准化结果（含追问）→ 追问直接
 - `round_weak_dimension()` 定位薄弱维度，判据是**加权失分** `(5 - 均分) × 权重`
   —— 同样是 2.8 分，岗位更看重的维度会被优先补强
 - `generate_round_questions()` 新增 `focus_dimension` 与 `weak_evidence` 参数
-- 为四个维度各写了一套定向出题策略，例如：
+- 为五个维度各写了一套定向出题策略，例如：
   - 量化程度弱 → 逼问具体提升比例、耗时数值、如何测量得到
   - 逻辑连贯性弱 → 要求解释技术决策取舍、为何排除其他方案
 - 把该维度的**具体失分评语**注入 Prompt，让补强题贴合真实短板，而非泛泛而问
@@ -260,3 +261,15 @@ diagnosis_done ─────► 标准化结果（含追问）→ 追问直接
 - 发现的问题：后端追问环节只等待 `answer` 类型消息，收到 `skip_follow_up` 会**永久阻塞**。
   一度考虑让前端改发一条 `（跳过追问）` 的假回答绕过，但这会污染回答历史，还可能被安全层的质量校验拦截
 - 修改后的方案：后端显式支持 `skip_follow_up` 与 `ping`，跳过时清空待推送追问并回执确认
+
+### [2026-07-31] 诊断维度从 4 维扩展为 5 维
+
+- 原方案：诊断围绕 4 个维度（STAR 完整度、量化程度、逻辑连贯性、岗位相关性）
+- 指出问题：缺少对标"候选人技术能力"的维度，对比 MockMate 后确认需要增加
+- 修改后的方案：新增第 5 维 **专业深度**（`professional_depth`），评估回答中对技术/领域知识的深层理解。涉及改动：
+  - `dimension_weights.py`：MAX_WEIGHT 从 0.45 下调至 0.40（5 维时极端权重更难平均），DEFAULT_WEIGHTS 从 0.25 → 0.20
+  - `diagnosis_engine.py`：Diagnostician/Rewriter Prompt 均新增专业深度描述，JSON 输出格式增加该字段
+  - `question_gen.py`：新增 professional_depth 的定向出题策略
+  - `report.py` + `session.py`：报告/雷达增至 5 维
+  - 前端 `utils.js`、`report.js`、`liveRadar.js`、`interview.js` 同步升级
+  - `CODEBUDDY.md` + `README.md` + `preview.html` 文档更新

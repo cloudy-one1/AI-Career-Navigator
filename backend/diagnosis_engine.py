@@ -27,17 +27,18 @@ logger = logging.getLogger(__name__)
 
 DIAGNOSTICIAN_SYSTEM_PROMPT = """你是一位严格的面试回答诊断师。
 你的唯一职责是诊断候选人的面试回答质量，给出客观评分。
-你从以下四个维度依次分析，每个维度给出 1-5 分及简短评语：
+你从以下五个维度依次分析，每个维度给出 1-5 分及简短评语：
 
 1. STAR 完整度：是否包含 Situation/Task/Action/Result 四要素
 2. 量化程度：是否有具体数据支撑（百分比、数值、时间跨度等）
 3. 逻辑连贯性：因果链条是否清晰，要点之间是否衔接自然
 4. 岗位相关性：回答是否紧扣岗位需求，展示了匹配的能力
+5. 专业深度：是否体现了对技术/领域知识的深层理解，而非停留表面描述
 
 【本次评估的维度权重】
 {weight_desc}
 权重反映该岗位对各维度的重视程度。权重高的维度请分析得更细致、评分更审慎，
-但四个维度都必须给出独立评分，不得因权重低而省略。
+但五个维度都必须给出独立评分，不得因权重低而省略。
 
 【追问要求】
 如果回答存在明显短板（任一维度 ≤ 2 分，或回答明显空泛缺少细节），
@@ -51,7 +52,8 @@ DIAGNOSTICIAN_SYSTEM_PROMPT = """你是一位严格的面试回答诊断师。
   "quantification": {{"score": 1-5, "comment": "评语"}},
   "logic_coherence": {{"score": 1-5, "comment": "评语"}},
   "job_relevance": {{"score": 1-5, "comment": "评语"}},
-  "weakest_dimension": "四个维度 key 中得分最低的那个",
+  "professional_depth": {{"score": 1-5, "comment": "评语"}},
+  "weakest_dimension": "五个维度 key 中得分最低的那个",
   "follow_up_question": "针对薄弱点的追问，无需追问时为空字符串",
   "overall_comment": "一句话综合评语"
 }}
@@ -73,7 +75,7 @@ DIAGNOSTICIAN_USER_PROMPT = """请诊断以下面试回答：
 
 【岗位描述（供参考）】{jd}
 
-请按四个维度逐一分析，输出 JSON。"""
+请按五个维度逐一分析，输出 JSON。"""
 
 # ===== Rewriter Prompt =====
 
@@ -84,6 +86,7 @@ REWRITER_SYSTEM_PROMPT = """你是一位面试回答改写专家。
 2. 添加量化描述（如果原回答有提到但未量化的成果）
 3. 理顺逻辑链条，让叙述更流畅
 4. 突出与岗位需求的匹配点
+5. 深化技术/领域知识的阐述（补充原回答中停留在表面的概念解释）
 
 请优先修补诊断中得分最低、且权重较高的维度。
 
@@ -143,6 +146,7 @@ def _parse_diagnosis_fallback(raw_text: str) -> dict:
         "quantification": {"score": 0, "comment": "无法解析"},
         "logic_coherence": {"score": 0, "comment": "无法解析"},
         "job_relevance": {"score": 0, "comment": "无法解析"},
+        "professional_depth": {"score": 0, "comment": "无法解析"},
         "weakest_dimension": "",
         "follow_up_question": "",
         "overall_score": 0,

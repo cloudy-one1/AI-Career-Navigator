@@ -82,7 +82,7 @@ function renderReport(report) {
     const s = report.scoring;
     content.appendChild(el('div', { className: 'card weights-banner' },
       el('div', { className: 'card-title',
-        textContent: s.weight_source === 'llm' ? '⚖️ 评分权重（按 JD 动态调整）' : '⚖️ 评分权重（四维等权）' }),
+        textContent: s.weight_source === 'llm' ? '⚖️ 评分权重（按 JD 动态调整）' : '⚖️ 评分权重（五维等权）' }),
       el('div', { className: 'weights-desc', textContent: s.weight_desc }),
       s.weight_reason ? el('div', {
         style: 'font-size:.8rem;color:var(--text-secondary);margin-top:6px;',
@@ -94,7 +94,7 @@ function renderReport(report) {
   // 雷达图
   if (report.dimension_trends?.length) {
     const chartDiv = el('div', { className: 'card' },
-      el('div', { className: 'card-title', textContent: '🎯 四维度趋势' }),
+      el('div', { className: 'card-title', textContent: '🎯 各维度趋势' }),
       el('div', { className: 'chart-container' },
         el('div', { className: 'chart-wrapper' },
           el('canvas', { id: 'radar-chart' }),
@@ -163,7 +163,7 @@ function drawRadarChart(report) {
     const scores = d.scores || [];
     if (scores.length === 0) return;
 
-    const colors = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444'];
+    const colors = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
     const color = colors[idx] || '#4F46E5';
 
     // 取最近一轮各维度分数

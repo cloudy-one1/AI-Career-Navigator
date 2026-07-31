@@ -1,6 +1,6 @@
 """
 面试报告生成模块 v2.6
-从诊断数据中提取四维度趋势、强项弱项、提升建议。
+从诊断数据中提取五维度趋势、强项弱项、提升建议。
 
 v2.6 变更：
   - 总分改为按 JD 动态权重加权，与面试过程中的评分口径一致
@@ -72,7 +72,7 @@ def build_report(session) -> dict:
 
     overall_avg = round(sum(all_scores) / len(all_scores), 2) if all_scores else 0
 
-    # 四维度均分（未加权，用于展示各维度真实水平）
+    # 各维度均分（未加权，用于展示各维度真实水平）
     dim_avgs = {}
     for k, v in dimension_trends.items():
         if v["scores"]:
@@ -81,14 +81,14 @@ def build_report(session) -> dict:
     strengths, weaknesses = analyze_trends(dimension_trends, weights)
     suggestions = generate_suggestions(strengths, weaknesses, overall_avg, weights, dim_avgs)
 
-    # 四维度趋势
+    # 各维度趋势
     trends = []
     for k, v in dimension_trends.items():
         if v["scores"]:
             trends.append({
                 "dimension": k,
                 "dimension_name": DIM_NAMES.get(k, k),
-                "weight": weights.get(k, 0.25),
+                "weight": weights.get(k, 0.20),
                 "scores": v["scores"],
                 "rounds": v["rounds"],
             })
@@ -199,4 +199,5 @@ def _dimension_advice(key: str) -> str:
         "quantification": "建议提前整理每个项目的关键数字（提升比例、耗时、规模、成本），回答时主动带出。",
         "logic_coherence": "建议采用'结论先行 + 分点论证'的结构，并说明方案取舍的原因。",
         "job_relevance": "建议逐条对照 JD 要求，为每项核心能力准备一段对应的亲身经历。",
+        "professional_depth": "建议在描述技术方案时补充'为什么选这个方案而非其他'以及关键权衡的思考过程。",
     }.get(key, "建议围绕该维度做专项练习。")

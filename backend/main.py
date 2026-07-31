@@ -388,7 +388,7 @@ async def ws_interview(websocket: WebSocket, session_id: str):
             }
         })
 
-        # v2.6: 按 JD 动态计算四维度权重，并告知前端本场评分口径
+        # v2.6: 按 JD 动态计算各维度权重，并告知前端本场评分口径
         weights_payload = await session.init_weights()
         await websocket.send_json({
             "type": "dimension_weights",

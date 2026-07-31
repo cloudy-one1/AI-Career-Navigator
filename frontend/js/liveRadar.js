@@ -1,5 +1,5 @@
 // ===================================================
-// liveRadar.js — 面试进行中的实时四维度雷达图 (v2.6)
+// liveRadar.js — 面试进行中的实时五维度雷达图 (v2.6)
 // 每完成一题诊断即刷新，无需等到面试结束
 // ===================================================
 
@@ -124,7 +124,7 @@ function renderWeightBar(snapshot) {
   box.innerHTML = '';
 
   keys.forEach((k, i) => {
-    const w = Number(snapshot.weights[k] ?? 0.25);
+    const w = Number(snapshot.weights[k] ?? 0.20);
     box.appendChild(el('div', { className: 'lw-item' },
       el('span', { className: 'lw-name', textContent: labels[i] || k }),
       el('span', { className: 'lw-bar' },

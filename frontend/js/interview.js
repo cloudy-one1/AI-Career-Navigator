@@ -18,7 +18,7 @@ let voiceStopFn = null;       // 当前录音停止函数
 let voiceState = 'idle';     // 'idle' | 'listening' | 'speaking'
 let autoReadEnabled = true;   // 是否自动朗读题目
 let currentInterviewerName = ''; // v2.4: 当前面试官名称
-let dimWeights = null;        // v2.6: 本场四维度权重
+let dimWeights = null;        // v2.6: 本场各维度权重
 
 /** 初始化面试 Tab */
 export function initInterview() {
@@ -614,7 +614,7 @@ function showWeightsBanner(area, data) {
     style: `border-left:4px solid ${isDynamic ? 'var(--primary)' : 'var(--text-muted)'};`,
   },
     el('div', { className: 'card-title',
-      textContent: isDynamic ? '⚖️ 本岗位评分权重（已按 JD 动态调整）' : '⚖️ 评分权重（四维等权）' }),
+      textContent: isDynamic ? '⚖️ 本岗位评分权重（已按 JD 动态调整）' : '⚖️ 评分权重（五维等权）' }),
     el('div', { className: 'weights-desc', textContent: data.weight_desc || '' }),
     data.reason ? el('div', {
       style: 'font-size:.8rem;color:var(--text-secondary);margin-top:6px;',
@@ -696,7 +696,7 @@ function showDiagnosis(area, data) {
 
   const diagPanel = el('div', { className: 'diagnosis-panel' },
     el('div', { className: 'diag-section' },
-      el('div', { className: 'diag-section-title', textContent: '📊 四维度诊断' }),
+      el('div', { className: 'diag-section-title', textContent: '📊 各维度诊断' }),
 
       // 总评分（加权）
       el('div', { className: 'overall-score' },
@@ -708,7 +708,7 @@ function showDiagnosis(area, data) {
         }) : '',
       ),
 
-      // 四维度
+      // 各维度
       el('div', { className: 'diag-dimensions' },
         ...Object.entries(DIM_NAMES).map(([key, name]) => {
           const dim = details[key] || {};
