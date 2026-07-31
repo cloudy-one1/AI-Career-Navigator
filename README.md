@@ -140,7 +140,7 @@ AI-simulated-interviewer/
 │       ├── app.js                # 主入口 + Tab 切换
 │       ├── api.js                # HTTP + WebSocket 封装
 │       ├── interview.js          # 面试流程控制
-│       ├── liveRadar.js          # 实时四维雷达图
+│       ├── liveRadar.js          # 实时五维雷达图
 │       ├── report.js             # 综合报告 + Chart.js
 │       ├── history.js            # 历史记录
 │       ├── questionBank.js       # 题库管理界面
@@ -185,15 +185,16 @@ AI-simulated-interviewer/
 | **量化程度** | 是否有具体数据支撑（数字、百分比、时间） | JD 动态调整 |
 | **逻辑连贯性** | 叙事逻辑是否清晰、因果关系是否合理 | JD 动态调整 |
 | **岗位相关性** | 回答与岗位要求的匹配度 | JD 动态调整 |
+| **专业深度** | 技术理解是否深入、方案选型是否有洞见 | JD 动态调整 |
 
-> 权重由 LLM 根据 JD 自动分析确定，范围 0.10–0.45，归一化后用于加权评分。
+> 权重由 LLM 根据 JD 自动分析确定，范围 0.10–0.40，归一化后用于加权评分。
 
 ### 双 Agent 流程
 
 ```
 用户回答 → Diagnostician（诊断 + 追问） → Rewriter（改写建议） → 前端展示
                    ↓                              ↓
-              四维评分 + 追问                优化后的参考答案
+              五维评分 + 追问                优化后的参考答案
 ```
 
 ---
