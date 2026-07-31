@@ -1,8 +1,45 @@
+# === 环境与密钥 ===
 .env
 .venv/
+venv/
+
+# === Python ===
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# === 运行时数据 ===
 data/
 *.db
-.codebuddy/
+*.sqlite3
+
+# === 日志 ===
+*.log
+
+# === IDE / 编辑器 ===
 .vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === CodeBuddy AI 辅助 ===
+.codebuddy/
+
+# === 操作系统 ===
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+.directory

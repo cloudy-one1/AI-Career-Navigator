@@ -1,0 +1,39 @@
+# 统一换行符为 LF（跨平台协作）
+* text=auto
+
+# Python
+*.py text eol=lf
+*.txt text eol=lf
+
+# 前端
+*.html text eol=lf
+*.css text eol=lf
+*.js text eol=lf
+
+# 配置与文档
+*.md text eol=lf
+*.json text eol=lf
+*.toml text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.cfg text eol=lf
+*.ini text eol=lf
+.env.example text eol=lf
+.gitignore text eol=lf
+.gitattributes text eol=lf
+LICENSE text eol=lf
+requirements.txt text eol=lf
+
+# Shell 脚本
+*.sh text eol=lf
+
+# 二进制文件
+*.db binary
+*.sqlite3 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.docx binary
