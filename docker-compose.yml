@@ -1,0 +1,48 @@
+# ============================================================
+# AI模拟面试官 v2.6 — Docker Compose 标准化部署
+# 
+# 使用方式:
+#   1. cp .env.example .env   # 编辑 .env，填入 API KEY
+#   2. docker compose up -d   # 启动
+#   3. docker compose logs -f # 查看日志
+#   4. docker compose down    # 停止
+#
+# 更新:
+#   docker compose down && docker compose build --no-cache && docker compose up -d
+# ============================================================
+
+services:
+  app:
+    build: .
+    container_name: ai-interviewer
+    restart: unless-stopped
+
+    ports:
+      - "${PORT:-8000}:8000"
+
+    # 数据持久化：面试记录、题库、上传文件
+    volumes:
+      - ./data:/app/data
+
+    # 环境变量从 .env 注入
+    env_file:
+      - .env
+
+    environment:
+      - HOST=0.0.0.0
+      - PORT=8000
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+
+    # 资源限制（可选，按需调整）
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 512M
+    #       cpus: "1.0"
+
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://localhost:8000/docs"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s

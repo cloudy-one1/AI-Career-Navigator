@@ -15,8 +15,10 @@ from .config import config
 
 logger = logging.getLogger(__name__)
 
-# 确保 data 目录存在
-os.makedirs(os.path.dirname(config.DB_PATH), exist_ok=True)
+# 确保 data 目录存在（:memory: 为 SQLite 内存模式，无须文件系统目录）
+_db_dir = os.path.dirname(config.DB_PATH)
+if _db_dir:
+    os.makedirs(_db_dir, exist_ok=True)
 
 
 async def get_db():
@@ -37,12 +39,19 @@ async def init_db():
                 id TEXT PRIMARY KEY,
                 style TEXT DEFAULT 'friendly',
                 resume_filename TEXT DEFAULT '',
+                resume_text TEXT DEFAULT '',
                 jd_text TEXT DEFAULT '',
                 status TEXT DEFAULT 'active',
                 created_at TEXT DEFAULT (datetime('now', 'localtime')),
                 updated_at TEXT DEFAULT (datetime('now', 'localtime'))
             )
         """)
+
+        # v3.1: 迁移旧数据库——补充 resume_text 列
+        try:
+            await db.execute("ALTER TABLE sessions ADD COLUMN resume_text TEXT DEFAULT ''")
+        except Exception:
+            pass  # 列已存在
 
         # 面试问答记录
         await db.execute("""
@@ -88,7 +97,8 @@ async def init_db():
         """)
 
         # v2.5: 诊断反馈表
-        await cursor.execute("""
+        # [v3.0 修复] 此前误用未定义变量 cursor，init_db 运行即抛 NameError
+        await db.execute("""
             CREATE TABLE IF NOT EXISTS diagnosis_feedback (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 session_id TEXT NOT NULL,
@@ -102,12 +112,42 @@ async def init_db():
             )
         """)
 
-        await cursor.execute(
+        await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_feedback_session ON diagnosis_feedback(session_id)"
         )
 
+        # v2.7: 薄弱点画像累积
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS weakness_profile (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id TEXT NOT NULL,
+                dimension TEXT NOT NULL,
+                avg_score REAL NOT NULL,
+                weight REAL NOT NULL,
+                risk_points TEXT DEFAULT '[]',
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                FOREIGN KEY (session_id) REFERENCES sessions(id)
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_weakness_session ON weakness_profile(session_id)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_weakness_dim ON weakness_profile(dimension)"
+        )
+
+        # v3.1: JD 权重缓存表（避免同一 JD 重复调 LLM 分析权重）
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS jd_weights_cache (
+                jd_hash TEXT PRIMARY KEY,
+                jd_preview TEXT NOT NULL,
+                weights_json TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
+            )
+        """)
+
         await db.commit()
-        logger.info("数据库初始化完成（含 question_bank、diagnosis_feedback 表）")
+        logger.info("数据库初始化完成（含 question_bank、diagnosis_feedback、weakness_profile、jd_weights_cache 表）")
     finally:
         await db.close()
 
@@ -115,12 +155,13 @@ async def init_db():
 # ===== Sessions =====
 
 async def save_session(session_id: str, style: str = "friendly",
-                        resume_filename: str = "", jd_text: str = "") -> None:
+                        resume_filename: str = "", jd_text: str = "",
+                        resume_text: str = "") -> None:
     db = await get_db()
     try:
         await db.execute(
-            "INSERT OR REPLACE INTO sessions (id, style, resume_filename, jd_text) VALUES (?, ?, ?, ?)",
-            (session_id, style, resume_filename, jd_text),
+            "INSERT OR REPLACE INTO sessions (id, style, resume_filename, jd_text, resume_text) VALUES (?, ?, ?, ?, ?)",
+            (session_id, style, resume_filename, jd_text, resume_text),
         )
         await db.commit()
     finally:
@@ -448,5 +489,103 @@ async def get_feedback_stats(session_id: str) -> dict:
                 stats[r[0]] = r[1]
                 stats["total"] += r[1]
             return stats
+    finally:
+        await db.close()
+
+
+# ===== v2.7: Weakness Profile =====
+
+async def save_weakness_profile(session_id: str, dimension: str,
+                                 avg_score: float, weight: float,
+                                 risk_points: list[str] = None) -> None:
+    """保存单次会话的维度薄弱点快照"""
+    db = await get_db()
+    try:
+        await db.execute(
+            """INSERT INTO weakness_profile
+               (session_id, dimension, avg_score, weight, risk_points)
+               VALUES (?, ?, ?, ?, ?)""",
+            (session_id, dimension, avg_score, weight,
+             json.dumps(risk_points or [], ensure_ascii=False)),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_weakness_profile(session_id: str) -> list[dict]:
+    """获取指定会话的薄弱点快照"""
+    db = await get_db()
+    try:
+        async with db.execute(
+            """SELECT * FROM weakness_profile
+               WHERE session_id = ? ORDER BY dimension""",
+            (session_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+            results = []
+            for r in rows:
+                d = dict(r)
+                d["risk_points"] = json.loads(d.get("risk_points", "[]"))
+                results.append(d)
+            return results
+    finally:
+        await db.close()
+
+
+async def get_global_weakness_profile() -> list[dict]:
+    """获取全局薄弱点聚合：各维度历史平均分"""
+    db = await get_db()
+    try:
+        async with db.execute("""
+            SELECT dimension,
+                   ROUND(AVG(avg_score), 2) as historical_avg,
+                   ROUND(AVG(weight), 2) as avg_weight,
+                   COUNT(DISTINCT session_id) as session_count
+            FROM weakness_profile
+            GROUP BY dimension
+            ORDER BY historical_avg ASC
+        """) as cur:
+            rows = await cur.fetchall()
+            return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+# ===== v3.1: JD 权重缓存 =====
+
+async def lookup_jd_weights(jd_hash: str) -> dict | None:
+    """根据 JD 哈希查找缓存的权重结果，若有则返回解析后的 dict，否则返回 None"""
+    db = await get_db()
+    try:
+        async with db.execute(
+            "SELECT weights_json FROM jd_weights_cache WHERE jd_hash = ?", (jd_hash,)
+        ) as cur:
+            row = await cur.fetchone()
+            if row:
+                try:
+                    cached = json.loads(row[0])
+                    if isinstance(cached, dict) and "weights" in cached:
+                        cached["source"] = "cache"  # 覆盖标记
+                        return cached
+                except (json.JSONDecodeError, TypeError):
+                    logger.warning(f"JD 权重缓存数据损坏 (hash={jd_hash[:12]}...)，忽略")
+                    return None
+        return None
+    finally:
+        await db.close()
+
+
+async def save_jd_weights(jd_hash: str, jd_preview: str, weights: dict) -> None:
+    """保存 JD 权重分析结果到缓存"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "INSERT OR REPLACE INTO jd_weights_cache (jd_hash, jd_preview, weights_json) VALUES (?, ?, ?)",
+            (jd_hash, jd_preview[:100], json.dumps(weights, ensure_ascii=False)),
+        )
+        await db.commit()
+    except Exception as e:
+        logger.warning(f"JD 权重缓存写入失败: {e}")
     finally:
         await db.close()

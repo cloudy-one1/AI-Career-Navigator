@@ -49,7 +49,7 @@ export function initInterview() {
         placeholder: '粘贴岗位描述，让问题更贴合目标岗位...',
         style: 'min-height: 80px;' }),
     ),
-    // v2.4: 面试模式选择
+    // v2.4/v2.7: 面试模式选择
     el('div', { className: 'form-group' },
       el('label', { className: 'form-label', textContent: '📋 面试模式' }),
       el('div', { className: 'mode-selector' },
@@ -61,6 +61,29 @@ export function initInterview() {
           innerHTML: '<div class="mode-name">📝 传统模式</div><div class="mode-desc">5轮次经典面试（笔试→技术面→综合→自定义）</div>',
           onClick: () => selectMode('traditional'),
         }),
+        el('div', { className: 'mode-option', 'data-mode': 'coach',
+          innerHTML: '<div class="mode-name">🎓 教练模式</div><div class="mode-desc">先教后问，降低门槛</div>',
+          onClick: () => selectMode('coach'),
+        }),
+      ),
+    ),
+    // v2.7: 自我介绍环节
+    el('div', { className: 'form-group' },
+      el('label', { className: 'form-label', textContent: '🎤 额外环节' }),
+      el('div', { className: 'self-intro-toggle' },
+        el('label', { className: 'checkbox-label' },
+          el('input', { type: 'checkbox', id: 'self-intro-cb' }),
+          el('span', { className: 'checkbox-text', textContent: '包含自我介绍环节（面试开始前，了解候选人的整体背景和沟通能力）' }),
+        ),
+      ),
+    ),
+    // v2.7: 题型占比偏好
+    el('div', { className: 'form-group' },
+      el('label', { className: 'form-label', textContent: '⚖️ 题型偏好（可选，影响题目分布比例）' }),
+      el('div', { className: 'type-mix-sliders' },
+        typeMixSlider('知识概念', 'knowledge', 34),
+        typeMixSlider('项目经验', 'project', 33),
+        typeMixSlider('行为/软技能', 'behavior', 33),
       ),
     ),
     // 面试官风格
@@ -107,6 +130,37 @@ function selectMode(mode) {
   if (selected) selected.classList.add('selected');
 }
 
+// v2.7: 题型占比滑块
+function typeMixSlider(label, key, defaultValue) {
+  return el('div', { className: 'type-mix-item' },
+    el('div', { className: 'type-mix-header' },
+      el('span', { className: 'type-mix-label', textContent: label }),
+      el('span', { className: 'type-mix-value', id: `mix-val-${key}`, textContent: `${defaultValue}%` }),
+    ),
+    el('input', {
+      type: 'range', className: 'type-mix-range', id: `mix-slider-${key}`,
+      min: '0', max: '100', value: defaultValue,
+      onInput: () => updateMixValue(key),
+    }),
+  );
+}
+
+function updateMixValue(key) {
+  const slider = $(`#mix-slider-${key}`);
+  const valSpan = $(`#mix-val-${key}`);
+  if (slider && valSpan) {
+    valSpan.textContent = `${slider.value}%`;
+  }
+}
+
+function getQuestionTypeMix() {
+  return {
+    knowledge: parseInt($('#mix-slider-knowledge')?.value || 34),
+    project: parseInt($('#mix-slider-project')?.value || 33),
+    behavior: parseInt($('#mix-slider-behavior')?.value || 33),
+  };
+}
+
 async function handleUpload() {
   const fileInput = $('#resume-file');
   const file = fileInput.files[0];
@@ -140,7 +194,9 @@ async function startInterview() {
 
   try {
     const { generateQuestions } = await import('./api.js');
-    const result = await generateQuestions(resumeText, jdText, currentStyle, currentMode);
+    const includeSelfIntro = $('#self-intro-cb')?.checked ?? false;
+    const questionTypeMix = getQuestionTypeMix();
+    const result = await generateQuestions(resumeText, jdText, currentStyle, currentMode, includeSelfIntro, questionTypeMix);
     const sessionId = result.session_id;
 
     // 连接 WebSocket
@@ -352,6 +408,33 @@ function showQuestion(area, data) {
   stopSpeaking();
   if (voiceStopFn) { voiceStopFn(); voiceStopFn = null; }
   voiceState = 'idle';
+
+  // v2.7: 教练模式——知识点讲解卡片
+  if (data.question_type === 'coach_tip') {
+    const tipCard = el('div', { className: 'question-card coach-tip-card' },
+      el('div', { className: 'question-meta' },
+        el('span', { className: 'round-badge coach-badge', textContent: '🎓 教练引导' }),
+      ),
+      el('div', { className: 'question-header' },
+        el('div', { className: 'question-text', textContent: data.question }),
+      ),
+      el('div', { className: 'coach-content', textContent: data.intent || '' }),
+    );
+    const continueArea = el('div', { className: 'answer-area' },
+      el('div', { className: 'answer-actions' },
+        el('button', {
+          id: 'submit-answer', className: 'btn btn-primary',
+          textContent: '明白了，继续面试 →',
+          onClick: () => {
+            ws.send('answer', { text: '（已阅读教练引导）', is_follow_up: false });
+          },
+        }),
+      ),
+    );
+    area.appendChild(tipCard);
+    area.appendChild(continueArea);
+    return;
+  }
 
   // 题目区（含朗读按钮）—— 后端 index 已是从 1 开始的序号
   const qCard = el('div', { className: 'question-card' },
@@ -736,6 +819,14 @@ function showDiagnosis(area, data) {
         className: 'diag-weak-hint',
         textContent: `🔍 当前最薄弱：${data.weakest_dimension_name || DIM_NAMES[weakest] || weakest}`,
       }) : '',
+
+      // v2.7: 风险点识别
+      data.risk_points?.length ? el('div', { className: 'diag-risk-section' },
+        el('div', { className: 'diag-risk-title', textContent: '⚠️ 回答风险点' }),
+        el('ul', { className: 'diag-risk-list' },
+          ...data.risk_points.map(rp => el('li', { textContent: rp })),
+        ),
+      ) : '',
     ),
 
     // 改写示范

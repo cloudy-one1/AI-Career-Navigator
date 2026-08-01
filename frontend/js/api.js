@@ -28,13 +28,15 @@ export async function uploadResume(file) {
   return request('POST', '/api/sessions/upload', form, true);
 }
 
-/** 生成问题（获取 session_id）v2.4: 支持 mode */
-export async function generateQuestions(resumeText, jdText, style = 'friendly', mode = 'simulation') {
+/** 生成问题（获取 session_id）v2.4: 支持 mode。v2.7: 支持自我介绍 + 题型占比 */
+export async function generateQuestions(resumeText, jdText, style = 'friendly', mode = 'simulation', includeSelfIntro = false, questionTypeMix = {}) {
   return request('POST', '/api/sessions', {
     resume_text: resumeText,
     jd_text: jdText,
     style,
     mode,
+    include_self_intro: includeSelfIntro,
+    question_type_mix: questionTypeMix,
   });
 }
 
@@ -56,6 +58,29 @@ export async function getSession(sessionId) {
 /** 获取综合报告 */
 export async function getReport(sessionId) {
   return request('GET', `/api/reports/${sessionId}`);
+}
+
+/** v2.7: 导出复盘 Markdown */
+export async function exportReview(sessionId) {
+  const res = await fetch(BASE + `/api/reports/${sessionId}/review`);
+  if (!res.ok) throw new Error('导出复盘失败');
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `review_${sessionId}.md`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+/** v2.7: 获取薄弱点画像 */
+export async function getWeaknessProfile(sessionId) {
+  return request('GET', `/api/weakness-profile/${sessionId}`);
+}
+
+/** v2.7: 获取全局薄弱点聚合 */
+export async function getGlobalWeaknessProfile() {
+  return request('GET', `/api/weakness-profile`);
 }
 
 /** 获取所有会话 */
@@ -107,6 +132,21 @@ export async function toggleFavorite(id) {
 /** 从会话导入 */
 export async function importFromSession(sessionId) {
   return request('POST', '/api/question-bank/import', { session_id: sessionId });
+}
+
+// ===== v3.1: Gap 分析 =====
+
+/** 简历-岗位 Gap 分析 */
+export async function getGapAnalysis(sessionId) {
+  return request('GET', `/api/gap-analysis/${sessionId}`);
+}
+
+/** 跨岗位对比：一份简历 vs 多个岗位 */
+export async function crossJobCompare(resumeText, jdList) {
+  return request('POST', '/api/cross-job-compare', {
+    resume_text: resumeText,
+    jd_list: jdList,  // [{title, text}, ...]
+  });
 }
 
 // ===== WebSocket =====

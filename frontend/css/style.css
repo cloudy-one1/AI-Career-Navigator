@@ -166,6 +166,46 @@ body {
 .mode-option .mode-name { font-weight: 600; font-size: .9rem; }
 .mode-option .mode-desc { font-size: .72rem; color: var(--text-secondary); margin-top: 3px; line-height: 1.3; }
 
+/* v2.7: 自我介绍环节开关 */
+.self-intro-toggle { margin-bottom: 0; }
+.checkbox-label {
+  display: flex; align-items: center; gap: 10px;
+  cursor: pointer; padding: 8px 0;
+}
+.checkbox-label input[type="checkbox"] {
+  width: 18px; height: 18px; accent-color: var(--primary); cursor: pointer; flex-shrink: 0;
+}
+.checkbox-text { font-size: .85rem; color: var(--text-secondary); }
+
+/* v2.7: 题型占比滑块 */
+.type-mix-sliders { display: flex; gap: 16px; margin-bottom: 4px; }
+.type-mix-item { flex: 1; min-width: 140px; }
+.type-mix-header {
+  display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;
+}
+.type-mix-label { font-size: .78rem; color: var(--text-secondary); }
+.type-mix-value {
+  font-size: .8rem; font-weight: 600; color: var(--primary);
+  min-width: 36px; text-align: right;
+}
+.type-mix-range {
+  width: 100%; height: 6px;
+  -webkit-appearance: none; appearance: none;
+  background: var(--border); border-radius: 3px; outline: none;
+  cursor: pointer;
+}
+.type-mix-range::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none;
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--primary); cursor: pointer;
+  transition: transform .15s ease;
+}
+.type-mix-range::-webkit-slider-thumb:hover { transform: scale(1.2); }
+.type-mix-range::-moz-range-thumb {
+  width: 16px; height: 16px; border-radius: 50%;
+  background: var(--primary); border: none; cursor: pointer;
+}
+
 /* v2.4: Mode Badge */
 .mode-badge {
   text-align: center; font-size: .8rem; color: var(--text-secondary);
@@ -692,6 +732,89 @@ body {
   font-weight: 500;
 }
 
+/* ===== v2.7: 风险点展示 ===== */
+.diag-risk-section {
+  margin-top: 12px;
+  padding: 10px 14px;
+  background: #fef2f2;
+  border-left: 3px solid var(--danger);
+  border-radius: 6px;
+}
+.diag-risk-title {
+  font-size: .85rem;
+  font-weight: 600;
+  color: var(--danger);
+  margin-bottom: 6px;
+}
+.diag-risk-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: .82rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+}
+.diag-risk-list li { margin-bottom: 2px; }
+
+/* ===== v2.7: 教练模式卡片 ===== */
+.coach-tip-card {
+  background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+  border-left: 4px solid #3b82f6;
+}
+.coach-badge {
+  background: #3b82f6;
+  color: #fff;
+}
+.coach-content {
+  margin-top: 10px;
+  padding: 12px;
+  background: rgba(255,255,255,.7);
+  border-radius: 8px;
+  font-size: .9rem;
+  line-height: 1.7;
+  color: var(--text);
+}
+
+/* ===== v2.7: 薄弱点画像 ===== */
+.weakness-profile-content {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.weakness-profile-item {
+  display: grid;
+  grid-template-columns: 120px 1fr 40px auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border);
+}
+.weakness-profile-item:last-child { border-bottom: none; }
+.weakness-dim-name {
+  font-size: .85rem;
+  font-weight: 500;
+  color: var(--text);
+}
+.weakness-dim-bar {
+  height: 8px;
+  background: var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.weakness-dim-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width .5s ease;
+}
+.weakness-dim-score {
+  font-size: .85rem;
+  font-weight: 600;
+  text-align: right;
+}
+.weakness-dim-meta {
+  font-size: .75rem;
+  color: var(--text-muted);
+}
+
 @media (max-width: 640px) {
   .container { padding: 12px 16px; }
   .tabs { padding: 0 16px; }
@@ -701,5 +824,78 @@ body {
   .qb-cell-intent, .qb-cell-usage { display: none; }
   .summary-grid { grid-template-columns: 1fr; }
   .style-selector { flex-direction: column; }
+  .type-mix-sliders { flex-direction: column; gap: 10px; }
+  .type-mix-item { min-width: unset; }
   .tab-btn { padding: 12px 16px; font-size: .8rem; }
+  .weakness-profile-item {
+    grid-template-columns: 80px 1fr 36px;
+  }
+  .weakness-dim-meta { display: none; }
+}
+
+/* ===== v3.1: 市场基准参照卡片 ===== */
+.market-ref-card {
+  margin-top: 16px;
+  padding: 16px;
+  background: linear-gradient(135deg, #EEF2FF 0%, #F0FDF4 100%);
+  border: 1px solid #C7D2FE;
+  border-radius: 10px;
+}
+.mr-header {
+  font-weight: 700;
+  font-size: .9rem;
+  color: var(--primary-dark);
+  margin-bottom: 8px;
+}
+.mr-summary {
+  font-size: .85rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin-bottom: 12px;
+}
+.mr-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-bottom: 8px;
+  font-size: .82rem;
+  color: var(--text);
+}
+.mr-label {
+  font-weight: 600;
+  color: var(--text-secondary);
+  min-width: 85px;
+  flex-shrink: 0;
+}
+.mr-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.mr-tag {
+  display: inline-block;
+  padding: 2px 8px;
+  background: #DBEAFE;
+  color: #1E40AF;
+  border-radius: 12px;
+  font-size: .75rem;
+  font-weight: 500;
+}
+.mr-educell {
+  display: inline-block;
+  margin-right: 8px;
+  margin-bottom: 2px;
+  padding: 2px 8px;
+  background: #E0E7FF;
+  border-radius: 12px;
+  font-size: .75rem;
+}
+
+/* ===== v3.1: 跨岗位对比 ===== */
+.compare-jd-row input,
+.compare-jd-row textarea {
+  margin-bottom: 6px;
+}
+.compare-jd-row + .compare-jd-row {
+  margin-top: 8px;
 }

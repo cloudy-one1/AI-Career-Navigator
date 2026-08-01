@@ -2,8 +2,8 @@
 // report.js — 综合报告 + Chart.js 雷达图
 // ===================================================
 
-import { $, el, toast, DIM_NAMES } from './utils.js';
-import { getReport } from './api.js';
+import { $, el, toast, DIM_NAMES, escHtml } from './utils.js';
+import { getReport, exportReview, getGapAnalysis, crossJobCompare } from './api.js';
 
 let chartInstance = null;
 
@@ -24,6 +24,9 @@ export function initReport() {
   ));
 
   panel.appendChild(el('div', { id: 'report-content' }));
+
+  // v3.1: 跨岗位对比卡片
+  panel.appendChild(_buildCompareCard());
 }
 
 async function loadLatestReport() {
@@ -70,11 +73,20 @@ function renderReport(report) {
   }
 
   // 报告头部
+  const sessionId = report.session_id || '';
   content.appendChild(el('div', { className: 'report-header card' },
     el('div', { className: 'report-score', textContent: (report.overall_avg || 0).toFixed(1) }),
     el('div', { className: 'report-label',
       textContent: report.scoring?.weighted ? '加权综合评分 / 5' : '综合评分 / 5' }),
     el('div', { style: 'font-size:.8rem;color:var(--text-muted);margin-top:8px;', textContent: `风格: ${report.interviewer_style || 'friendly'} | ${report.rounds.length} 轮面试` }),
+    sessionId ? el('button', {
+      className: 'btn btn-secondary btn-sm',
+      style: 'margin-top:12px;',
+      textContent: '📥 导出复盘文件',
+      onClick: () => {
+        exportReview(sessionId).catch(e => toast(e.message, 'error'));
+      },
+    }) : '',
   ));
 
   // v2.6: 评分权重说明
@@ -145,6 +157,136 @@ function renderReport(report) {
       el('div', { className: 'suggestions-block', textContent: report.suggestions }),
     ));
   }
+
+  // v3.1: Gap 分析容器（异步加载）
+  const gapContainer = el('div', { id: 'gap-analysis-container' });
+  content.appendChild(gapContainer);
+
+  // 自动触发 Gap 分析
+  loadGapAnalysis(report.session_id || sessionId);
+}
+
+// ——— v3.1: Gap 分析 ———
+
+async function loadGapAnalysis(sessionId) {
+  const container = $('#gap-analysis-container');
+  if (!container || !sessionId) return;
+
+  // 加载中占位
+  container.innerHTML = '';
+  container.appendChild(el('div', { className: 'card' },
+    el('div', { className: 'card-title', textContent: '🔍 简历-岗位匹配度分析' }),
+    el('div', { className: 'loading-spinner', textContent: '正在分析你与岗位的匹配度...' }),
+  ));
+
+  try {
+    const gap = await getGapAnalysis(sessionId);
+    renderGapAnalysis(container, gap);
+  } catch (e) {
+    container.innerHTML = '';
+    container.appendChild(el('div', { className: 'card' },
+      el('div', { className: 'card-title', textContent: '🔍 简历-岗位匹配度分析' }),
+      el('div', {
+        className: 'empty-state',
+        textContent: `Gap 分析暂时不可用：${e.message || '请确认包含简历和岗位描述'}`
+      }),
+    ));
+  }
+}
+
+function renderGapAnalysis(container, gap) {
+  container.innerHTML = '';
+  if (!gap || !gap.dimensions) return;
+
+  const dims = gap.dimensions;
+  const overall = gap.overall_score || 0;
+  const riskColors = { '低': '#10B981', '中': '#F59E0B', '高': '#EF4444' };
+  const riskColor = riskColors[gap.risk_level] || '#6B7280';
+
+  // 总分卡片
+  container.appendChild(el('div', { className: 'card' },
+    el('div', { style: 'display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:16px;' },
+      el('div', {},
+        el('div', { className: 'card-title', textContent: '🔍 简历-岗位匹配度分析' }),
+        gap.market_source ? el('div', {
+          style: 'font-size:.75rem;color:var(--text-muted);',
+          textContent: `📊 市场基准：${gap.market_source.keyword} · ${gap.market_source.total} 个真实岗位数据作为参照`,
+        }) : '',
+      ),
+      el('div', { style: 'text-align:center;' },
+        el('div', {
+          style: `font-size:2.5rem;font-weight:700;color:${overall >= 3 ? '#4F46E5' : '#EF4444'};line-height:1.2;`,
+          textContent: overall.toFixed(1),
+        }),
+        el('div', { style: 'font-size:.75rem;color:var(--text-muted);', textContent: '综合匹配度 / 5' }),
+        el('div', {
+          style: `display:inline-block;padding:2px 12px;border-radius:12px;font-size:.75rem;font-weight:600;color:white;background:${riskColor};margin-top:4px;`,
+          textContent: `风险：${gap.risk_level}`,
+        }),
+      ),
+    ),
+
+    // 六维度横条
+    el('div', { style: 'margin-top:16px;' },
+      ...dims.map(d => {
+        const pct = (d.score / 5) * 100;
+        const barColor = d.score >= 4 ? '#10B981' : d.score >= 3 ? '#F59E0B' : '#EF4444';
+        return el('div', { style: 'margin-bottom:12px;' },
+          el('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;' },
+            el('div', { style: 'font-size:.85rem;font-weight:600;' },
+              el('span', { textContent: d.name }),
+              el('span', { style: 'font-size:.7rem;color:var(--text-muted);margin-left:6px;', textContent: `×${(d.weight*100).toFixed(0)}%` }),
+            ),
+            el('div', { style: 'font-size:.85rem;font-weight:700;color:' + barColor + ';', textContent: `${d.score}/5` }),
+          ),
+          el('div', { style: 'height:8px;background:#E5E7EB;border-radius:4px;overflow:hidden;' },
+            el('div', { style: `height:100%;width:${pct}%;background:${barColor};border-radius:4px;transition:width .6s ease;` }),
+          ),
+          d.evidence ? el('div', {
+            style: 'font-size:.75rem;color:var(--text-secondary);margin-top:4px;',
+            textContent: `📌 ${d.evidence}`,
+          }) : '',
+          d.suggestion ? el('div', {
+            style: 'font-size:.75rem;color:#4F46E5;font-weight:500;margin-top:2px;',
+            textContent: `💡 ${d.suggestion}`,
+          }) : '',
+        );
+      }    ),
+    ),
+
+    // v3.1: 市场基准参照
+    gap.market_reference ? _renderMarketRefBlock(gap.market_reference) : '',
+
+    // 整体评估
+    gap.overall_assessment ? el('div', {
+      style: 'margin-top:16px;padding:12px;background:#EEF2FF;border-radius:8px;font-size:.9rem;color:#3730A3;line-height:1.6;',
+    },
+      el('strong', { textContent: '📝 综合评估：' }),
+      el('span', { textContent: gap.overall_assessment }),
+    ) : '',
+  ));
+}
+
+/* v3.1: 市场基准参照渲染 */
+function _renderMarketRefBlock(ref) {
+	if (!ref || !ref.keyword) return '';
+	const cities = (ref.top_cities || []).join(' · ');
+	const eduRows = (ref.education_distribution || [])
+		.map(e => `<span class="mr-educell"><b>${escHtml(e.education)}</b> ${e.count}条</span>`)
+		.join('');
+	const skills = (ref.top_skills || [])
+		.map(s => `<span class="mr-tag">${escHtml(s)}</span>`)
+		.join(' ');
+
+	return `
+	<div class="market-ref-card">
+		<div class="mr-header">📊 市场基准参照</div>
+		<div class="mr-summary">${escHtml(ref.summary)}</div>
+		${skills ? `<div class="mr-row"><span class="mr-label">🔥 热门技能</span><div class="mr-tags">${skills}</div></div>` : ''}
+		${cities ? `<div class="mr-row"><span class="mr-label">🏙 热门城市</span><span>${cities}</span></div>` : ''}
+		${eduRows ? `<div class="mr-row"><span class="mr-label">🎓 学历分布</span><div>${eduRows}</div></div>` : ''}
+		${ref.salary_range ? `<div class="mr-row"><span class="mr-label">💰 薪资范围</span><span>${escHtml(ref.salary_range)}</span></div>` : ''}
+	</div>`;
 }
 
 function drawRadarChart(report) {
@@ -228,4 +370,165 @@ function drawRadarChart(report) {
       },
     },
   });
+}
+
+// ===== v3.1: 跨岗位对比 =====
+
+function _buildCompareCard() {
+	const container = el('div', { id: 'compare-card', className: 'card', style: 'margin-top:16px;' });
+
+	container.appendChild(el('div', { className: 'card-title', textContent: '🔄 跨岗位对比' }));
+	container.appendChild(el('p', { style: 'font-size:.85rem;color:var(--text-secondary);margin-bottom:12px;',
+		textContent: '一份简历 vs 多个岗位并行评估，告诉你更适合投哪个方向。' }));
+
+	// 简历文本
+	container.appendChild(el('label', { className: 'form-label', textContent: '简历文本', for: 'compare-resume' }));
+	container.appendChild(el('textarea', { id: 'compare-resume', className: 'form-input', rows: 4,
+		placeholder: '粘贴简历内容...' }));
+
+	// JD 列表容器
+	container.appendChild(el('label', { className: 'form-label', textContent: '岗位描述（至少2个）', style: 'margin-top:12px;' }));
+	const jdContainer = el('div', { id: 'compare-jd-list' });
+	_addCompareJD(jdContainer, '岗位A');
+	_addCompareJD(jdContainer, '岗位B');
+	container.appendChild(jdContainer);
+
+	// 添加岗位按钮
+	container.appendChild(el('button', { className: 'btn btn-secondary', style: 'margin-top:8px;font-size:.8rem;',
+		textContent: '+ 添加岗位', onClick: () => _addCompareJD(jdContainer) }));
+
+	// 对比按钮
+	container.appendChild(el('button', {
+		className: 'btn btn-primary', textContent: '开始对比分析', style: 'margin-top:12px;width:100%;',
+		onClick: _handleCrossCompare,
+	}));
+
+	// 结果容器
+	container.appendChild(el('div', { id: 'compare-result' }));
+	container.appendChild(el('div', { id: 'compare-loading', style: 'display:none;text-align:center;padding:20px;color:var(--text-muted);',
+		textContent: '⏳ 正在分析各岗位匹配度...' }));
+
+	return container;
+}
+
+function _addCompareJD(container, defaultTitle = '') {
+	const idx = (container.children.length || 0);
+	const row = el('div', { className: 'compare-jd-row', style: 'margin-top:8px;border:1px solid var(--border);border-radius:8px;padding:10px;background:#F8FAFC;' });
+
+	const titleInput = el('input', {
+		className: 'form-input', placeholder: `岗位${idx+1}名称`, value: defaultTitle,
+		style: 'margin-bottom:6px;',
+	});
+
+	const textInput = el('textarea', {
+		className: 'form-input', rows: 2,
+		placeholder: '粘贴岗位描述（JD）...',
+	});
+
+	const removeBtn = el('button', {
+		className: 'btn btn-sm', textContent: '✕ 删除',
+		style: 'margin-top:4px;font-size:.75rem;color:#EF4444;',
+		onClick: () => row.remove(),
+	});
+
+	row.appendChild(titleInput);
+	row.appendChild(textInput);
+	row.appendChild(removeBtn);
+	container.appendChild(row);
+
+	// 至少保留2个
+	updateCompareRemoveButtons(container);
+}
+
+function updateCompareRemoveButtons(container) {
+	const rows = container.querySelectorAll('.compare-jd-row');
+	rows.forEach(r => {
+		const btn = r.querySelector('button');
+		if (btn) btn.style.display = rows.length <= 2 ? 'none' : '';
+	});
+}
+
+// 监听动态删除
+document.addEventListener('click', () => {
+	const jdList = $('#compare-jd-list');
+	if (jdList) updateCompareRemoveButtons(jdList);
+});
+
+async function _handleCrossCompare() {
+	const resumeEl = $('#compare-resume');
+	const jdListEl = $('#compare-jd-list');
+	const resultEl = $('#compare-result');
+	const loadingEl = $('#compare-loading');
+
+	const resumeText = resumeEl?.value?.trim();
+	if (!resumeText || resumeText.length < 10) {
+		toast('请先粘贴简历内容（至少10字）');
+		return;
+	}
+
+	const jdRows = jdListEl?.querySelectorAll('.compare-jd-row') || [];
+	const jdList = [];
+	jdRows.forEach(row => {
+		const inputs = row.querySelectorAll('input, textarea');
+		const title = inputs[0]?.value?.trim();
+		const text = inputs[1]?.value?.trim();
+		if (title && text) jdList.push({ title, text });
+	});
+
+	if (jdList.length < 2) {
+		toast('至少需要2个有内容的岗位');
+		return;
+	}
+
+	resultEl.innerHTML = '';
+	if (loadingEl) loadingEl.style.display = '';
+
+	try {
+		const result = await crossJobCompare(resumeText, jdList);
+		_renderCompareResults(resultEl, result);
+	} catch (e) {
+		resultEl.innerHTML = `<div class="form-error" style="margin-top:12px;">${escHtml(e.message)}</div>`;
+	} finally {
+		if (loadingEl) loadingEl.style.display = 'none';
+	}
+}
+
+function _renderCompareResults(container, result) {
+	if (!result.results || result.results.length === 0) {
+		container.innerHTML = '<p style="color:var(--text-muted);margin-top:12px;">无对比结果</p>';
+		return;
+	}
+
+	const fragments = [];
+
+	// 推荐语
+	fragments.push(el('div', {
+		style: 'margin-top:16px;padding:14px;background:linear-gradient(135deg,#EEF2FF,#F0FDF4);border-radius:10px;border:1px solid #C7D2FE;',
+	}, el('div', { style: 'font-weight:700;color:var(--primary-dark);margin-bottom:6px;', textContent: '🏆 综合推荐' }),
+	   el('div', { style: 'font-size:.9rem;color:var(--text);line-height:1.6;', textContent: result.recommendation })));
+
+	// 排名柱状图
+	fragments.push(el('div', { style: 'margin-top:16px;font-weight:600;font-size:.9rem;', textContent: '📊 匹配度排名' }));
+	result.results.forEach((item, idx) => {
+		const barColor = idx === 0 ? '#10B981' : idx === result.results.length - 1 ? '#EF4444' : '#4F46E5';
+		const pct = (item.overall_score / 5) * 100;
+		fragments.push(el('div', { style: 'margin-top:10px;' },
+			el('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;' },
+				el('span', { style: 'font-weight:600;font-size:.85rem;', textContent: `${idx+1}. ${item.title}` }),
+				el('span', { style: `font-weight:700;color:${barColor};font-size:.85rem;`, textContent: `${item.overall_score}/5` }),
+			),
+			el('div', { style: 'height:8px;background:#E5E7EB;border-radius:4px;overflow:hidden;' },
+				el('div', { style: `height:100%;width:${pct}%;background:${barColor};border-radius:4px;` }),
+			),
+			// 风险等级
+			el('div', { style: 'font-size:.75rem;color:var(--text-muted);margin-top:4px;', textContent: `风险: ${item.risk_level}` }),
+			// 强项
+			item.key_strengths?.length ? el('div', { style: 'font-size:.75rem;color:#059669;margin-top:2px;', textContent: `✅ ${item.key_strengths.join(' · ')}` }) : '',
+			// 短板
+			item.key_gaps?.length ? el('div', { style: 'font-size:.75rem;color:#DC2626;margin-top:2px;', textContent: `⚠ ${item.key_gaps.join(' · ')}` }) : '',
+		));
+	});
+
+	container.innerHTML = '';
+	fragments.forEach(f => container.appendChild(f));
 }

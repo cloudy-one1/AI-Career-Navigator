@@ -1,0 +1,50 @@
+# === 环境与密钥 ===
+.env
+.env.example
+.venv/
+venv/
+
+# === Git ===
+.git/
+.gitignore
+.gitattributes
+
+# === Python ===
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+
+# === 运行时数据（保留目录结构，内容由 volume 管理）===
+data/
+*.db
+*.sqlite3
+
+# === 日志 ===
+*.log
+
+# === IDE / 编辑器 ===
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# === CodeBuddy ===
+.codebuddy/
+
+# === 文档 ===
+docs/
+
+# === 操作系统 ===
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# === Markdown / 非运行时文件 ===
+*.md
+!README.md
+preview.html

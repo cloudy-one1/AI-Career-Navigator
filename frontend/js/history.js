@@ -2,8 +2,8 @@
 // history.js — 面试历史记录
 // ===================================================
 
-import { $, el, fmtDate } from './utils.js';
-import { listSessions, getSession } from './api.js';
+import { $, el, fmtDate, DIM_NAMES } from './utils.js';
+import { listSessions, getSession, getGlobalWeaknessProfile } from './api.js';
 
 /** 初始化历史 Tab */
 export function initHistory() {
@@ -26,8 +26,51 @@ export function initHistory() {
 
   panel.appendChild(el('div', { id: 'history-detail' }));
 
+  // v2.7: 全局薄弱点画像
+  panel.appendChild(el('div', { id: 'weakness-profile', className: 'card' },
+    el('div', { className: 'card-title', textContent: '📊 能力画像（历史累积）' }),
+    el('div', { id: 'weakness-profile-content', className: 'weakness-profile-content' },
+      el('div', { className: 'streaming-indicator' },
+        el('div', { className: 'streaming-dots' },
+          el('div', { className: 'streaming-dot' }),
+          el('div', { className: 'streaming-dot' }),
+          el('div', { className: 'streaming-dot' }),
+        ),
+        el('span', { textContent: '分析中...' }),
+      ),
+    ),
+  ));
+
   loadHistory();
+  loadWeaknessProfile();
 }
+
+async function loadWeaknessProfile() {
+  const container = $('#weakness-profile-content');
+  try {
+    const data = await getGlobalWeaknessProfile();
+    const profile = data.profile || [];
+    if (profile.length === 0) {
+      container.innerHTML = '<div class="empty-state"><div class="empty-icon">📊</div><div class="empty-text">完成面试后，这里将展示你的能力画像</div></div>';
+      return;
+    }
+    container.innerHTML = '';
+    profile.forEach(p => {
+      const dimName = DIM_NAMES[p.dimension] || p.dimension;
+      const score = p.historical_avg;
+      const color = score >= 4 ? 'var(--success)' : (score >= 3 ? 'var(--warning)' : 'var(--danger)');
+      container.appendChild(el('div', { className: 'weakness-profile-item' },
+        el('div', { className: 'weakness-dim-name', textContent: dimName }),
+        el('div', { className: 'weakness-dim-bar' },
+          el('div', { className: 'weakness-dim-fill', style: `width:${score * 20}%;background:${color};` }),
+        ),
+        el('div', { className: 'weakness-dim-score', textContent: score.toFixed(1) }),
+        el('div', { className: 'weakness-dim-meta', textContent: `${p.session_count} 次面试 · 权重 ${(p.avg_weight * 100).toFixed(0)}%` }),
+      ));
+    });
+  } catch (e) {
+    container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-text">加载画像失败</div></div>`;
+  }
 
 async function loadHistory() {
   const listEl = $('#history-list');

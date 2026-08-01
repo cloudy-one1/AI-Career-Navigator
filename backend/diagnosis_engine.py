@@ -55,7 +55,8 @@ DIAGNOSTICIAN_SYSTEM_PROMPT = """你是一位严格的面试回答诊断师。
   "professional_depth": {{"score": 1-5, "comment": "评语"}},
   "weakest_dimension": "五个维度 key 中得分最低的那个",
   "follow_up_question": "针对薄弱点的追问，无需追问时为空字符串",
-  "overall_comment": "一句话综合评语"
+  "overall_comment": "一句话综合评语",
+  "risk_points": ["风险点1：如名词堆砌/方案空洞/逻辑矛盾等", "风险点2"]
 }}
 
 评分标准：
@@ -74,8 +75,37 @@ DIAGNOSTICIAN_USER_PROMPT = """请诊断以下面试回答：
 【候选人简历（供参考）】{resume}
 
 【岗位描述（供参考）】{jd}
-
+{type_guidance}
 请按五个维度逐一分析，输出 JSON。"""
+
+# ===== v2.7: 题型差异化评估指引 =====
+
+_QUESTION_TYPE_GUIDANCE = {
+    "self_intro": """【本题型：自我介绍】
+针对此类问题，请特别关注：
+- 结构是否清晰（时间线/能力模块/岗位匹配）
+- 是否提炼了核心优势而非流水账
+- 与岗位需求的关联度（展示了哪些匹配能力）
+STAR 完整度在本题型中可适当降低要求（自我介绍不强制 STAR）。""",
+
+    "knowledge": """【本题型：知识概念/技术基础】
+针对此类问题，请特别关注：
+- 专业深度：是否展示了底层原理的理解，而非停留在概念复述
+- 是否结合了实际场景/案例来佐证理论认知
+- 逻辑连贯性：概念之间的因果/层级关系是否清晰""",
+
+    "project": """【本题型：项目经验】
+针对此类问题，请特别关注：
+- STAR 完整度：S/T/A/R 四要素是否齐全
+- 量化程度：是否有具体数据（百分比/数值/时间）表征成果与影响
+- 岗位相关性：项目技术与目标岗位所需技能的匹配程度""",
+
+    "behavior": """【本题型：行为面试/软技能】
+针对此类问题，请特别关注：
+- 逻辑连贯性：叙事是否有清晰的因果链条
+- 是否给出了具体事例而非空洞表态（"我做过" vs "我善于"）
+- 回答是否体现了可迁移的能力素养而非背诵模板""",
+}
 
 # ===== Rewriter Prompt =====
 
@@ -196,6 +226,15 @@ def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None) -> di
 
     follow_up = str(diagnosis.get("follow_up_question", "") or "").strip()
 
+    # v2.7: 提取风险点
+    rp = diagnosis.get("risk_points", [])
+    if isinstance(rp, str):
+        risk_points = [rp] if rp else []
+    elif isinstance(rp, list):
+        risk_points = [str(x) for x in rp if x]
+    else:
+        risk_points = []
+
     return {
         "dimensions": dimensions,
         "dimension_details": details,
@@ -206,6 +245,7 @@ def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None) -> di
         "weakest_dimension": weakest,
         "weakest_dimension_name": DIM_NAMES.get(weakest, ""),
         "follow_up_question": follow_up,
+        "risk_points": risk_points,
         "rewritten_answer": rewrite.get("rewritten_answer", ""),
         "key_changes": rewrite.get("key_changes", []) or [],
     }
@@ -215,7 +255,8 @@ def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None) -> di
 
 async def run_diagnosis_streaming(llm_client, question: str, answer: str,
                                   resume_text: str, jd_text: str,
-                                  weights: dict | None = None
+                                  weights: dict | None = None,
+                                  question_type: str = "mixed"
                                   ) -> AsyncGenerator[dict, None]:
     """
     流式执行双 Agent 诊断，逐条 yield dict 消息（由调用方转发给 WebSocket）。
@@ -227,9 +268,11 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
       {"type": "rewrite_chunk",    "data": {"text": "片段"}}
       {"type": "diagnosis_done",   "data": {标准化结果}}
 
+    v2.7: question_type 用于注入题型差异化评估指引。
     注意：双 Agent 仍是两次独立调用，不合并（架构约束）。
     """
     w = weights or DEFAULT_WEIGHTS
+    type_guidance = _QUESTION_TYPE_GUIDANCE.get(question_type, "")
 
     # ---- Phase 1: Diagnostician ----
     yield {"type": "diagnosis_status",
@@ -238,6 +281,7 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
     diag_prompt = DIAGNOSTICIAN_USER_PROMPT.format(
         question=question, answer=answer,
         resume=(resume_text or "")[:2000], jd=(jd_text or "")[:1000],
+        type_guidance=type_guidance,
     )
 
     diag_chunks: list[str] = []
@@ -410,8 +454,9 @@ class DiagnosisEngine:
 
     def stream(self, question: str, answer: str,
                resume_text: str = "", jd_text: str = "",
-               weights: dict | None = None) -> AsyncGenerator[dict, None]:
-        """流式诊断，返回异步生成器（v2.6 WebSocket 主流程使用）。"""
+               weights: dict | None = None,
+               question_type: str = "mixed") -> AsyncGenerator[dict, None]:
+        """流式诊断，返回异步生成器（v2.6 WebSocket 主流程使用）。v2.7: 支持题型差异化。"""
         return run_diagnosis_streaming(
             llm_client=self.llm,
             question=question,
@@ -419,4 +464,5 @@ class DiagnosisEngine:
             resume_text=resume_text or "",
             jd_text=jd_text or "",
             weights=weights,
+            question_type=question_type,
         )

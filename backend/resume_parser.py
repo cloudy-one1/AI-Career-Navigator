@@ -39,11 +39,15 @@ def parse_docx(file_bytes: bytes) -> str:
         return f"[DOCX 解析失败: {e}]"
 
 
-def parse_resume(file_bytes: bytes, filename: str) -> str:
+def parse_resume(file_bytes: bytes | str, filename: str) -> str:
     """
     根据文件扩展名分派解析器。
     返回解析出的纯文本，解析失败则返回错误信息。
     """
+    # 内联文本模式（已是 str），直接返回
+    if isinstance(file_bytes, str):
+        return file_bytes.strip()
+
     ext = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
 
     if ext == "pdf":

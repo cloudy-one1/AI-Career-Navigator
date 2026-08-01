@@ -2,6 +2,7 @@
 问题生成模块：v2.2 支持 6 阶段面试的不同类型问题。
 v2.4: 新增传统 5 轮次 Prompt 配置。
 v2.6: 支持按弱项维度定向生成针对性追加题。
+v3.1: 市场数据注入——参考 market.db 真实岗位数据校验问题的"市场合理性"。
 """
 
 import asyncio
@@ -51,6 +52,79 @@ FOCUS_DIMENSION_NAMES = {
     "job_relevance": "岗位相关性",
     "professional_depth": "专业深度",
 }
+
+
+# ===== v3.1: 市场数据辅助函数 =====
+
+async def _extract_keyword_from_text(text: str) -> str:
+    """从文本中提取一个可能匹配 market.db 的关键词"""
+    if not text:
+        return ""
+    try:
+        from .market.store import list_keywords
+        known = await list_keywords()
+        text_lower = text.lower()
+        # 按关键词长度降序匹配（优先长关键词）
+        for kw in sorted(known, key=lambda x: -len(x)):
+            if len(kw) < 2:
+                continue
+            if kw.lower() in text_lower:
+                return kw
+    except Exception as e:
+        logger.debug(f"提取市场关键词跳过: {e}")
+    return ""
+
+
+async def _build_market_context_block(jd_text: str) -> str:
+    """
+    从 market.db 查询同类岗位数据，返回一段上下文文本注入出题 Prompt。
+    若无市场数据或 market.db 为空，返回空字符串（不影响现有流程）。
+    """
+    keyword = await _extract_keyword_from_text(jd_text)
+    if not keyword:
+        return ""
+
+    try:
+        from .market.store import get_stats
+        stats = await get_stats(keyword=keyword)
+        if stats.get("total", 0) == 0:
+            return ""
+    except Exception as e:
+        logger.debug(f"市场数据查询跳过: {e}")
+        return ""
+
+    parts = [f"\n\n【市场参考数据】（关键词={keyword}，共 {stats['total']} 条岗位）"]
+
+    # 热门技能
+    top_skills = stats.get("top_skills", [])[:10]
+    if top_skills:
+        skills_text = "、".join(s["skill"] for s in top_skills)
+        parts.append(f"- 热门技能要求：{skills_text}")
+        parts.append(f"  （以上来自真实招聘数据，请确保题目覆盖这些高频技能）")
+
+    # 招聘公司
+    try:
+        from .market.store import query_jobs
+        jobs = await query_jobs(keyword=keyword, limit=15)
+        companies = list(set(j.get("company", "") for j in jobs.get("items", []) if j.get("company")))
+        if companies:
+            parts.append(f"- 招聘公司类型：{', '.join(companies[:10])}")
+    except Exception:
+        pass
+
+    # 学历分布
+    edu = stats.get("education_distribution", [])
+    if edu:
+        edu_text = ", ".join(f"{e.get('education', '?')}({e.get('cnt', 0)}条)" for e in edu[:5])
+        parts.append(f"- 学历分布：{edu_text}")
+
+    # 薪资范围
+    avg = stats.get("avg_salary", {}) or {}
+    if avg.get("avg_k") and avg.get("max_k"):
+        parts.append(f"- 薪资范围：均 {avg['avg_k']}K，区间 {avg.get('min_k', '?')}-{avg['max_k']}K")
+
+    parts.append("（上述数据仅供出题参考，帮助生成更贴合真实市场的面试题。）")
+    return "\n".join(parts)
 
 # ===== v2.2: 6 阶段问题生成 Prompt 配置 =====
 
@@ -160,7 +234,8 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
                                    round_idx: int, round_name: str, count: int,
                                    mode: str = "simulation",
                                    focus_dimension: str | None = None,
-                                   weak_evidence: str = "") -> list[dict]:
+                                   weak_evidence: str = "",
+                                   type_mix: dict | None = None) -> list[dict]:
     """
     为指定轮次生成问题。
     不同轮次使用不同的聚焦角度（v2.2 扩展为 6 阶段，v2.4 支持双模式）。
@@ -168,11 +243,40 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
     v2.6 新增：
       focus_dimension — 指定弱项维度，生成定向补强题
       weak_evidence   — 该维度失分的具体证据（诊断评语），让追加题更贴合真实短板
+
+    v2.7 新增：
+      type_mix — 题型占比偏好 {knowledge, project, behavior}，0-100 的相对权重
+
+    v3.1 新增：
+      市场数据注入 — 查询 market.db 同类岗位的技能/公司信息，让题目更贴近真实招聘市场
     """
+
+    # v3.1: 市场数据注入（仅非补强题时注入，补强题本身已有定向上下文）
+    market_block = ""
+    if not focus_dimension:
+        try:
+            market_block = await _build_market_context_block(jd_text or "")
+        except Exception as e:
+            logger.debug(f"市场数据注入跳过: {e}")
     # v2.4: 根据面试模式选择 Prompt 集
     prompts = TRADITIONAL_ROUND_PROMPTS if mode == "traditional" else ROUND_PROMPTS
     round_config = prompts.get(round_idx, prompts.get(0, prompts[list(prompts.keys())[0]]))
     focus = round_config["focus"]
+
+    # v2.7: 题型占比偏好注入
+    type_mix_block = ""
+    if type_mix:
+        k = type_mix.get("knowledge", 0)
+        p = type_mix.get("project", 0)
+        b = type_mix.get("behavior", 0)
+        total = k + p + b
+        if total > 0:
+            type_mix_block = (
+                f"\n\n【题型占比偏好】\n"
+                f"本次面试的题型偏好分布为：基础知识概念题约 {k * 100 // total}%、"
+                f"实际项目经验题约 {p * 100 // total}%、行为/软技能题约 {b * 100 // total}%。\n"
+                f"请在保持本轮考察重点的前提下，尽量使题目类型分布接近此偏好。"
+            )
 
     # v2.6: 叠加弱项定向策略
     extra_block = ""
@@ -197,15 +301,16 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
 
 【岗位描述】
 {jd_text[:2000] if jd_text else "无"}
+{market_block}
 
 【本轮的考察重点】
-{focus}{extra_block}
+{focus}{type_mix_block}{extra_block}
 
 要求：
 1. 每个问题附上「考察意图」（1 句话即可）
 2. 问题应与候选人的实际经验强关联，避免空洞的通用题
 3. 难度递进：第 1 题为基础热身，最后 1 题为深度挑战
-4. 输出严格 JSON 格式：{{"questions": [{{"index": 0, "question": "...", "intent": "..."}}, ...]}}
+4. 输出严格 JSON 格式：{{"questions": [{{"index": 0, "question": "...", "intent": "...", "question_type": "knowledge/project/behavior"}}, ...]}}
 
 只输出 JSON，不要任何额外文字。"""
 
@@ -231,10 +336,57 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
         return []
 
 
+async def generate_coach_tip(llm_client, resume_text: str, jd_text: str,
+                                round_name: str) -> dict | None:
+    """
+    v2.7 教练模式：为当前轮次生成知识点讲解引导。
+    返回一个伪问题 dict，question_type 为 'coach_tip'，前端特殊渲染。
+    """
+    system_prompt = get_question_gen_system_prompt()
+    user_prompt = f"""你是一位面试教练。本轮是「{round_name}」。
+
+请针对候选人的简历和岗位 JD，生成一段简短的知识点讲解（200 字以内），
+帮助候选人理解本轮面试官最看重什么、常见踩坑点有哪些、以及回答框架建议。
+
+【候选人简历】
+{resume_text[:2000]}
+
+【岗位描述】
+{jd_text[:1500] if jd_text else "无"}
+
+输出严格 JSON 格式：
+{{"question": "讲解标题", "intent": "讲解正文", "question_type": "coach_tip"}}
+
+只输出 JSON，不要任何额外文字。"""
+
+    try:
+        result = await asyncio.to_thread(
+            llm_client.chat_json,
+            system_prompt,
+            user_prompt,
+            0.7,
+            1024,
+        )
+        if isinstance(result, dict) and result.get("question"):
+            result["question_type"] = "coach_tip"
+            result["index"] = -2
+            return result
+    except Exception as e:
+        logger.error(f"生成教练引导失败: {e}")
+    return None
+
+
 async def generate_questions(llm_client, resume_text: str, jd_text: str) -> dict:
     """
     兼容 v1 的单次生成接口。自动提取 JD 关键词 + 生成 8 道题。
+    v3.1: 注入市场参考数据。
     """
+    market_block = ""
+    try:
+        market_block = await _build_market_context_block(jd_text or "")
+    except Exception as e:
+        logger.debug(f"市场数据注入跳过: {e}")
+
     system_prompt = get_question_gen_system_prompt()
     user_prompt = f"""请根据以下信息，生成 8 道覆盖面广的面试问题。
 
@@ -243,6 +395,7 @@ async def generate_questions(llm_client, resume_text: str, jd_text: str) -> dict
 
 【岗位描述】
 {jd_text[:2000] if jd_text else "无"}
+{market_block}
 
 要求：
 1. 覆盖：技术基础（2 题）、项目深挖（2 题）、系统设计（1 题）、行为面试（2 题）、综合/文化（1 题）

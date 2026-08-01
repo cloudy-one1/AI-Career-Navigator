@@ -1,48 +1,120 @@
 """
-FastAPI 入口 v2.5：HTTP + WebSocket 路由。
-双模式面试 + 面试官自动切换 + 题库管理 + 岗位画像研究 + 诊断反馈。
+FastAPI 入口 v3.1：HTTP + WebSocket 路由。
+双模式面试 + 面试官自动切换 + 题库管理 + 岗位画像研究 + 诊断反馈 + 市场数据层
++ Web 安全加固（slowapi 限流 / CORS 收紧 / 请求体大小限制 / 安全响应头）。
 """
 
 import json
 import logging
+import os
 import time
 import uuid
 from typing import Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Query, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Query, HTTPException, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
+from slowapi import Limiter
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from starlette.middleware.base import BaseHTTPMiddleware
 
+from . import logger as app_logger
 from .config import config
-from .db import init_db, save_session, update_session_status, get_session, list_sessions, save_report, get_report, get_session_qas
+from .db import (
+    init_db, save_session, update_session_status, get_session, list_sessions,
+    save_report, get_report, get_session_qas,
+    save_weakness_profile, get_weakness_profile, get_global_weakness_profile,
+)
 from .db import save_feedback as db_save_feedback, get_feedback_stats
 from .llm_client import LLMClient
 from .diagnosis_engine import DiagnosisEngine
 from .interview_engine import InterviewSession  # v2.5: 子包引用
+from .interview_engine.report import generate_review_markdown
 from .resume_parser import parse_resume
 from .schemas import (
     SessionCreateRequest, SessionCreateResponse,
     ProviderSwitchRequest, ProviderListResponse, ProviderInfo,
     ReportData, DiagnosisFeedbackRequest, FeedbackStatsResponse,
+    GapAnalysisRequest, GapAnalysisResponse,
+    CrossJobCompareRequest, CrossJobCompareResponse, JobCompareItem,
 )
 from .security import full_check, check_output
 from .web_research import enrich_jd_with_research
 from . import question_bank as qbank
+from .market import store as market_store, service as market_service  # v3.0
+from . import gap_analyzer  # v3.1
 
-logging.basicConfig(level=logging.INFO,
-                    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+# ─── 集中日志 ───
+app_logger.setup_logging()
 logger = logging.getLogger("main")
 
-app = FastAPI(title="AI 面试官 v2.5", version="2.5.0")
+# ─── 限流器 ───
+limiter = Limiter(key_func=get_remote_address, default_limits=[config.RATE_LIMIT_GLOBAL])
 
+# ─── 安全响应头中间件 ───
+_SECURITY_HEADERS = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "X-XSS-Protection": "1; mode=block",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
+}
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: Request, call_next):
+        response = await call_next(request)
+        for k, v in _SECURITY_HEADERS.items():
+            response.headers.setdefault(k, v)
+        return response
+
+
+# ─── 请求体大小限制中间件 ───
+class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
+    _UPLOAD_PATHS = ("/api/sessions/upload", "/api/market/import")
+
+    async def dispatch(self, request: Request, call_next):
+        path = request.url.path
+        limit = config.MAX_UPLOAD_BYTES if any(path.startswith(p) for p in self._UPLOAD_PATHS) else config.MAX_REQUEST_BYTES
+        content_length = request.headers.get("content-length")
+        if content_length and int(content_length) > limit:
+            return JSONResponse(
+                status_code=413,
+                content={"detail": f"请求体过大，上限 {limit // 1024 // 1024}MB" if limit >= 1024 * 1024 else f"请求体过大，上限 {limit // 1024}KB"},
+            )
+        return await call_next(request)
+
+
+# ─── 解析 CORS origins ───
+_cors_origins = [o.strip() for o in config.CORS_ORIGINS.split(",") if o.strip()]
+
+# ─── FastAPI 应用 ───
+app = FastAPI(title="AI 面试官 v3.1", version="3.1.0")
+
+# CORS 中间件（最先注册）
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins or ["*"],  # 空列表 = 开发模式，允许所有
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# 安全响应头（在 CORS 之后，影响所有响应）
+app.add_middleware(SecurityHeadersMiddleware)
+
+# 请求体大小限制（在路由匹配前生效）
+app.add_middleware(RequestSizeLimitMiddleware)
+
+# 注册 slowapi 限流异常处理器
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
+    status_code=429,
+    content={"detail": f"请求过于频繁，请稍后再试。限制：{config.RATE_LIMIT_GLOBAL}"},
+))
 
 # ===== 全局服务状态 =====
 llm_client = LLMClient(provider=config.AI_PROVIDER)
@@ -53,14 +125,15 @@ active_sessions: dict[str, InterviewSession] = {}
 @app.on_event("startup")
 async def startup():
     await init_db()
-    logger.info(f"AI 面试官 v2.4 启动完成，当前后端: {config.AI_PROVIDER}")
+    await market_store.init_market_db()  # v3.0: 市场岗位库（幂等）
+    logger.info(f"AI 面试官 v3.0 启动完成，当前后端: {config.AI_PROVIDER}")
 
 
 # ===== 健康检查 =====
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "2.4", "provider": config.AI_PROVIDER}
+    return {"status": "ok", "version": "3.0", "provider": config.AI_PROVIDER}
 
 
 # ===== AI 后端管理 (v2.1) =====
@@ -108,7 +181,8 @@ async def switch_provider(req: ProviderSwitchRequest):
 # ===== 会话管理 =====
 
 @app.post("/api/sessions", response_model=SessionCreateResponse)
-async def create_session(req: SessionCreateRequest):
+@limiter.limit(config.RATE_LIMIT_SESSION)
+async def create_session(req: SessionCreateRequest, request: Request = None):
     session_id = uuid.uuid4().hex[:12]
 
     # 解析简历
@@ -131,8 +205,18 @@ async def create_session(req: SessionCreateRequest):
         except Exception as e:
             logger.warning(f"岗位画像丰富跳过: {e}")
 
+    # v3.0: 本地市场库命中时，把定量快照（薪资/技能分布）并入岗位画像
+    try:
+        snapshot = await market_service.find_relevant_snapshot(jd_final)
+        if snapshot and snapshot.get("total"):
+            research_data["market_snapshot"] = snapshot
+            logger.info(f"市场快照命中: {snapshot.get('keyword')} ({snapshot.get('total')} 条)")
+    except Exception as e:
+        logger.warning(f"市场快照获取跳过: {e}")
+
     await save_session(session_id, style=req.style or "friendly",
-                       resume_filename="inline", jd_text=jd_final)
+                       resume_filename="inline", jd_text=jd_final,
+                       resume_text=resume_text)
 
     # 创建面试会话 (v2.4: 传递 mode)
     session = InterviewSession(
@@ -143,6 +227,8 @@ async def create_session(req: SessionCreateRequest):
         diagnosis_engine=diagnosis_engine,
         interview_style=req.style or "friendly",
         mode=req.mode or "simulation",
+        include_self_intro=req.include_self_intro or False,
+        question_type_mix=req.question_type_mix or {},
     )
     active_sessions[session_id] = session
 
@@ -162,7 +248,13 @@ async def create_session(req: SessionCreateRequest):
 
 
 @app.post("/api/sessions/upload")
-async def upload_resume(file: UploadFile = File(...)):
+@limiter.limit(config.RATE_LIMIT_UPLOAD)
+async def upload_resume(request: Request, file: UploadFile = File(...)):
+    # 额外：文件大小硬限制（前端也应校验，但后端做最后一道防线）
+    content = await file.read()
+    if len(content) > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"文件过大，上限 {config.MAX_UPLOAD_BYTES // 1024 // 1024}MB")
+
     allowed_ext = (".pdf", ".docx", ".txt")
     if not file.filename:
         raise HTTPException(400, "缺少文件名")
@@ -170,7 +262,6 @@ async def upload_resume(file: UploadFile = File(...)):
     if f".{ext}" not in allowed_ext:
         raise HTTPException(400, f"不支持的文件格式: {ext}。支持 {allowed_ext}")
 
-    content = await file.read()
     text = parse_resume(content, filename=file.filename)
     return {"filename": file.filename, "text": text[:5000], "length": len(text)}
 
@@ -324,11 +415,53 @@ async def get_feedback(session_id: str):
         raise HTTPException(500, str(e))
 
 
+# ===== v2.7: 薄弱点画像 API =====
+
+@app.get("/api/weakness-profile")
+async def global_weakness_profile():
+    """获取全局薄弱点聚合（各维度历史平均分）"""
+    try:
+        profile = await get_global_weakness_profile()
+        return {"status": "ok", "profile": profile}
+    except Exception as e:
+        logger.error(f"获取全局薄弱点失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/weakness-profile/{session_id}")
+async def session_weakness_profile(session_id: str):
+    """获取指定会话的薄弱点快照"""
+    try:
+        profile = await get_weakness_profile(session_id)
+        return {"status": "ok", "session_id": session_id, "profile": profile}
+    except Exception as e:
+        logger.error(f"获取会话薄弱点失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/reports/{session_id}/review")
+async def export_review(session_id: str):
+    """导出复盘 Markdown 文件"""
+    try:
+        report = await get_report(session_id)
+        if not report:
+            raise HTTPException(404, "报告不存在")
+        md = generate_review_markdown(report)
+        return Response(content=md, media_type="text/markdown; charset=utf-8",
+                        headers={"Content-Disposition": f"attachment; filename=review_{session_id}.md"})
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"生成复盘文件失败: {e}")
+        raise HTTPException(500, str(e))
+
+
 # ===== v2.5: 岗位画像研究 API =====
 
 @app.post("/api/research-position")
+@limiter.limit("10/minute")
 async def research_position(jd_text: str = Form(""), position: str = Form(""),
-                             company: str = Form("")):
+                             company: str = Form(""), request: Request = None):
     """搜索并分析岗位信息"""
     try:
         result = await enrich_jd_with_research(
@@ -343,9 +476,283 @@ async def research_position(jd_text: str = Form(""), position: str = Form(""),
         raise HTTPException(500, str(e))
 
 
-# ===== WebSocket 面试 =====
+# ===== v3.0: 市场数据 API =====
 
-import os
+@app.post("/api/market/import")
+@limiter.limit("5/minute")
+async def market_import(
+    request: Request,
+    db_path: str = Form(""),
+    keyword: Optional[str] = Form(None),
+    city: Optional[str] = Form(None),
+    limit: int = Form(5000),
+):
+    """
+    从 job-crawler data.db 导入岗位到 market.db。
+    db_path 为空时使用 .env 中的 JOB_CRAWLER_DB_PATH 配置。
+    同步执行，完成后返回导入摘要。
+    """
+    crawler_path = db_path.strip() or config.JOB_CRAWLER_DB_PATH
+    if not crawler_path:
+        raise HTTPException(400,
+            "请提供 db_path 或在 .env 中配置 JOB_CRAWLER_DB_PATH")
+
+    if not os.path.exists(crawler_path):
+        raise HTTPException(400, f"job-crawler 数据库不存在: {crawler_path}")
+
+    result = await market_service.import_and_store(
+        crawler_db_path=crawler_path,
+        keyword=keyword.strip() if keyword else None,
+        city=city.strip() if city else None,
+        limit=max(1, min(limit, 10000)),
+    )
+    return {"status": "ok", **result}
+
+
+@app.get("/api/market/jobs")
+async def market_jobs(
+    keyword: Optional[str] = Query(None),
+    city: Optional[str] = Query(None),
+    education: Optional[str] = Query(None),
+    salary_min: Optional[float] = Query(None, ge=0),
+    salary_max: Optional[float] = Query(None, ge=0),
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+):
+    """岗位列表查询（关键词/城市/学历/薪资区间过滤 + 分页）"""
+    return await market_store.query_jobs(
+        keyword=keyword, city=city, education=education,
+        salary_min=salary_min, salary_max=salary_max,
+        limit=limit, offset=offset,
+    )
+
+
+@app.get("/api/market/stats")
+async def market_stats(keyword: Optional[str] = Query(None)):
+    """市场统计概览：总量/城市/薪资/学历分布、平均薪资、热门技能"""
+    return await market_store.get_stats(keyword=keyword)
+
+
+# ===== v3.1: Gap 分析 API =====
+
+@app.post("/api/gap-analysis", response_model=GapAnalysisResponse)
+@limiter.limit(config.RATE_LIMIT_GAP)
+async def gap_analysis(req: GapAnalysisRequest, request: Request = None):
+    """
+    简历-岗位 Gap 分析：六维度透明评分。
+      技能(35%) / 城市(15%) / 学历(15%) / 经验(15%) / 薪资(10%) / 可信度(10%)
+    当 market.db 中有对应岗位数据时，自动注入市场基准（薪资分位、学历分布等）。
+    """
+    try:
+        result = await gap_analyzer.analyze_gap(
+            resume_text=req.resume_text,
+            jd_text=req.jd_text,
+            keyword=req.keyword or "",
+            use_market=True,
+            llm_client=llm_client,
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Gap分析失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/gap-analysis/{session_id}")
+async def gap_analysis_by_session(session_id: str):
+    """
+    根据已完成的会话获取 Gap 分析结果。
+    优先使用面试时缓存的简历+JD，若无则返回 404。
+    """
+    session = await get_session(session_id)
+    if not session:
+        raise HTTPException(404, "会话不存在")
+
+    resume_text = session.get("resume_text", "")
+    jd_text = session.get("jd_text", "")
+    if not resume_text and not jd_text:
+        raise HTTPException(400, "该会话没有简历或JD，无法生成Gap分析")
+
+    # 从 JD 中提取关键词用于市场查询
+    keyword = gap_analyzer._extract_keyword_from_jd(jd_text)
+
+    try:
+        result = await gap_analyzer.analyze_gap(
+            resume_text=resume_text,
+            jd_text=jd_text,
+            keyword=keyword,
+            use_market=True,
+            llm_client=llm_client,
+        )
+        return result
+    except Exception as e:
+        logger.error(f"Gap分析失败(session={session_id}): {e}")
+        raise HTTPException(500, str(e))
+
+
+# ===== v3.1: 跨岗位对比 =====
+
+def _sorted_gap_dims(gap: dict) -> list:
+    """按权重排序的维度列表（权重高的排前面）"""
+    dims = gap.get("dimensions", [])
+    if not dims:
+        return []
+    return sorted(dims, key=lambda d: -(d.get("weight", 0) or 0))
+
+
+def _make_compare_item(title: str, gap: dict) -> JobCompareItem:
+    """将 gap 分析结果转换为对比项"""
+    dims = _sorted_gap_dims(gap)
+    strengths = [f"{d['name']} ({d['score']}/5)" for d in dims if d.get("score", 0) >= 3.5][:3]
+    gaps_list = [f"{d['name']} ({d.get('score',0)}/5): {d.get('gap','')}" for d in dims if d.get("score", 0) < 3.5][:3]
+    mr = gap.get("market_reference")
+    return JobCompareItem(
+        title=title,
+        overall_score=gap["overall_score"],
+        risk_level=gap["risk_level"],
+        key_strengths=strengths,
+        key_gaps=gaps_list if gaps_list else ["各维度表现均衡"],
+        dimensions=[d for d in dims],
+        market_reference=mr if mr and mr.get("keyword") else None,
+    )
+
+
+@app.post("/api/cross-job-compare", response_model=CrossJobCompareResponse)
+@limiter.limit("5/minute")
+async def cross_job_compare(req: CrossJobCompareRequest, request: Request = None):
+    """
+    一份简历 vs 多个岗位：并行评估每个岗位的匹配度，输出排名 + 推荐。
+    每个岗位独立调用 Gap 分析（含市场参考），然后汇总对比。
+    """
+    import asyncio
+
+    if len(req.jd_list) < 2:
+        raise HTTPException(400, "至少需要 2 个岗位进行对比")
+
+    # 并行分析所有岗位
+    notebook = request.scope.get("state", {}).get("notebook")
+
+    async def analyze_one(title: str, jd_text: str) -> tuple[str, dict]:
+        try:
+            result = await gap_analyzer.analyze_gap(
+                resume_text=req.resume_text,
+                jd_text=jd_text,
+                use_market=True,
+                notebook=notebook,
+            )
+            return title, result
+        except Exception as e:
+            logger.warning(f"跨岗位对比-{title} 分析失败: {e}")
+            return title, gap_analyzer._fallback_gap_result(str(e))
+
+    tasks = [analyze_one(entry.title, entry.text) for entry in req.jd_list]
+    raw_results = await asyncio.gather(*tasks)
+
+    # 转换为对比结果列表
+    compare_items = [_make_compare_item(title, gap) for title, gap in raw_results]
+
+    # 按总分排序（降序）
+    compare_items.sort(key=lambda x: x.overall_score, reverse=True)
+
+    # 生成推荐语
+    ranking = [item.title for item in compare_items]
+    best = compare_items[0]
+    worst = compare_items[-1]
+    score_gap = best.overall_score - worst.overall_score
+
+    if score_gap > 1.5:
+        recommendation = (
+            f"强烈推荐「{best.title}」— 综合匹配度 {best.overall_score}/5，"
+            f"远高于「{worst.title}」({worst.overall_score}/5)。"
+            f"建议优先投递该岗位方向。"
+        )
+    elif score_gap > 0.5:
+        recommendation = (
+            f"推荐「{best.title}」({best.overall_score}/5)，与「{worst.title}」"
+            f"({worst.overall_score}/5) 有一定差距。二者的方向不同，建议根据个人偏好权衡。"
+        )
+    else:
+        recommendation = (
+            f"各岗位匹配度接近（最高 {best.overall_score}/5，最低 {worst.overall_score}/5）。"
+            f"建议综合考虑公司、团队、成长空间等因素做决策。"
+        )
+
+    return CrossJobCompareResponse(
+        results=compare_items,
+        recommendation=recommendation,
+        ranking=ranking,
+    )
+
+
+# ===== v3.1: 预热机制 =====
+
+@app.post("/api/warmup")
+@limiter.limit("1/minute")
+async def warmup(request: Request):
+    """
+    预热：预计算所有已知 JD 的权重缓存。
+    遍历历史会话中的唯一 JD 文本，对未缓存的调用 LLM 分析并写入缓存。
+    返回 {precomputed, skipped} 计数。
+    """
+    try:
+        import hashlib
+        sessions_data = await list_sessions()
+        sessions = sessions_data.get("sessions", []) if isinstance(sessions_data, dict) else []
+    except Exception:
+        sessions = []
+
+    if not sessions:
+        return {"message": "没有历史会话可预热", "precomputed": 0, "skipped": 0, "total_jds": 0}
+
+    # 收集唯一 JD 文本
+    seen_hashes = set()
+    unique_jds: list[str] = []
+    for s in sessions:
+        jd = (s.get("jd_text") or "").strip()
+        if jd and len(jd) >= 8:
+            jd_normalized = jd[:2000]
+            h = hashlib.sha256(jd_normalized.encode("utf-8")).hexdigest()
+            if h not in seen_hashes:
+                seen_hashes.add(h)
+                unique_jds.append(jd_normalized)
+
+    if not unique_jds:
+        return {"message": "没有足够长的 JD 文本可预热", "precomputed": 0, "skipped": 0, "total_jds": 0}
+
+    precomputed = 0
+    skipped = 0
+
+    from .dimension_weights import analyze_jd_weights
+
+    llm = LLMClient()
+
+    for jd_text in unique_jds:
+        jd_hash = hashlib.sha256(jd_text.encode("utf-8")).hexdigest()
+        # 检查是否已有缓存
+        try:
+            from .db import lookup_jd_weights
+            existing = await lookup_jd_weights(jd_hash)
+            if existing:
+                skipped += 1
+                continue
+        except Exception:
+            pass
+
+        # 缓存未命中，调用 LLM 并写入缓存
+        try:
+            await analyze_jd_weights(llm, jd_text)
+            precomputed += 1
+        except Exception as e:
+            logger.warning(f"预热 JD 权重失败: {e}")
+
+    return {
+        "message": f"预热完成：{precomputed} 个已计算，{skipped} 个已缓存",
+        "precomputed": precomputed,
+        "skipped": skipped,
+        "total_jds": len(unique_jds),
+    }
+
+
+# ===== WebSocket 面试 =====
 
 
 def _answer_texts(session) -> list[str]:
@@ -449,6 +856,7 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                         "is_extra": q.get("is_extra", False),
                         "focus_dimension": q.get("focus_dimension", ""),
                         "focus_dimension_name": q.get("focus_dimension_name", ""),
+                        "question_type": q.get("question_type", ""),
                     }
                 })
 
@@ -601,6 +1009,20 @@ async def ws_interview(websocket: WebSocket, session_id: str):
         report = session.build_report()
         await save_report(session_id, report)
         await update_session_status(session_id, "completed")
+
+        # v2.7: 保存薄弱点画像
+        try:
+            for dim_name, dim_data in report.get("dimension_details", {}).items():
+                weight = report.get("weights", {}).get(dim_name, 0.2)
+                avg = dim_data.get("average", 0)
+                # 收集该维度下的所有风险点
+                rps = []
+                for qa in report.get("detailed_qa", []):
+                    if qa.get("weakest_dimension") == dim_name:
+                        rps.extend(qa.get("risk_points", []))
+                await save_weakness_profile(session_id, dim_name, avg, weight, rps)
+        except Exception as e:
+            logger.error(f"保存薄弱点画像失败: {e}")
 
         await websocket.send_json({
             "type": "interview_done",

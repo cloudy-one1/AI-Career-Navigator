@@ -84,6 +84,22 @@ class Config:
     # 静态数据文件
     SKILLS_DATA_PATH = os.path.join(BASE_DIR, "backend", "skills_data.json")
 
+    # ===== v3.1: Web 安全配置 =====
+    # CORS: 允许的前端来源（逗号分隔），空字符串 = 允许所有（开发模式）
+    CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000")
+    # 请求体大小限制（字节）
+    MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", 10 * 1024 * 1024))  # 上传 10MB
+    MAX_REQUEST_BYTES = int(os.getenv("MAX_REQUEST_BYTES", 1 * 1024 * 1024))  # 普通请求 1MB
+    # 限流：全局 / IP / 分钟
+    RATE_LIMIT_GLOBAL = os.getenv("RATE_LIMIT_GLOBAL", "100/minute")
+    RATE_LIMIT_UPLOAD = os.getenv("RATE_LIMIT_UPLOAD", "10/minute")
+    RATE_LIMIT_GAP = os.getenv("RATE_LIMIT_GAP", "20/minute")
+    RATE_LIMIT_SESSION = os.getenv("RATE_LIMIT_SESSION", "20/minute")
+
+    # ===== v3.0: 市场数据层 =====
+    MARKET_DB_PATH = os.path.join(BASE_DIR, "data", "market.db")
+    JOB_CRAWLER_DB_PATH = os.getenv("JOB_CRAWLER_DB_PATH", "")            # job-crawler data.db 路径（空=导入时指定）
+
     # ===== v2 追问阈值 =====
     FOLLOW_UP_MIN_LENGTH = 30       # 回答低于此字数触发追问
     FOLLOW_UP_MAX_COUNT = 2         # 单题最多追问次数

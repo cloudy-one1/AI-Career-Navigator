@@ -8,6 +8,7 @@
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 
@@ -146,7 +147,8 @@ def top_dimension(weights: dict) -> str:
 async def analyze_jd_weights(llm_client, jd_text: str) -> dict:
     """
     分析 JD 得出五维度权重。
-    返回 {"weights": {...}, "reason": str, "source": "llm"|"default"}
+    先查缓存（基于 JD 文本 SHA256），未命中再调 LLM。
+    返回 {"weights": {...}, "reason": str, "source": "llm"|"cache"|"default"}
     任何异常都退化为等权，不阻断面试流程。
     """
     # 中文 JD 信息密度高，8 字即可判断岗位方向（如"数据分析岗，要求量化"）
@@ -157,11 +159,25 @@ async def analyze_jd_weights(llm_client, jd_text: str) -> dict:
             "source": "default",
         }
 
+    jd_normalized = jd_text.strip()[:2000]
+    jd_hash = hashlib.sha256(jd_normalized.encode("utf-8")).hexdigest()
+
+    # ─── 缓存检查 ───
+    try:
+        from .db import lookup_jd_weights
+        cached = await lookup_jd_weights(jd_hash)
+        if cached:
+            logger.info(f"JD 权重命中缓存 (hash={jd_hash[:12]}...) → {describe_weights(cached['weights'])}")
+            return cached
+    except Exception as e:
+        logger.debug(f"JD 权重缓存查询跳过: {e}")
+
+    # ─── LLM 分析 ───
     try:
         raw = await asyncio.to_thread(
             llm_client.chat_json,
             WEIGHT_SYSTEM_PROMPT,
-            WEIGHT_USER_PROMPT.format(jd=jd_text[:2000]),
+            WEIGHT_USER_PROMPT.format(jd=jd_normalized),
             0.2,
             600,
         )
@@ -184,5 +200,14 @@ async def analyze_jd_weights(llm_client, jd_text: str) -> dict:
     weights = normalize_weights(raw.get("weights"))
     reason = str(raw.get("reason", "")).strip() or "根据岗位描述动态分配"
 
+    result = {"weights": weights, "reason": reason, "source": "llm"}
+
+    # ─── 写入缓存 ───
+    try:
+        from .db import save_jd_weights
+        await save_jd_weights(jd_hash, jd_normalized[:100], result)
+    except Exception as e:
+        logger.debug(f"JD 权重缓存写入跳过: {e}")
+
     logger.info(f"JD 动态权重: {describe_weights(weights)} | {reason}")
-    return {"weights": weights, "reason": reason, "source": "llm"}
+    return result

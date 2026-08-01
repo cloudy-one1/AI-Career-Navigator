@@ -201,3 +201,72 @@ def _dimension_advice(key: str) -> str:
         "job_relevance": "建议逐条对照 JD 要求，为每项核心能力准备一段对应的亲身经历。",
         "professional_depth": "建议在描述技术方案时补充'为什么选这个方案而非其他'以及关键权衡的思考过程。",
     }.get(key, "建议围绕该维度做专项练习。")
+
+
+from datetime import datetime
+
+
+def generate_review_markdown(report: dict) -> str:
+    """v2.7: 生成复盘文件（Markdown 格式，侧重学习改进）"""
+    lines = []
+    lines.append("# 面试复盘报告")
+    lines.append(f"\n**生成时间**: {report.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M'))}")
+    lines.append(f"**面试模式**: {report.get('interview_mode', '模拟面试')}")
+    lines.append(f"**总得分**: {report.get('overall_avg', 0):.2f} / 5.0")
+    lines.append("\n---\n")
+
+    # 1. 本轮诊断速览
+    lines.append("## 一、诊断速览\n")
+    for rd in report.get("rounds", []):
+        rd_name = rd.get("round_name", "未知轮次")
+        rd_score = rd.get("avg_score", 0)
+        emoji = "🟢" if rd_score >= 4 else ("🟡" if rd_score >= 3 else "🔴")
+        lines.append(f"- **{emoji} {rd_name}**: {rd_score:.2f} 分")
+    lines.append("")
+
+    # 2. 薄弱维度识别
+    lines.append("## 二、薄弱维度（优先改进）\n")
+    weakness_items = []
+    for rd in report.get("rounds", []):
+        for dim_name, dim_data in rd.get("dimension_details", {}).items():
+            score = dim_data.get("average", 0)
+            if score < 3.0:
+                weakness_items.append((dim_name, score, dim_data.get("suggestion", "")))
+    if weakness_items:
+        weakness_items.sort(key=lambda x: x[1])
+        for dim_name, score, suggestion in weakness_items[:3]:
+            lines.append(f"- **{dim_name}**: {score:.2f} 分")
+            if suggestion:
+                lines.append(f"  - 改进建议: {suggestion}")
+    else:
+        lines.append("- 暂无显著薄弱维度，继续保持！")
+    lines.append("")
+
+    # 3. 可背诵的标准答案
+    lines.append("## 三、参考答案沉淀\n")
+    lines.append(
+        "> 以下是将你的回答优化后的标准版本，建议背诵核心要点。\n"
+    )
+    for qa in report.get("detailed_qa", []):
+        q = qa.get("question", "")
+        rewritten = qa.get("rewritten_answer", "")
+        if rewritten:
+            lines.append(f"### Q: {q}")
+            lines.append(f"{rewritten}")
+            lines.append("")
+
+    # 4. 下次面试 TODO
+    lines.append("## 四、下次面试 TODO\n")
+    lines.append("- [ ] 针对薄弱维度专项练习")
+    lines.append("- [ ] 熟背参考答案的核心结构")
+    lines.append("- [ ] 用量化数据替换模糊描述")
+    lines.append("- [ ] 练习 STAR 法则完整叙事")
+    lines.append("")
+
+    # 5. 原始报告链接
+    lines.append("---\n")
+    lines.append(
+        "> 完整诊断数据见系统内的「综合报告」页面。"
+    )
+
+    return "\n".join(lines)

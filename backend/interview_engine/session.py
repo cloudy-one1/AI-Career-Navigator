@@ -14,7 +14,7 @@ import asyncio
 import logging
 
 from ..config import config
-from ..question_gen import generate_round_questions, FOCUS_DIMENSION_NAMES
+from ..question_gen import generate_round_questions, FOCUS_DIMENSION_NAMES, generate_coach_tip
 from ..dimension_weights import (
     DEFAULT_WEIGHTS,
     DIM_KEYS,
@@ -35,7 +35,9 @@ class InterviewSession:
 
     def __init__(self, session_id: str, resume_text: str, jd_text: str,
                  llm_client, diagnosis_engine, interview_style: str = "friendly",
-                 db=None, mode: str = "simulation"):
+                 db=None, mode: str = "simulation",
+                 include_self_intro: bool = False,
+                 question_type_mix: dict = None):
         self.session_id = session_id
         self.resume_text = resume_text
         self.jd_text = jd_text
@@ -44,6 +46,11 @@ class InterviewSession:
         self.style = interview_style
         self.db = db
         self.mode = mode
+
+        # v2.7: 自我介绍 + 题型占比
+        self.include_self_intro = include_self_intro
+        self.self_intro_done = False
+        self.question_type_mix = question_type_mix or {}
 
         self.rounds = (config.TRADITIONAL_ROUNDS if mode == "traditional"
                        else config.INTERVIEW_ROUNDS)
@@ -141,6 +148,32 @@ class InterviewSession:
 
     def get_interviewer_system_prompt(self) -> str:
         return self.current_interviewer().get("prompt_modifier", "")
+
+    def _get_question_type(self) -> str:
+        """推断当前问题的题型，用于差异化诊断。"""
+        q = self.current_question
+        if q and isinstance(q, dict) and q.get("question_type"):
+            return q["question_type"]
+
+        info = self.current_round_info()
+        round_name = info.get("name", "")
+
+        type_map = {
+            "破冰": "self_intro",
+            "笔试": "knowledge",
+            "技术广度": "knowledge",
+            "技术深度": "knowledge",
+            "技术一面": "knowledge",
+            "技术二面": "knowledge",
+            "项目拷问": "project",
+            "项目深挖": "project",
+            "行为面试": "behavior",
+            "综合面试": "mixed",
+            "综合": "mixed",
+            "反问收尾": "mixed",
+            "自定义环节": "mixed",
+        }
+        return type_map.get(round_name, "mixed")
 
     def get_interviewer_change_event(self) -> dict | None:
         cfg = self.current_round_info()
@@ -366,6 +399,7 @@ class InterviewSession:
         """
         q = self.current_question
         question_text = q.get("question", "") if isinstance(q, dict) else str(q or "")
+        question_type = self._get_question_type()
 
         final_result = None
         async for msg in self.diagnosis.stream(
@@ -374,6 +408,7 @@ class InterviewSession:
             resume_text=self.resume_text,
             jd_text=self.jd_text,
             weights=self.dim_weights,
+            question_type=question_type,
         ):
             if msg.get("type") == "diagnosis_done":
                 final_result = msg.get("data")
@@ -477,7 +512,30 @@ class InterviewSession:
             round_name=info["name"],
             count=info["question_count"],
             mode=self.mode,
+            type_mix=self.question_type_mix,
         )
+        # v2.7: 教练模式——每轮开头插入知识点讲解
+        if self.mode == "coach":
+            tip = await generate_coach_tip(
+                llm_client=self.llm,
+                resume_text=self.resume_text,
+                jd_text=self.jd_text,
+                round_name=info["name"],
+            )
+            if tip:
+                questions.insert(0, tip)
+
+        # v2.7: 在首轮最前面插入自我介绍
+        if self.include_self_intro and self.current_round == 0 and not self.self_intro_done:
+            intro_q = {
+                "index": -1,
+                "question": "请你做一个简短的自我介绍，包括你的教育背景、核心技术栈以及最有代表性的项目经历。",
+                "intent": "了解候选人的整体背景、沟通表达能力和职业定位",
+                "question_type": "self_intro",
+            }
+            questions.insert(0, intro_q)
+            self.self_intro_done = True
+
         self.round_questions = questions
         self.current_question_idx = 0
         return questions
@@ -499,6 +557,7 @@ class InterviewSession:
             mode=self.mode,
             focus_dimension=weak_key or None,
             weak_evidence=weak_evidence,
+            type_mix=self.question_type_mix,
         )
         if questions:
             q = questions[0]

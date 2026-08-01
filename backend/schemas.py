@@ -55,7 +55,16 @@ class SessionCreateRequest(BaseModel):
     resume_text: str = Field(default="", description="简历文本")
     jd_text: str = Field(default="", description="岗位描述")
     style: str = Field(default="friendly", description="面试官风格: friendly/strict/pressure/...")
-    mode: str = Field(default="simulation", description="面试模式: simulation(拟真6阶段) / traditional(传统5轮次)")
+    mode: str = Field(default="simulation", description="面试模式: simulation(拟真6阶段) / traditional(传统5轮次) / coach(教练模式)")
+    include_self_intro: bool = Field(default=False, description="是否包含自我介绍环节")
+    question_type_mix: dict = Field(default={}, description="题型占比偏好: {knowledge: N, project: N, behavior: N}，0-100")
+
+
+class WeaknessProfileItem(BaseModel):
+    dimension: str
+    avg_score: float
+    weight: float
+    risk_points: list[str] = []
 
 
 class SessionCreateResponse(BaseModel):
@@ -233,3 +242,72 @@ class UpdateQuestionRequest(BaseModel):
     tags: Optional[list[str]] = None
     difficulty: Optional[int] = None
     is_favorited: Optional[bool] = None
+
+
+# ========== v3.1: Gap 分析 ==========
+
+class GapDimensionItem(BaseModel):
+    key: str
+    name: str
+    weight: float
+    score: int
+    evidence: str
+    gap: str
+    suggestion: str
+
+
+class GapAnalysisRequest(BaseModel):
+    resume_text: str = Field(..., description="简历文本")
+    jd_text: str = Field(default="", description="岗位描述文本")
+    keyword: str = Field(default="", description="搜索关键词（市场数据，可选）")
+
+
+class MarketReference(BaseModel):
+    """v3.1: Gap 分析的市场基准参照"""
+    keyword: str
+    total_samples: int
+    avg_salary_k: float | None = None
+    salary_range: str = ""
+    top_cities: list[str] = []
+    education_distribution: list[dict] = []
+    top_skills: list[str] = []
+    summary: str = ""  # 一句话总结市场位置
+
+
+class GapAnalysisResponse(BaseModel):
+    dimensions: list[GapDimensionItem]
+    overall_score: float
+    overall_assessment: str
+    risk_level: str
+    market_source: dict | None = None
+    market_reference: MarketReference | None = None  # v3.1 新增
+
+
+# ===== v3.1: 跨岗位对比 =====
+
+class JDEntry(BaseModel):
+    """单个岗位描述条目"""
+    title: str = Field(..., min_length=1, description="岗位名称")
+    text: str = Field(..., min_length=1, description="岗位描述文本")
+
+
+class CrossJobCompareRequest(BaseModel):
+    resume_text: str = Field(..., min_length=10, description="简历文本")
+    jd_list: list[JDEntry] = Field(..., min_length=2, description="待对比的岗位列表（至少2个）")
+
+
+class JobCompareItem(BaseModel):
+    """单个岗位对比结果"""
+    title: str
+    overall_score: float
+    risk_level: str
+    key_strengths: list[str] = []       # 本岗位最匹配的维度
+    key_gaps: list[str] = []            # 本岗位最薄弱的维度
+    dimensions: list[GapDimensionItem] = []
+    market_reference: MarketReference | None = None
+
+
+class CrossJobCompareResponse(BaseModel):
+    results: list[JobCompareItem]
+    recommendation: str  # 综合推荐（哪个岗位最佳 + 理由）
+    ranking: list[str]   # 岗位名称排序（最佳→最差）
