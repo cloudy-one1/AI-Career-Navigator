@@ -19,6 +19,14 @@ data/
 # === 日志 ===
 *.log
 
+# === 临时测试 / 调试文件 ===
+/_interview_result.json
+/_test_run.py
+/interview_error.txt
+/interview_output.txt
+/test_output.txt
+/docs/AI对话存档/
+
 # === IDE / 编辑器 ===
 .vscode/
 .idea/

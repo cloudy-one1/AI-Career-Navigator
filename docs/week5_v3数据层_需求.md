@@ -179,3 +179,26 @@ Dockerfile 需相应调整（v3.0 收尾时处理）。
 `backend/db.py` `init_db()` 第 91/105 行：`diagnosis_feedback` 建表误用未定义变量
 `cursor`（应为 `db`），当前初始化即抛 `NameError`。属于 v2.5 遗留缺陷，
 在 v3.0 提交中一并修复并在 commit message 中说明。
+
+---
+
+## 修改记录 [2026-08-02]
+
+### v3.1 前端修复：页面空白 + 版本号错误
+
+- **原方案**：无（v3.1 已实现，但前端页面加载完全空白，且页面版本号停滞在 v2.7）
+- **用户指出的问题**：
+  1. 浏览器打开页面完全空白——四个 Tab 面板（面试/报告/历史/题库）均不渲染
+  2. 左上角与浏览器标题页签显示版本号为 v2.7，实际应跟随 CODEBUDDY.md 标注的 v3.1
+- **排查过程**：
+  1. 初步假设：VS Code 内置预览窗口不支持 ES Module（`<script type="module">`），切换 Chrome 后问题依旧 → 假设证伪
+  2. 添加调试脚本：全局 `error` + `unhandledrejection` 事件捕获、页内调试面板显示 → 浏览器 F12 控制台确认 `SyntaxError: Unexpected end of input` 在 `history.js`
+  3. 对所有 9 个前端 JS 文件逐一括号匹配扫描 → `history.js` 第 73 行附近：`loadWeaknessProfile` 函数的 `try/catch` 块后缺少闭合 `}`
+- **修改后的方案**：
+  - `frontend/js/history.js`：在 `catch` 块的大括号后补上函数体闭合 `}`
+  - `frontend/index.html`：`<title>` 和 `.version` 从 `v2.7` → `v3.1`
+  - 移除调试期间临时添加的 `js-debug-panel` div 和 `<script>` 错误捕获块
+- **批判性思维判断点**：
+  - AI 初始假设"VS Code WebView 不支持 ES Module"被用户用 Chrome 截图快速证伪——立即放弃错误假设路径，转向"内部证据"（浏览器控制台）
+  - 问题本质：ES Module 解析失败时整个模块链静默中断，任何一个模块的语法错误都会导致后续所有 `import` 方无法执行，从而表现为"白屏"。表面现象（白屏）与根因（JS 语法错误）之间隔着多层间接性
+  - 排查方法：从"外部假设"（浏览器兼容性）切换到"内部证据"（控制台日志 + 全量括号匹配），先缩小范围到 `history.js`，再精确到具体函数——典型的二分定位

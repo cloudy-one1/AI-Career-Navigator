@@ -4,6 +4,7 @@ FastAPI 入口 v3.1：HTTP + WebSocket 路由。
 + Web 安全加固（slowapi 限流 / CORS 收紧 / 请求体大小限制 / 安全响应头）。
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -60,7 +61,6 @@ _SECURITY_HEADERS = {
     "X-Frame-Options": "DENY",
     "X-XSS-Protection": "1; mode=block",
     "Referrer-Policy": "strict-origin-when-cross-origin",
-    "Strict-Transport-Security": "max-age=31536000; includeSubDomains",
 }
 
 
@@ -120,20 +120,21 @@ app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
 llm_client = LLMClient(provider=config.AI_PROVIDER)
 diagnosis_engine = DiagnosisEngine(llm_client=llm_client)
 active_sessions: dict[str, InterviewSession] = {}
+_session_lock = asyncio.Lock()
 
 
 @app.on_event("startup")
 async def startup():
     await init_db()
     await market_store.init_market_db()  # v3.0: 市场岗位库（幂等）
-    logger.info(f"AI 面试官 v3.0 启动完成，当前后端: {config.AI_PROVIDER}")
+    logger.info(f"AI 面试官 v3.1 启动完成，当前后端: {config.AI_PROVIDER}")
 
 
 # ===== 健康检查 =====
 
 @app.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "3.0", "provider": config.AI_PROVIDER}
+    return {"status": "ok", "version": "3.1", "provider": config.AI_PROVIDER}
 
 
 # ===== AI 后端管理 (v2.1) =====
@@ -230,7 +231,8 @@ async def create_session(req: SessionCreateRequest, request: Request = None):
         include_self_intro=req.include_self_intro or False,
         question_type_mix=req.question_type_mix or {},
     )
-    active_sessions[session_id] = session
+    async with _session_lock:
+        active_sessions[session_id] = session
 
     # 根据模式返回不同的轮次列表
     rounds_source = (config.TRADITIONAL_ROUNDS if session.mode == "traditional"
@@ -623,7 +625,6 @@ async def cross_job_compare(req: CrossJobCompareRequest, request: Request = None
     一份简历 vs 多个岗位：并行评估每个岗位的匹配度，输出排名 + 推荐。
     每个岗位独立调用 Gap 分析（含市场参考），然后汇总对比。
     """
-    import asyncio
 
     if len(req.jd_list) < 2:
         raise HTTPException(400, "至少需要 2 个岗位进行对比")
@@ -775,7 +776,8 @@ def _answer_texts(session) -> list[str]:
 @app.websocket("/ws/interview/{session_id}")
 async def ws_interview(websocket: WebSocket, session_id: str):
     await websocket.accept()
-    session = active_sessions.get(session_id)
+    async with _session_lock:
+        session = active_sessions.get(session_id)
 
     if not session:
         await websocket.send_json({"type": "error", "data": {"message": "会话不存在"}})

@@ -9,6 +9,7 @@ v2.6 变更：
 """
 
 import logging
+from datetime import datetime
 
 from ..dimension_weights import (
     DEFAULT_WEIGHTS,
@@ -201,9 +202,6 @@ def _dimension_advice(key: str) -> str:
         "job_relevance": "建议逐条对照 JD 要求，为每项核心能力准备一段对应的亲身经历。",
         "professional_depth": "建议在描述技术方案时补充'为什么选这个方案而非其他'以及关键权衡的思考过程。",
     }.get(key, "建议围绕该维度做专项练习。")
-
-
-from datetime import datetime
 
 
 def generate_review_markdown(report: dict) -> str:

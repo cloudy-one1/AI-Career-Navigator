@@ -153,6 +153,7 @@ async def analyze_jd_weights(llm_client, jd_text: str) -> dict:
     """
     # 中文 JD 信息密度高，8 字即可判断岗位方向（如"数据分析岗，要求量化"）
     if not jd_text or len(jd_text.strip()) < 8:
+        logger.info("JD 文本过短或为空，采用五维等权评估")
         return {
             "weights": dict(DEFAULT_WEIGHTS),
             "reason": "未提供有效岗位描述，采用五维等权评估",

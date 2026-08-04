@@ -2,18 +2,106 @@
 岗位画像研究模块 v2.5
 使用 DuckDuckGo Instant Answer API 搜索岗位信息，通过 LLM 分析提炼面试要点。
 无需 API Key，轻量级实现。
+
+v3.1 降级：DDG 被墙时，从 skills_data.json 本地匹配 JD 关键词提取 key_skills，
+不再返回空数组。
 """
 
 import logging
 import urllib.request
 import urllib.parse
 import json
+import os
+import re
 from asyncio import to_thread
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 # DuckDuckGo Instant Answer API (免费，无需 API Key)
 DDG_API = "https://api.duckduckgo.com/"
+
+
+# ── 本地降级：skills_data.json 关键词匹配 ──
+
+_SKILLS_DATA: dict | None = None
+
+
+def _load_skills_data() -> dict:
+    """延迟加载 skills_data.json"""
+    global _SKILLS_DATA
+    if _SKILLS_DATA is not None:
+        return _SKILLS_DATA
+    skills_path = Path(__file__).parent / "skills_data.json"
+    if skills_path.exists():
+        try:
+            _SKILLS_DATA = json.loads(skills_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning(f"加载 skills_data.json 失败: {e}")
+            _SKILLS_DATA = {}
+    else:
+        _SKILLS_DATA = {}
+    return _SKILLS_DATA
+
+
+def _extract_skills_from_jd_local(jd_text: str) -> list[str]:
+    """
+    从 JD 文本中提取关键技能（纯本地匹配，不依赖外部 API）。
+    遍历 skills_data.json 各岗位的 keywords，统计命中数，
+    取命中最多的 TOP 2 岗位的 skills 列表合并去重。
+    """
+    skills_data = _load_skills_data()
+    if not skills_data or not jd_text:
+        return []
+
+    jd_lower = jd_text.lower()
+    scored: list[tuple[int, str]] = []
+
+    for category, cat_data in skills_data.items():
+        if category == "通用":
+            continue
+        keywords = cat_data.get("keywords", [])
+        score = sum(1 for kw in keywords if kw.lower() in jd_lower)
+        if score > 0:
+            scored.append((score, category))
+
+    scored.sort(reverse=True)
+    top_categories = scored[:2]
+
+    skills_set: set[str] = set()
+    for _, cat in top_categories:
+        for skill in skills_data[cat].get("skills", []):
+            skills_set.add(skill)
+
+    result = list(skills_set)[:8]  # 最多 8 个
+    if result:
+        logger.info(f"本地 JD 匹配: 命中品类 {[c for _,c in top_categories]}, 提取 {len(result)} 个技能")
+    return result
+
+
+def _extract_hot_topics_from_skills(skills: list[str]) -> list[str]:
+    """从技能列表反推可能的面试话题（本地生成）"""
+    topic_keywords = {
+        "数据库": "数据库设计与优化",
+        "微服务": "微服务架构与治理",
+        "Docker": "容器化与 CI/CD",
+        "Kubernetes": "容器编排与生产运维",
+        "React": "React 组件化与状态管理",
+        "Vue": "Vue 响应式原理与生态",
+        "TypeScript": "TypeScript 类型系统与工程化",
+        "算法": "数据结构与算法",
+        "机器学习": "机器学习算法与模型评估",
+        "NLP": "NLP 技术与迁移学习",
+        "Redis": "缓存策略与高可用",
+        "Spring": "Spring 全家桶与 AOP",
+        "MySQL": "MySQL 优化与分库分表",
+    }
+    topics = set()
+    for skill in skills:
+        for kw, topic in topic_keywords.items():
+            if kw.lower() in skill.lower():
+                topics.add(topic)
+    return list(topics)[:4]
 
 
 def _fetch_ddg(query: str) -> dict:
@@ -100,12 +188,14 @@ async def enrich_jd_with_research(llm_client, jd_text: str, position: str = "",
     search_text = await search_position_info(position, company)
 
     if not search_text:
-        logger.info("web research: 未获取到搜索结果，使用原始 JD")
+        logger.info("web research: 未获取到搜索结果，启用本地 JD 关键词提取降级")
+        local_skills = _extract_skills_from_jd_local(jd_text)
+        local_topics = _extract_hot_topics_from_skills(local_skills)
         return {
             "enriched_jd": jd_text,
-            "key_skills": [],
-            "hot_topics": [],
-            "search_summary": "",
+            "key_skills": local_skills,
+            "hot_topics": local_topics,
+            "search_summary": f"（DDG API 不可用，本地提取 {len(local_skills)} 个技能）",
         }
 
     # 2. LLM 分析

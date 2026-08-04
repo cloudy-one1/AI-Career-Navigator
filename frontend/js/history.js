@@ -71,6 +71,7 @@ async function loadWeaknessProfile() {
   } catch (e) {
     container.innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-text">加载画像失败</div></div>`;
   }
+}
 
 async function loadHistory() {
   const listEl = $('#history-list');

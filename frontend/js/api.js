@@ -152,9 +152,9 @@ export async function crossJobCompare(resumeText, jdList) {
 // ===== WebSocket =====
 
 /**
- * 创建 WebSocket 面试连接
+ * 创建 WebSocket 面试连接（含自动重连）
  * @param {string} sessionId
- * @param {object} handlers - { onMessage, onOpen, onClose, onError }
+ * @param {object} handlers - { onMessage, onOpen, onClose, onError, onReconnect, onReconnectFailed }
  * @returns {{ send, close }}
  */
 export function createInterviewWS(sessionId, handlers) {
@@ -162,40 +162,67 @@ export function createInterviewWS(sessionId, handlers) {
   const host = location.host;
   const url = `${protocol}//${host}/ws/interview/${sessionId}`;
 
-  const ws = new WebSocket(url);
+  let ws = null;
+  let _intentionalClose = false;
+  let _reconnectAttempts = 0;
+  const _maxReconnectAttempts = 5;
+  const _baseDelay = 1000; // 1s
+  const _maxDelay = 30000;  // 30s
 
-  ws.onopen = () => {
-    console.log('[WS] 已连接');
-    if (handlers.onOpen) handlers.onOpen();
-  };
+  function _connect() {
+    ws = new WebSocket(url);
 
-  ws.onmessage = (e) => {
-    try {
-      const msg = JSON.parse(e.data);
-      if (handlers.onMessage) handlers.onMessage(msg.type, msg.data);
-    } catch (err) {
-      console.error('[WS] 消息解析失败', err);
-    }
-  };
+    ws.onopen = () => {
+      console.log('[WS] 已连接');
+      _reconnectAttempts = 0;  // 重连成功后重置计数
+      if (handlers.onOpen) handlers.onOpen();
+    };
 
-  ws.onclose = () => {
-    console.log('[WS] 已断开');
-    if (handlers.onClose) handlers.onClose();
-  };
+    ws.onmessage = (e) => {
+      try {
+        const msg = JSON.parse(e.data);
+        if (handlers.onMessage) handlers.onMessage(msg.type, msg.data);
+      } catch (err) {
+        console.error('[WS] 消息解析失败', err);
+      }
+    };
 
-  ws.onerror = (e) => {
-    console.error('[WS] 错误', e);
-    if (handlers.onError) handlers.onError(e);
-  };
+    ws.onclose = () => {
+      console.log('[WS] 已断开');
+      if (!_intentionalClose && _reconnectAttempts < _maxReconnectAttempts) {
+        const delay = Math.min(_baseDelay * Math.pow(2, _reconnectAttempts), _maxDelay);
+        _reconnectAttempts++;
+        console.log(`[WS] 将在 ${delay}ms 后重连 (第 ${_reconnectAttempts}/${_maxReconnectAttempts} 次)`);
+        if (handlers.onReconnect) handlers.onReconnect(_reconnectAttempts, delay);
+        setTimeout(_connect, delay);
+      } else if (!_intentionalClose) {
+        console.error('[WS] 重连失败，已达最大重试次数');
+        if (handlers.onReconnectFailed) handlers.onReconnectFailed();
+        if (handlers.onClose) handlers.onClose();
+      } else {
+        if (handlers.onClose) handlers.onClose();
+      }
+    };
+
+    ws.onerror = (e) => {
+      console.error('[WS] 错误', e);
+      if (handlers.onError) handlers.onError(e);
+    };
+  }
+
+  _connect();
 
   return {
     // 后端按 {type, data:{...}} 解析，必须保持 data 嵌套，不能展开到顶层
     send(type, data = {}) {
-      if (ws.readyState === WebSocket.OPEN) {
+      if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type, data }));
       }
     },
-    close() { ws.close(); },
-    get readyState() { return ws.readyState; },
+    close() {
+      _intentionalClose = true;
+      ws.close();
+    },
+    get readyState() { return ws ? ws.readyState : WebSocket.CLOSED; },
   };
 }

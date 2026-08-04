@@ -210,6 +210,10 @@ async function startInterview() {
 
 function connectWS(sessionId) {
   currentSessionId = sessionId;
+  // v3.1: 重置模块级状态，防止快速开始两次面试时状态污染
+  roundInfo = [];
+  currentRound = 0;
+  currentQuestion = null;
   const area = $('#interview-area');
   area.innerHTML = '';
   resetLiveRadar();
@@ -224,12 +228,28 @@ function connectWS(sessionId) {
     onMessage: handleWSMessage,
 
     onClose: () => {
+      clearTimeout(_answerTimeout);
       const btn = $('#start-btn');
       if (btn) btn.style.display = 'block';
     },
 
     onError: (e) => {
       toast('连接异常', 'error');
+    },
+
+    // v3.1: 断线重连回调
+    onReconnect: (attempt, delay) => {
+      toast(`连接断开，${Math.round(delay/1000)}秒后重连 (${attempt}/5)...`, 'warning');
+    },
+
+    onReconnectFailed: () => {
+      clearTimeout(_answerTimeout);
+      toast('连接失败，请刷新页面后重试', 'error');
+      // 恢复输入
+      const sbBtn = $('#submit-answer');
+      if (sbBtn) { sbBtn.disabled = false; sbBtn.textContent = '提交回答'; }
+      const sbInput = $('#answer-input');
+      if (sbInput) { sbInput.disabled = false; }
     },
   });
 }
@@ -239,6 +259,7 @@ let roundInfo = [];
 let currentRound = 0;
 let currentQuestion = null;
 let currentSessionId = '';  // v2.5: 用于反馈
+let _answerTimeout = null;  // v3.1: 回答超时计时器
 
 function handleWSMessage(type, data) {
   const area = $('#interview-area');
@@ -657,6 +678,16 @@ function submitAnswer() {
   input.disabled = true;
   // 后端读取 msg.data.text
   ws.send('answer', { text: answer, is_follow_up: false });
+
+  // v3.1: 超时恢复 — 35秒无响应则重新激活输入
+  _answerTimeout = setTimeout(() => {
+    if (btn.disabled) {
+      btn.disabled = false;
+      btn.textContent = '提交回答';
+      input.disabled = false;
+      toast('诊断超时，请重试', 'warning');
+    }
+  }, 35000);
 }
 
 function submitFollowUp() {
@@ -676,6 +707,15 @@ function submitFollowUp() {
   buttons?.forEach(b => b.disabled = true);
 
   ws.send('answer', { text: answer, is_follow_up: true });
+
+  // v3.1: 超时恢复 — 35秒无响应则重新激活
+  _answerTimeout = setTimeout(() => {
+    if (input.disabled) {
+      input.disabled = false;
+      buttons?.forEach(b => b.disabled = false);
+      toast('诊断超时，请重试', 'warning');
+    }
+  }, 35000);
 }
 
 function skipFollowUp() {
@@ -751,6 +791,7 @@ function clearStreamBox() {
 }
 
 function reactivateAnswerInput() {
+  clearTimeout(_answerTimeout);  // v3.1: 收到响应，取消超时
   const submitBtn = $('#submit-answer');
   if (submitBtn) {
     submitBtn.disabled = false;

@@ -163,7 +163,7 @@ function renderReport(report) {
   content.appendChild(gapContainer);
 
   // 自动触发 Gap 分析
-  loadGapAnalysis(report.session_id || sessionId);
+  loadGapAnalysis(sessionId);
 }
 
 // ——— v3.1: Gap 分析 ———
@@ -272,7 +272,7 @@ function _renderMarketRefBlock(ref) {
 	if (!ref || !ref.keyword) return '';
 	const cities = (ref.top_cities || []).join(' · ');
 	const eduRows = (ref.education_distribution || [])
-		.map(e => `<span class="mr-educell"><b>${escHtml(e.education)}</b> ${e.count}条</span>`)
+		.map(e => `<span class="mr-educell"><b>${escHtml(e.education)}</b> ${escHtml(String(e.count))}条</span>`)
 		.join('');
 	const skills = (ref.top_skills || [])
 		.map(s => `<span class="mr-tag">${escHtml(s)}</span>`)
@@ -298,32 +298,7 @@ function drawRadarChart(report) {
 
   const ctx = canvas.getContext('2d');
 
-  const dimNames = report.dimension_trends.map(d => DIM_NAMES[d.dimension] || d.dimension);
-  const datasets = [];
-
-  report.dimension_trends.forEach((d, idx) => {
-    const scores = d.scores || [];
-    if (scores.length === 0) return;
-
-    const colors = ['#4F46E5', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6'];
-    const color = colors[idx] || '#4F46E5';
-
-    // 取最近一轮各维度分数
-    const latestScore = scores[scores.length - 1] || scores[0] || 0;
-
-    datasets.push({
-      label: DIM_NAMES[d.dimension] || d.dimension,
-      data: [latestScore],
-      borderColor: color,
-      backgroundColor: color + '20',
-      borderWidth: 2,
-      pointBackgroundColor: color,
-      pointRadius: 5,
-    });
-  });
-
-  // 使用简单雷达图 - 实际需要所有维度在一张图上
-  // 重新组织数据：每个轮次一个 dataset
+  // 每个轮次一个 dataset，展示各维度在不同轮次中的表现
   const roundCount = report.rounds?.length || 1;
   const dimDataset = report.dimension_trends;
 
