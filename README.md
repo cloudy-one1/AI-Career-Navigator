@@ -177,6 +177,12 @@ AI-simulated-interviewer/
 │   ├── web_research.py           # 岗位画像研究（DuckDuckGo）
 │   ├── data_support.py           # 技能匹配数据
 │   ├── skills_data.json          # 岗位技能静态数据
+│   ├── market/                    # [v3.0 NEW] 市场数据子包
+│   │   ├── __init__.py
+│   │   ├── collector.py          # 招聘数据采集
+│   │   ├── cleaner.py            # 数据清洗
+│   │   ├── importer.py           # 外部数据导入
+│   │   └── store.py              # 数据持久化
 │   └── interview_engine/         # 面试引擎子包
 │       ├── __init__.py
 │       ├── session.py            # 核心状态机
@@ -196,11 +202,19 @@ AI-simulated-interviewer/
 │       ├── voice.js              # 语音交互（TTS + STT）
 │       └── utils.js              # 工具函数
 │
-├── tests/                        # 自动化测试（50 用例）
+├── tests/                        # 自动化测试（50+ 用例）
 │   ├── conftest.py               # 共享 fixtures
-│   ├── test_schemas.py           # Schema 验证（11 测试）
-│   ├── test_gap_analyzer.py      # Gap 分析器（21 测试）
-│   └── test_api.py               # HTTP 路由集成测试（18 测试）
+│   ├── test_schemas.py           # Schema 验证
+│   ├── test_api.py               # HTTP 路由集成测试（含安全测试）
+│   ├── test_gap_analyzer.py      # Gap 分析器
+│   ├── test_dimension_weights.py # 维度权重
+│   ├── test_resume_parser.py     # 简历解析
+│   ├── test_report.py            # 报告生成
+│   ├── test_security.py          # 安全防护
+│   ├── test_web_research.py      # 岗位画像研究
+│   ├── test_data_support.py      # 技能匹配
+│   ├── test_market_cleaner.py    # 市场数据清洗
+│   └── test_market_importer.py   # 市场数据导入
 │
 ├── docs/                         # 需求文档与周报
 │   ├── week1_*.md                # v1 模块需求
@@ -305,14 +319,14 @@ AI-simulated-interviewer/
 ### 自动化测试
 
 ```bash
-# 运行全部 50 个测试
+# 运行全部测试
 pytest tests/ -v
 
 # 覆盖率报告
 pytest tests/ --cov=backend --cov-report=term-missing
 ```
 
-测试覆盖：Schema 验证（11）/ Gap 分析器（21）/ HTTP 路由（18）
+测试覆盖：Schema 验证 / API 路由 / Gap 分析器 / 维度权重 / 简历解析 / 报告生成 / 安全防护 / Web 研究 / 技能匹配 / 市场数据
 
 
 ---
