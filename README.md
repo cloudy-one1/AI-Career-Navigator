@@ -179,9 +179,9 @@ AI-simulated-interviewer/
 │   ├── skills_data.json          # 岗位技能静态数据
 │   ├── market/                    # [v3.0 NEW] 市场数据子包
 │   │   ├── __init__.py
-│   │   ├── collector.py          # 招聘数据采集
 │   │   ├── cleaner.py            # 数据清洗
 │   │   ├── importer.py           # 外部数据导入
+│   │   ├── service.py            # 导入编排 + 岗位快照检索
 │   │   └── store.py              # 数据持久化
 │   └── interview_engine/         # 面试引擎子包
 │       ├── __init__.py

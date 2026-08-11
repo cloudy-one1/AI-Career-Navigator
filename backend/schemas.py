@@ -47,10 +47,6 @@ class DiagnoseRequest(BaseModel):
     jd_text: str = Field(default="", description="岗位描述")
 
 
-class SkillMatchRequest(BaseModel):
-    keywords: list[str] = Field(..., description="JD 关键词列表")
-
-
 class SessionCreateRequest(BaseModel):
     resume_text: str = Field(default="", description="简历文本")
     jd_text: str = Field(default="", description="岗位描述")
@@ -110,11 +106,6 @@ class DiagnoseResponse(BaseModel):
     rewrite_suggestion: str = Field(..., description="改写示范")
     needs_follow_up: bool = False
     follow_up_question: str = ""
-
-
-class SkillMatchResponse(BaseModel):
-    keywords: list[str]
-    matches: list[dict]
 
 
 class HistoryItem(BaseModel):

@@ -45,11 +45,6 @@ export async function diagnose(req) {
   return request('POST', '/api/diagnose', req);
 }
 
-/** 技能匹配 */
-export async function skillMatch(keywords) {
-  return request('POST', '/api/skill-match', { keywords });
-}
-
 /** 获取会话详情 */
 export async function getSession(sessionId) {
   return request('GET', `/api/sessions/${sessionId}`);
