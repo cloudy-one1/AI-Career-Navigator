@@ -5,10 +5,25 @@ v2.1: 多 AI 后端可切换（DeepSeek / Qwen / 智谱 / OpenAI）。
 
 import json
 import logging
-from openai import OpenAI
-from backend.config import config
+from openai import OpenAI, AsyncOpenAI
+from .config import config
 
 logger = logging.getLogger(__name__)
+
+
+def _api_key_issue(key: str) -> str | None:
+    """校验 API Key 有效性。
+
+    返回 None 表示正常，否则返回问题描述（中文）。
+    识别三类无效 Key：空、含非 ASCII 字符（如中文占位符）、占位符模板。
+    """
+    if not key:
+        return "API Key 未配置"
+    if any(ord(c) > 127 for c in key):
+        return "API Key 含非 ASCII 字符（如中文），请填写纯英文数字的真实 Key"
+    if any(t in key for t in ("sk-xxxx", "sk-your-", "key-here", "替换", "your-key")):
+        return "API Key 是占位符模板，请填写真实 Key"
+    return None
 
 
 class LLMClient:
@@ -23,7 +38,12 @@ class LLMClient:
         self._init_client()
 
     def _init_client(self):
-        """根据当前 provider 初始化 OpenAI 客户端。"""
+        """根据当前 provider 初始化 OpenAI 客户端（同步 + 异步）。
+
+        v3.2: 同时构建 AsyncOpenAI 客户端，供 WebSocket 主流程直接 async for 流式消费，
+        取代原 diagnosis_engine._astream 的线程池 + 队列桥接（该桥接是为适配同步 SDK
+        引入的技术债，且存在线程泄漏风险）。两个客户端共用同一 api_key/base_url/model。
+        """
         self.api_key = config.LLM_API_KEY
         self.base_url = config.LLM_BASE_URL
         self.model = config.LLM_MODEL
@@ -32,9 +52,18 @@ class LLMClient:
             api_key=self.api_key,
             base_url=self.base_url,
         )
+        # 异步流式客户端：仅用于 chat_stream_async，连接可由 httpx 复用。
+        self.async_client = AsyncOpenAI(
+            api_key=self.api_key,
+            base_url=self.base_url,
+        )
 
         provider_info = config.AI_PROVIDERS.get(self.provider, {})
+        self._api_key_env = provider_info.get("api_key_env", "DEEPSEEK_API_KEY")
         provider_name = provider_info.get("name", self.provider)
+        issue = _api_key_issue(self.api_key)
+        if issue:
+            logger.warning(f"LLM {issue}，请在 .env 中设置 {self._api_key_env}（provider={provider_name}）")
         logger.info(f"LLM 客户端初始化: provider={provider_name}, model={self.model}, base_url={self.base_url}")
 
     def switch_provider(self, provider: str):
@@ -73,6 +102,11 @@ class LLMClient:
              temperature: float = 0.7, max_tokens: int = 2048,
              response_format: dict | None = None) -> str:
         """发送聊天请求，返回完整文本。"""
+        issue = _api_key_issue(self.api_key)
+        if issue:
+            logger.warning(f"LLM {issue}，请在 .env 中设置 {self._api_key_env}")
+            return json.dumps({"error": f"{issue}，请在 .env 中设置 {self._api_key_env}"})
+
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -115,8 +149,15 @@ class LLMClient:
     def chat_stream(self, system_prompt: str, user_prompt: str,
                     temperature: float = 0.7, max_tokens: int = 2048):
         """
-        流式聊天请求，返回一个生成器，逐 chunk yield 文本。
+        同步流式聊天请求，返回一个生成器，逐 chunk yield 文本。
+        （保留用于非异步上下文；WebSocket 主流程改用 chat_stream_async。）
         """
+        issue = _api_key_issue(self.api_key)
+        if issue:
+            logger.warning(f"LLM {issue}，请在 .env 中设置 {self._api_key_env}")
+            yield json.dumps({"error": f"{issue}，请在 .env 中设置 {self._api_key_env}"})
+            return
+
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
@@ -136,6 +177,39 @@ class LLMClient:
                     yield delta.content
         except Exception as e:
             logger.error(f"流式调用失败 [{self.provider}]: {e}")
+            yield json.dumps({"error": f"{e}"})
+
+    async def chat_stream_async(self, system_prompt: str, user_prompt: str,
+                                temperature: float = 0.7, max_tokens: int = 2048):
+        """
+        异步流式聊天请求，直接 async for 消费 AsyncOpenAI 的流式响应。
+        v3.2: 取代原"同步 chat_stream + 线程池 + asyncio.Queue 桥接"方案，
+        无阻塞、无跨线程桥接，彻底消除 worker 线程 .result() 在队列满时的泄漏风险。
+        """
+        issue = _api_key_issue(self.api_key)
+        if issue:
+            logger.warning(f"LLM {issue}，请在 .env 中设置 {self._api_key_env}")
+            yield json.dumps({"error": f"{issue}，请在 .env 中设置 {self._api_key_env}"})
+            return
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ]
+        try:
+            stream = await self.async_client.chat.completions.create(
+                model=self.model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                stream=True,
+            )
+            async for chunk in stream:
+                delta = chunk.choices[0].delta
+                if delta and delta.content:
+                    yield delta.content
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"异步流式调用失败 [{self.provider}]: {e}")
             yield json.dumps({"error": f"{e}"})
 
 

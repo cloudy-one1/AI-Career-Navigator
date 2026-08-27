@@ -222,22 +222,26 @@ def generate_review_markdown(report: dict) -> str:
         lines.append(f"- **{emoji} {rd_name}**: {rd_score:.2f} 分")
     lines.append("")
 
-    # 2. 薄弱维度识别
+    # 2. 薄弱维度识别（v3.3: 对齐 build_report 实际 schema，
+    #    旧代码读 rounds[].dimension_details —— 该字段不存在，导出恒为空）
     lines.append("## 二、薄弱维度（优先改进）\n")
+    weights_map = (report.get("scoring") or {}).get("weights") or {}
+    dim_avgs = report.get("dimension_averages") or {}
     weakness_items = []
-    for rd in report.get("rounds", []):
-        for dim_name, dim_data in rd.get("dimension_details", {}).items():
-            score = dim_data.get("average", 0)
-            if score < 3.0:
-                weakness_items.append((dim_name, score, dim_data.get("suggestion", "")))
+    for dim_key, score in dim_avgs.items():
+        if score < 3.5:
+            name = DIM_NAMES.get(dim_key, dim_key)
+            wk = weights_map.get(dim_key, 0.2)
+            weakness_items.append(((5.0 - score) * wk,
+                                   f"{name}（平均 {score:.2f} 分，权重 {wk * 100:.0f}%）",
+                                   _dimension_advice(dim_key)))
     if weakness_items:
-        weakness_items.sort(key=lambda x: x[1])
-        for dim_name, score, suggestion in weakness_items[:3]:
-            lines.append(f"- **{dim_name}**: {score:.2f} 分")
-            if suggestion:
-                lines.append(f"  - 改进建议: {suggestion}")
+        weakness_items.sort(key=lambda x: -x[0])
+        for _, label, advice in weakness_items[:3]:
+            lines.append(f"- **{label}**")
+            lines.append(f"  - 改进建议: {advice}")
     else:
-        lines.append("- 暂无显著薄弱维度，继续保持！")
+        lines.append("- 各维度均在 3.5 分以上，无明显短板，继续保持！")
     lines.append("")
 
     # 3. 可背诵的标准答案

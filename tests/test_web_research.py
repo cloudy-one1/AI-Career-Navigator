@@ -3,6 +3,7 @@ web_research.py 测试：本地 JD 关键词降级（新增纯函数）。
 """
 
 import pytest
+import backend.web_research as wr
 from backend.web_research import (
     _extract_skills_from_jd_local,
     _extract_hot_topics_from_skills,
@@ -58,3 +59,43 @@ class TestExtractHotTopics:
             "React", "Vue", "Spring", "NLP"
         ])
         assert len(topics) <= 4
+
+
+class TestEnrichFallback:
+    """enrich_jd_with_research() 降级路径：DDG 无结果时走本地提取"""
+
+    @pytest.mark.asyncio
+    async def test_fallback_returns_source_field(self, monkeypatch):
+        """降级返回应带 source='fallback' 标识来源"""
+        async def _fake_search(position, company=""):
+            return ""  # 模拟 DDG 被墙/无结果
+
+        monkeypatch.setattr(wr, "search_position_info", _fake_search)
+
+        class _FakeLLM:
+            pass
+
+        result = await wr.enrich_jd_with_research(
+            llm_client=_FakeLLM(),
+            jd_text="我们需要 Python 后端开发，熟悉 Django/FastAPI，数据库 MySQL/Redis，Docker 部署",
+        )
+        assert result["source"] == "fallback"
+        assert result["enriched_jd"] == "我们需要 Python 后端开发，熟悉 Django/FastAPI，数据库 MySQL/Redis，Docker 部署"
+        assert "DDG" in result["search_summary"] or "本地" in result["search_summary"]
+
+    @pytest.mark.asyncio
+    async def test_fallback_key_skills_nonempty(self, monkeypatch):
+        """JD 含技能关键词时，降级应返回非空 key_skills"""
+        async def _fake_search(position, company=""):
+            return ""
+
+        monkeypatch.setattr(wr, "search_position_info", _fake_search)
+
+        class _FakeLLM:
+            pass
+
+        result = await wr.enrich_jd_with_research(
+            llm_client=_FakeLLM(),
+            jd_text="Python 后端工程师，熟悉 Django、FastAPI、MySQL、Redis、Docker",
+        )
+        assert len(result["key_skills"]) >= 1

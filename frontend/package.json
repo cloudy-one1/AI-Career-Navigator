@@ -1,0 +1,18 @@
+{
+  "name": "ai-interviewer-frontend",
+  "version": "4.0.0",
+  "private": true,
+  "type": "module",
+  "description": "AI 模拟面试官与职业规划 — 前端（Vite + 原生 ES Module）",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "chart.js": "^4.4.0"
+  },
+  "devDependencies": {
+    "vite": "^5.4.0"
+  }
+}

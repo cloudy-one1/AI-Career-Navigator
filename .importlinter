@@ -1,0 +1,19 @@
+# import-linter 分层依赖契约（v3.2）
+# 运行方式：python run.py lint  （等价于 PYTHONUTF8=1 python -m importlinter.cli lint）
+# 契约与 CHARTER.md「架构约束 2：分层依赖约束」保持同步。
+# 注意：本文件为 INI 格式（configparser），缩进行表示多行值；
+# 每个 layer 一行，层内模块用 : 分隔（非独立层，允许同层互依赖）。
+# 注意：layers 顺序必须从最高层(L4)到最低层(L1)（import-linter 规定"higher to lower"），
+# 每层只能依赖同层及更低的层，禁止向上依赖（如 L3 依赖 L4、L2 依赖 L3）。
+
+[importlinter]
+root_package = backend
+
+[importlinter:contract:layers]
+name = L1-L4 逻辑分层依赖契约
+type = layers
+layers =
+    backend.main
+    backend.question_gen:backend.diagnosis_engine:backend.interview_engine:backend.web_research:backend.question_bank:backend.data_support:backend.career_planner
+    backend.schemas:backend.security:backend.resume_parser:backend.dimension_weights:backend.gap_analyzer:backend.market
+    backend.config:backend.logger:backend.llm_client:backend.db

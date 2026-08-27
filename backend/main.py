@@ -30,7 +30,7 @@ from .db import (
     save_weakness_profile, get_weakness_profile, get_global_weakness_profile,
 )
 from .db import save_feedback as db_save_feedback, get_feedback_stats
-from .llm_client import LLMClient
+from .llm_client import LLMClient, _api_key_issue
 from .diagnosis_engine import DiagnosisEngine
 from .interview_engine import InterviewSession  # v2.5: 子包引用
 from .interview_engine.report import generate_review_markdown
@@ -41,12 +41,14 @@ from .schemas import (
     ReportData, DiagnosisFeedbackRequest, FeedbackStatsResponse,
     GapAnalysisRequest, GapAnalysisResponse,
     CrossJobCompareRequest, CrossJobCompareResponse, JobCompareItem,
+    CareerPlanRequest, CareerPlanResponse,  # v3.2 职业规划
 )
 from .security import full_check, check_output
 from .web_research import enrich_jd_with_research
 from . import question_bank as qbank
 from .market import store as market_store, service as market_service  # v3.0
 from . import gap_analyzer  # v3.1
+from . import career_planner  # v3.2 职业规划
 
 # ─── 集中日志 ───
 app_logger.setup_logging()
@@ -121,6 +123,7 @@ llm_client = LLMClient(provider=config.AI_PROVIDER)
 diagnosis_engine = DiagnosisEngine(llm_client=llm_client)
 active_sessions: dict[str, InterviewSession] = {}
 _session_lock = asyncio.Lock()
+_provider_lock = asyncio.Lock()  # v3.1 整改：保护全局单例重赋值，消除 switch_provider 竞态
 
 
 @app.on_event("startup")
@@ -167,14 +170,16 @@ async def switch_provider(req: ProviderSwitchRequest):
     provider_info = config.AI_PROVIDERS[req.provider]
     api_key_env = provider_info.get("api_key_env", "")
     api_key = os.getenv(api_key_env) or os.getenv("LLM_API_KEY")
-    if not api_key:
+    issue = _api_key_issue(api_key or "")
+    if issue:
         raise HTTPException(status_code=400,
-                            detail=f"{provider_info['name']} 未配置 API KEY，请设置 {api_key_env} 环境变量")
+                            detail=f"{provider_info['name']} {issue}，请设置 {api_key_env} 环境变量")
 
     global llm_client, diagnosis_engine
-    config.AI_PROVIDER = req.provider
-    llm_client = LLMClient(provider=req.provider)
-    diagnosis_engine = DiagnosisEngine(llm_client=llm_client)
+    async with _provider_lock:
+        config.AI_PROVIDER = req.provider
+        llm_client = LLMClient(provider=req.provider)
+        diagnosis_engine = DiagnosisEngine(llm_client=llm_client)
     logger.info(f"切换到后端: {req.provider}")
     return {"message": f"已切换到 {provider_info['name']}", "provider": req.provider}
 
@@ -280,7 +285,9 @@ async def api_get_session(session_id: str):
     if not session:
         raise HTTPException(404, "会话不存在")
     qas = await get_session_qas(session_id)
-    return {"session": session, "qa_count": len(qas)}
+    # v4.0: 附带报告，供历史详情抽屉展示综合评分/轮次汇总
+    report = await get_report(session_id)
+    return {"session": session, "qa_count": len(qas), "qas": qas, "report": report}
 
 
 @app.get("/api/reports/{session_id}")
@@ -448,6 +455,9 @@ async def export_review(session_id: str):
         report = await get_report(session_id)
         if not report:
             raise HTTPException(404, "报告不存在")
+        # v3.3: get_report 返回含 report_json 字符串的行，需解析后再交给导出函数
+        # （此前直接传行对象，导出的复盘内容全为空）
+        report = json.loads(report["report_json"]) if isinstance(report.get("report_json"), str) else report
         md = generate_review_markdown(report)
         return Response(content=md, media_type="text/markdown; charset=utf-8",
                         headers={"Content-Disposition": f"attachment; filename=review_{session_id}.md"})
@@ -494,7 +504,19 @@ async def market_import(
     db_path 为空时使用 .env 中的 JOB_CRAWLER_DB_PATH 配置。
     同步执行，完成后返回导入摘要。
     """
-    crawler_path = db_path.strip() or config.JOB_CRAWLER_DB_PATH
+    if not db_path.strip():
+        # 未指定 → 仅允许使用 .env 中配置的可信源
+        crawler_path = config.JOB_CRAWLER_DB_PATH
+    else:
+        # 指定路径 → 必须位于可信数据目录内且以 .db 结尾，防止任意文件存在性探测（路径遍历）
+        allowed_base = os.path.normpath(os.path.dirname(os.path.abspath(config.MARKET_DB_PATH)))
+        candidate = os.path.normpath(os.path.abspath(db_path.strip()))
+        if candidate != allowed_base and not candidate.startswith(allowed_base + os.sep):
+            raise HTTPException(400, "仅允许导入可信数据目录内的数据库文件")
+        if not candidate.endswith(".db"):
+            raise HTTPException(400, "仅支持导入 .db 文件")
+        crawler_path = candidate
+
     if not crawler_path:
         raise HTTPException(400,
             "请提供 db_path 或在 .env 中配置 JOB_CRAWLER_DB_PATH")
@@ -557,6 +579,25 @@ async def gap_analysis(req: GapAnalysisRequest, request: Request = None):
     except Exception as e:
         logger.error(f"Gap分析失败: {e}")
         raise HTTPException(500, str(e))
+
+
+@app.post("/api/career-plan", response_model=CareerPlanResponse)
+@limiter.limit(config.RATE_LIMIT_CAREER)
+async def career_plan(req: CareerPlanRequest, request: Request = None):
+    """
+    职业规划（v3.2）：简历 + 目标岗位 + 目标年限 → 时间轴多阶段路径。
+    以 Gap 分析六维快照为现状基线，调用 LLM 做多步路径推理。
+    错误统一转 500，日志不泄露简历原文。
+    """
+    try:
+        result = await career_planner.plan_career(
+            req=req,
+            llm_client=llm_client,
+        )
+        return result
+    except Exception as e:
+        logger.error(f"职业规划失败: {type(e).__name__}: {e}")
+        raise HTTPException(500, "职业规划服务暂时不可用，请稍后重试")
 
 
 @app.get("/api/gap-analysis/{session_id}")
@@ -629,16 +670,14 @@ async def cross_job_compare(req: CrossJobCompareRequest, request: Request = None
     if len(req.jd_list) < 2:
         raise HTTPException(400, "至少需要 2 个岗位进行对比")
 
-    # 并行分析所有岗位
-    notebook = request.scope.get("state", {}).get("notebook")
-
+    # 并行分析所有岗位（复用全局单例 llm_client，确保使用已配置后端）
     async def analyze_one(title: str, jd_text: str) -> tuple[str, dict]:
         try:
             result = await gap_analyzer.analyze_gap(
                 resume_text=req.resume_text,
                 jd_text=jd_text,
                 use_market=True,
-                notebook=notebook,
+                llm_client=llm_client,
             )
             return title, result
         except Exception as e:
@@ -781,7 +820,7 @@ async def ws_interview(websocket: WebSocket, session_id: str):
 
     if not session:
         await websocket.send_json({"type": "error", "data": {"message": "会话不存在"}})
-        await websocket.close()
+        await websocket.close(code=4000, reason="session_not_found")
         return
 
     try:
@@ -1014,15 +1053,17 @@ async def ws_interview(websocket: WebSocket, session_id: str):
 
         # v2.7: 保存薄弱点画像
         try:
-            for dim_name, dim_data in report.get("dimension_details", {}).items():
-                weight = report.get("weights", {}).get(dim_name, 0.2)
-                avg = dim_data.get("average", 0)
-                # 收集该维度下的所有风险点
+            # v3.3: 对齐 build_report 实际 schema（dimension_averages + scoring.weights）。
+            # 旧代码读取的 dimension_details / detailed_qa 字段在报告中不存在，
+            # 导致薄弱点画像恒为空。
+            weights_map = (report.get("scoring") or {}).get("weights") or {}
+            for dim_key, avg in (report.get("dimension_averages") or {}).items():
                 rps = []
-                for qa in report.get("detailed_qa", []):
-                    if qa.get("weakest_dimension") == dim_name:
-                        rps.extend(qa.get("risk_points", []))
-                await save_weakness_profile(session_id, dim_name, avg, weight, rps)
+                for diag in session.all_diagnoses:
+                    if diag.get("weakest_dimension") == dim_key:
+                        rps.extend(diag.get("risk_points", []) or [])
+                await save_weakness_profile(session_id, dim_key, avg,
+                                            weights_map.get(dim_key, 0.2), rps)
         except Exception as e:
             logger.error(f"保存薄弱点画像失败: {e}")
 
@@ -1050,9 +1091,26 @@ async def ws_interview(websocket: WebSocket, session_id: str):
         except Exception:
             pass
 
+    finally:
+        # v3.1 整改：WS 结束（正常完成/断开/异常）一律清理会话引用，避免 active_sessions 内存泄漏
+        async with _session_lock:
+            active_sessions.pop(session_id, None)
+
 
 # ===== 静态文件 =====
+# v4.0: 优先托管 Vite 构建产物 frontend/dist；未构建时回退到 frontend 源码目录，
+# 保证 python run.py 在未执行 npm run build 时仍可直接使用。
+def _mount_frontend_static():
+    dist_dir = os.path.join("frontend", "dist")
+    if os.path.isdir(dist_dir):
+        app.mount("/", StaticFiles(directory=dist_dir, html=True), name="frontend")
+        logger.info("静态资源托管：%s（Vite 构建产物）", dist_dir)
+    else:
+        app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+        logger.info("静态资源托管：frontend（未发现 dist，回退源码目录）")
+
+
 try:
-    app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
+    _mount_frontend_static()
 except RuntimeError:
     logger.info("静态文件挂载跳过（可能已存在）")

@@ -196,6 +196,7 @@ async def enrich_jd_with_research(llm_client, jd_text: str, position: str = "",
             "key_skills": local_skills,
             "hot_topics": local_topics,
             "search_summary": f"（DDG API 不可用，本地提取 {len(local_skills)} 个技能）",
+            "source": "fallback",  # 标识降级来源，区别于正常搜索的 LLM 分析
         }
 
     # 2. LLM 分析

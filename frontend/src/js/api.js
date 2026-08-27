@@ -144,6 +144,18 @@ export async function crossJobCompare(resumeText, jdList) {
   });
 }
 
+// ===== v3.2: 职业规划 =====
+
+/** 职业路径规划（时间轴多阶段） */
+export async function callCareerPlan({ resumeText, targetRole, jdText = '', timeframeYears = 3 }) {
+  return request('POST', '/api/career-plan', {
+    resume_text: resumeText,
+    target_role: targetRole,
+    jd_text: jdText,
+    timeframe_years: timeframeYears,
+  });
+}
+
 // ===== WebSocket =====
 
 /**
@@ -159,6 +171,7 @@ export function createInterviewWS(sessionId, handlers) {
 
   let ws = null;
   let _intentionalClose = false;
+  let _sessionExpired = false;  // 会话已失效标记，防止收不到 error 消息时仍重连
   let _reconnectAttempts = 0;
   const _maxReconnectAttempts = 5;
   const _baseDelay = 1000; // 1s
@@ -169,6 +182,13 @@ export function createInterviewWS(sessionId, handlers) {
 
     ws.onopen = () => {
       console.log('[WS] 已连接');
+      if (_sessionExpired) {
+        // 会话已失效，不再重置计数，直接关闭
+        _intentionalClose = true;
+        console.error('[WS] 会话已失效，关闭连接');
+        ws.close();
+        return;
+      }
       _reconnectAttempts = 0;  // 重连成功后重置计数
       if (handlers.onOpen) handlers.onOpen();
     };
@@ -176,25 +196,47 @@ export function createInterviewWS(sessionId, handlers) {
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
+        // 会话不存在属于不可恢复错误（服务端重启导致内存会话丢失/会话过期），
+        // 重试必然再次被拒，立即置为失效并停止重连，交由 onClose 恢复"开始面试"入口
+        if (msg.type === 'error' && msg.data && msg.data.message === '会话不存在') {
+          _sessionExpired = true;
+          _intentionalClose = true;
+          console.error('[WS] 会话已失效，停止重连');
+          ws.close();
+        }
         if (handlers.onMessage) handlers.onMessage(msg.type, msg.data);
       } catch (err) {
         console.error('[WS] 消息解析失败', err);
       }
     };
 
-    ws.onclose = () => {
-      console.log('[WS] 已断开');
-      if (!_intentionalClose && _reconnectAttempts < _maxReconnectAttempts) {
+    ws.onclose = (e) => {
+      console.log('[WS] 已断开', e.code, e.reason);
+      // 1000 = 服务端正常关闭（面试完成后 handler 返回），不是断线，不重连
+      if (e.code === 1000 && !_intentionalClose) {
+        console.log('[WS] 面试连接正常关闭');
+        if (handlers.onClose) handlers.onClose();
+        return;
+      }
+      // 服务端用 4000/session_not_found 标识会话不存在，兜底停止重连
+      if (!_sessionExpired && e.code === 4000 && e.reason === 'session_not_found') {
+        _sessionExpired = true;
+        _intentionalClose = true;
+        console.error('[WS] 会话已失效，停止重连');
+      }
+      if (_sessionExpired || _intentionalClose) {
+        if (handlers.onClose) handlers.onClose();
+        return;
+      }
+      if (_reconnectAttempts < _maxReconnectAttempts) {
         const delay = Math.min(_baseDelay * Math.pow(2, _reconnectAttempts), _maxDelay);
         _reconnectAttempts++;
         console.log(`[WS] 将在 ${delay}ms 后重连 (第 ${_reconnectAttempts}/${_maxReconnectAttempts} 次)`);
         if (handlers.onReconnect) handlers.onReconnect(_reconnectAttempts, delay);
         setTimeout(_connect, delay);
-      } else if (!_intentionalClose) {
+      } else {
         console.error('[WS] 重连失败，已达最大重试次数');
         if (handlers.onReconnectFailed) handlers.onReconnectFailed();
-        if (handlers.onClose) handlers.onClose();
-      } else {
         if (handlers.onClose) handlers.onClose();
       }
     };

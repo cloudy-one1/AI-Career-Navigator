@@ -95,6 +95,7 @@ class Config:
     RATE_LIMIT_UPLOAD = os.getenv("RATE_LIMIT_UPLOAD", "10/minute")
     RATE_LIMIT_GAP = os.getenv("RATE_LIMIT_GAP", "20/minute")
     RATE_LIMIT_SESSION = os.getenv("RATE_LIMIT_SESSION", "20/minute")
+    RATE_LIMIT_CAREER = os.getenv("RATE_LIMIT_CAREER", "10/minute")  # v3.2 职业规划（路径推理 LLM 调用较重）
 
     # ===== v3.0: 市场数据层 =====
     MARKET_DB_PATH = os.path.join(BASE_DIR, "data", "market.db")

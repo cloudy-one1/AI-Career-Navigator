@@ -7,6 +7,7 @@ v2.5: 新增 diagnosis_feedback 表
 import aiosqlite
 import json
 import os
+import sqlite3
 from datetime import datetime
 from typing import Optional
 import logging
@@ -50,8 +51,8 @@ async def init_db():
         # v3.1: 迁移旧数据库——补充 resume_text 列
         try:
             await db.execute("ALTER TABLE sessions ADD COLUMN resume_text TEXT DEFAULT ''")
-        except Exception:
-            pass  # 列已存在
+        except sqlite3.OperationalError:
+            pass  # 列已存在（重复 ALTER 会抛 duplicate column，属预期）
 
         # 面试问答记录
         await db.execute("""

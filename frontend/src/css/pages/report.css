@@ -1,0 +1,150 @@
+/* ===================================================
+   pages/report.css — 报告 Dashboard（v4.0）
+   =================================================== */
+
+/* ── Hero：环形总分 ── */
+.report-hero {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  padding: 28px 32px;
+  background: linear-gradient(135deg, var(--indigo-50), var(--slate-50));
+  border-radius: var(--radius-lg);
+  margin-bottom: 16px;
+}
+
+.report-hero-ring { flex-shrink: 0; }
+
+.report-hero-info {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  min-width: 0;
+}
+
+.report-hero-label {
+  font-size: var(--text-xl);
+  font-weight: 800;
+  color: var(--indigo-700);
+  line-height: 1.3;
+}
+
+.report-hero-sub {
+  font-size: var(--text-sm);
+  color: var(--slate-500);
+}
+
+/* ── 关键指标条 ── */
+.report-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.metric-item {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  text-align: center;
+}
+
+.metric-value {
+  font-size: 1.5rem;
+  font-weight: 800;
+  color: var(--indigo-700);
+  font-variant-numeric: tabular-nums;
+}
+
+.metric-label {
+  font-size: var(--text-xs);
+  color: var(--slate-500);
+  margin-top: 2px;
+}
+
+/* ── 双栏：雷达 + 时间线 ── */
+.report-grid-2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: stretch;
+  margin-bottom: 16px;
+}
+
+/* ── 轮次时间线 ── */
+.round-timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.timeline-node {
+  position: relative;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  padding-bottom: 20px;
+}
+
+.timeline-node:last-child { padding-bottom: 0; }
+
+/* 连接线（非最后节点） */
+.timeline-node:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 7px;
+  top: 18px;
+  bottom: 0;
+  width: 2px;
+  background: var(--slate-200);
+}
+
+.timeline-dot {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--indigo-600);
+  border: 3px solid var(--indigo-200);
+  flex-shrink: 0;
+  z-index: 1;
+}
+
+.timeline-node:last-child .timeline-dot {
+  background: var(--emerald-500);
+  border-color: var(--emerald-200);
+}
+
+.timeline-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.timeline-name {
+  font-weight: 600;
+  font-size: var(--text-sm);
+}
+
+.timeline-meta {
+  font-size: var(--text-xs);
+  color: var(--slate-500);
+}
+
+.timeline-score {
+  font-size: 1.15rem;
+  font-weight: 800;
+  color: var(--indigo-700);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 响应式 ── */
+@media (max-width: 1024px) {
+  .report-grid-2 { grid-template-columns: 1fr; }
+  .report-metrics { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 767px) {
+  .report-hero { flex-direction: column; text-align: center; padding: 24px 20px; }
+  .report-hero-info { align-items: center; }
+}

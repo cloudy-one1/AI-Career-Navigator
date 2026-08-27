@@ -19,6 +19,10 @@ data/
 # === 日志 ===
 *.log
 
+# === Node / Vite 前端（v4.0） ===
+node_modules/
+frontend/dist/
+
 # === 临时测试 / 调试文件 ===
 /_interview_result.json
 /_test_run.py
@@ -26,6 +30,7 @@ data/
 /interview_output.txt
 /test_output.txt
 /docs/AI对话存档/
+.import_linter_cache/
 
 # === IDE / 编辑器 ===
 .vscode/

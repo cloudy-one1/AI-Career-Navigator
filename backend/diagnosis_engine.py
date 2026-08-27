@@ -12,8 +12,8 @@ import json
 import logging
 from typing import AsyncGenerator
 
-from backend.security import check_output
-from backend.dimension_weights import (
+from .security import check_output
+from .dimension_weights import (
     DEFAULT_WEIGHTS,
     DIM_KEYS,
     DIM_NAMES,
@@ -37,8 +37,10 @@ DIAGNOSTICIAN_SYSTEM_PROMPT = """你是一位严格的面试回答诊断师。
 
 【本次评估的维度权重】
 {weight_desc}
-权重反映该岗位对各维度的重视程度。权重高的维度请分析得更细致、评分更审慎，
-但五个维度都必须给出独立评分，不得因权重低而省略。
+注意：上述权重仅用于最终结果的加权总分计算，不要求你改变任一维度的打分标准。
+请对每个维度独立、一致地评分（1-5 分），不要因为权重高低而放宽或收紧某个维度的评分。
+（诚实说明：权重是否通过本 prompt 影响你的打分分布，未经 A/B 实验验证；
+唯一确定生效的地方是后端的加权平均分公式，prompt 中的权重描述只是透明告知，不应偏置你的判断。）
 
 【追问要求】
 如果回答存在明显短板（任一维度 ≤ 2 分，或回答明显空泛缺少细节），
@@ -145,7 +147,12 @@ REWRITER_USER_PROMPT = """请改写以下面试回答：
 
 
 def _build_diagnostician_system(weights: dict | None) -> str:
-    """把动态权重注入 Diagnostician 系统提示词。"""
+    """把动态权重注入 Diagnostician 系统提示词。
+
+    诚实说明：权重仅用于后端 weighted_score() 的加权总分；
+    prompt 中的权重描述是否真正改变模型打分分布，未经 A/B 实验验证，
+    因此 prompt 措辞已改为中性（不影响打分标准），避免制造"权重已影响评分"的假象。
+    """
     w = weights or DEFAULT_WEIGHTS
     return DIAGNOSTICIAN_SYSTEM_PROMPT.format(weight_desc=describe_weights(w))
 
@@ -215,14 +222,25 @@ def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None) -> di
 
     overall = weighted_score(dimensions, w)
 
-    # 弱项维度：优先用模型判断，非法则按"分数低 + 权重高"自行推断
-    weakest = diagnosis.get("weakest_dimension", "")
-    if weakest not in DIM_KEYS:
-        valid = {k: v for k, v in dimensions.items() if v > 0}
-        if valid:
-            weakest = min(valid, key=lambda k: (valid[k], -w.get(k, 0.25)))
-        else:
-            weakest = ""
+    # 弱项维度：代码按"低分 + 高权重"推导，与模型声明交叉校验。
+    # 用代码结果兜底模型声明，消除"模型声明合法但与真实分数不符"的信任边界
+    # （该边界会导致追问打偏、前端"最薄弱维度"标签与实际分数对不上）。
+    valid_dims = {k: v for k, v in dimensions.items() if v > 0}
+    code_weakest = (
+        min(valid_dims, key=lambda k: (valid_dims[k], -w.get(k, 0.25)))
+        if valid_dims else ""
+    )
+    model_weakest = str(diagnosis.get("weakest_dimension", "")).strip()
+    if model_weakest in DIM_KEYS and model_weakest == code_weakest:
+        weakest = model_weakest
+    else:
+        if model_weakest in DIM_KEYS:
+            # 声明 key 合法但与真实最低分维度不符 → 以真实分数覆盖
+            logger.warning(
+                f"模型 weakest_dimension({model_weakest}) 与真实最低分维度"
+                f"({code_weakest}) 不符，已按真实分数重算"
+            )
+        weakest = code_weakest
 
     follow_up = str(diagnosis.get("follow_up_question", "") or "").strip()
 
@@ -342,36 +360,21 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
 async def _astream(llm_client, system_prompt: str, user_prompt: str,
                    temperature: float, max_tokens: int) -> AsyncGenerator[str, None]:
     """
-    把 LLMClient 的同步生成器包装为异步生成器，避免阻塞事件循环。
-    逐块从工作线程取值，保证 WebSocket 心跳与并发会话不被卡死。
+    异步流式诊断：直接 await 底层 AsyncOpenAI 流式客户端逐块产出。
+    v3.2: 移除原线程池 + asyncio.Queue + run_coroutine_threadsafe().result() 桥接
+    （该桥接是为适配同步 SDK 引入的技术债，且 worker 线程 .result() 在队列满时
+    可能永久挂起 → 线程泄漏）。改用 AsyncOpenAI 后无阻塞、无跨线程桥接。
     """
-    queue: asyncio.Queue = asyncio.Queue(maxsize=64)
-    loop = asyncio.get_running_loop()
-    _DONE = object()
-
-    def _produce():
-        try:
-            for chunk in llm_client.chat_stream(
-                system_prompt=system_prompt,
-                user_prompt=user_prompt,
-                temperature=temperature,
-                max_tokens=max_tokens,
-            ):
-                asyncio.run_coroutine_threadsafe(queue.put(chunk), loop).result()
-        except Exception as e:  # noqa: BLE001
-            logger.error(f"流式生成异常: {e}")
-        finally:
-            asyncio.run_coroutine_threadsafe(queue.put(_DONE), loop).result()
-
-    task = asyncio.get_running_loop().run_in_executor(None, _produce)
     try:
-        while True:
-            item = await queue.get()
-            if item is _DONE:
-                break
-            yield item
-    finally:
-        await task
+        async for chunk in llm_client.chat_stream_async(
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+            temperature=temperature,
+            max_tokens=max_tokens,
+        ):
+            yield chunk
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"流式生成异常: {e}")
 
 
 # ===== 兼容 v1 的非流式诊断 =====

@@ -1,0 +1,112 @@
+/* ===================================================
+   pages/dark.css — 深色主题组件级微调（v4.0）
+   变量层覆盖见 tokens.css @media (prefers-color-scheme: dark)
+   本文件仅处理硬编码浅色/渐变的组件级修正
+   =================================================== */
+
+@media (prefers-color-scheme: dark) {
+  /* ── Hero 卡 ── */
+  .diag-hero,
+  .report-hero {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.18), rgba(51, 65, 85, 0.45));
+  }
+
+  .diag-hero-score-label { color: #A5B4FC; }
+  .score-ring .ring-track { stroke: #334155; }
+  .score-ring .ring-text { fill: #A5B4FC; }
+  .ring-fill { stroke: #818CF8; }
+
+  /* ── 改写对照 ── */
+  .rewrite-original {
+    background: #0F172A;
+    border-color: #334155;
+    color: #94A3B8;
+  }
+
+  .rewrite-answer {
+    background: rgba(245, 158, 11, 0.12);
+    border-left-color: var(--amber-500);
+    color: #E2E8F0;
+  }
+
+  /* ── 最弱维度 ── */
+  .dim-item.dim-weak {
+    background: rgba(239, 68, 68, 0.14);
+  }
+
+  @keyframes weak-pulse {
+    0%, 100% { background-color: rgba(239, 68, 68, 0.14); }
+    50% { background-color: rgba(239, 68, 68, 0.3); }
+  }
+
+  /* ── 徽章 ── */
+  .badge-warning {
+    background: rgba(245, 158, 11, 0.15);
+    border-color: var(--amber-500);
+    color: #FBBF24;
+  }
+
+  .tag-style { background: rgba(99, 102, 241, 0.2); color: #A5B4FC; }
+  .tag-jd { background: rgba(245, 158, 11, 0.15); color: #FBBF24; }
+  .tag-live { background: rgba(16, 185, 129, 0.15); color: #34D399; }
+
+  /* ── Setup：选项选中态 ── */
+  .mode-option.selected,
+  .style-option.selected {
+    background: rgba(99, 102, 241, 0.2);
+  }
+
+  /* ── 时间线 ── */
+  .timeline-node:not(:last-child)::before { background: #334155; }
+  .timeline-node:last-child .timeline-dot { background: #10B981; border-color: #065F46; }
+  .timeline-score { color: #A5B4FC; }
+
+  /* ── 详情抽屉 ── */
+  .detail-qa-answer { background: #0F172A; }
+  .detail-dim-chip { background: #334155; color: #CBD5E1; }
+  .detail-round-row { border-bottom-color: #334155; }
+  .drawer-overlay { background: rgba(0, 0, 0, 0.6); }
+
+  /* ── 题库 ── */
+  .qb-row.qb-fav { background: rgba(245, 158, 11, 0.1); }
+  .qb-header { background: #0F172A; }
+  .qb-tag { background: rgba(129, 140, 248, 0.22); color: #A5B4FC; }
+
+  /* ── 教练模式 ── */
+  .coach-tip-card {
+    background: linear-gradient(135deg, rgba(59, 130, 246, 0.2), rgba(59, 130, 246, 0.08));
+    border-left-color: #3B82F6;
+  }
+  .coach-content { background: rgba(15, 23, 42, 0.55); }
+
+  /* ── 职业规划 ── */
+  .career-target-label { background: rgba(99, 102, 241, 0.22); color: #A5B4FC; }
+  .career-tag { background: rgba(16, 185, 129, 0.14); color: #34D399; border-color: #065F46; }
+  .career-transition {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.16), rgba(129, 140, 248, 0.08));
+    border-left-color: #6366F1;
+    color: #A5B4FC;
+  }
+  .career-node-dot { box-shadow: 0 0 0 4px rgba(129, 140, 248, 0.18); }
+
+  /* ── 市场参照 ── */
+  .market-ref-card {
+    background: linear-gradient(135deg, rgba(99, 102, 241, 0.16), rgba(16, 185, 129, 0.08));
+    border-color: #3730A3;
+  }
+  .mr-tag { background: rgba(59, 130, 246, 0.22); color: #93C5FD; }
+  .mr-educell { background: rgba(99, 102, 241, 0.22); color: #A5B4FC; }
+
+  /* ── 步骤指示器 ── */
+  .progress-step.done { background: rgba(16, 185, 129, 0.15); }
+
+  /* ── 表单焦点环（亮色适配） ── */
+  .form-input:focus,
+  .form-textarea:focus {
+    box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.25);
+  }
+
+  /* ── Toast / Modal / Drawer 阴影加深 ── */
+  .modal { box-shadow: 0 24px 64px rgba(0, 0, 0, 0.5); }
+  .drawer { box-shadow: -16px 0 40px rgba(0, 0, 0, 0.5); }
+}

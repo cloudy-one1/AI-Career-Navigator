@@ -11,6 +11,7 @@ v2.6 变更：
 """
 
 import asyncio
+import copy
 import logging
 
 from ..config import config
@@ -271,15 +272,6 @@ class InterviewSession:
         evidence = "；".join(comments.get(best_key, [])[:2])
         return best_key, evidence
 
-    def should_advance_round(self) -> bool:
-        """判断是否应推进到下一轮"""
-        cfg = self.current_round_info()
-        min_q = cfg.get("min_questions", 1)
-        answered = len(self.round_answers) >= min_q
-        extra_exhausted = self.extra_questions_added >= cfg.get("max_extra_questions", 0)
-        avg_good = self._current_round_avg_score() >= cfg.get("advance_threshold", 3.0)
-        return answered and (avg_good or extra_exhausted)
-
     def should_add_extra_question(self) -> bool:
         """是否还能追加题目"""
         cfg = self.current_round_info()
@@ -360,7 +352,7 @@ class InterviewSession:
         })
 
         if diagnosis:
-            diag_with_round = dict(diagnosis)
+            diag_with_round = copy.deepcopy(diagnosis)
             diag_with_round["round"] = self.current_round
             diag_with_round["round_name"] = self.current_round_info()["name"]
             diag_with_round["question_idx"] = self.current_question_idx

@@ -20,99 +20,231 @@ let autoReadEnabled = true;   // 是否自动朗读题目
 let currentInterviewerName = ''; // v2.4: 当前面试官名称
 let dimWeights = null;        // v2.6: 本场各维度权重
 
-/** 初始化面试 Tab */
+let setupStep = 1; // v4.0: 三步引导当前步骤
+
+/** 初始化面试 Tab（v4.0：三步引导 Setup） */
 export function initInterview() {
   const panel = $('#interview-panel');
   panel.innerHTML = '';
+  setupStep = 1;
 
-  // 简历 + JD 输入区
-  panel.appendChild(el('div', { className: 'card' },
-    el('div', { className: 'card-title', textContent: '📄 面试准备' }),
-    el('div', { className: 'form-group' },
-      el('label', { className: 'form-label', textContent: '上传简历文件' }),
-      el('div', { className: 'form-upload' },
-        el('input', { id: 'resume-file', type: 'file', accept: '.pdf,.docx,.txt,.doc' }),
-        el('button', {
-          id: 'upload-btn', className: 'btn btn-secondary btn-sm',
-          textContent: '解析文件',
-          onClick: handleUpload,
-        }),
-      ),
-    ),
-    el('div', { className: 'form-group' },
-      el('label', { className: 'form-label', textContent: '简历文本（或粘贴内容）' }),
-      el('textarea', { id: 'resume-text', className: 'form-textarea', placeholder: '粘贴简历内容...' }),
-    ),
-    el('div', { className: 'form-group' },
-      el('label', { className: 'form-label', textContent: '岗位描述 JD（可选）' }),
-      el('textarea', { id: 'jd-text', className: 'form-textarea',
-        placeholder: '粘贴岗位描述，让问题更贴合目标岗位...',
-        style: 'min-height: 80px;' }),
-    ),
-    // v2.4/v2.7: 面试模式选择
-    el('div', { className: 'form-group' },
-      el('label', { className: 'form-label', textContent: '📋 面试模式' }),
-      el('div', { className: 'mode-selector' },
-        el('div', { className: 'mode-option selected', 'data-mode': 'simulation',
-          innerHTML: '<div class="mode-name">🎯 拟真模式</div><div class="mode-desc">6阶段大厂面试流程</div>',
-          onClick: () => selectMode('simulation'),
-        }),
-        el('div', { className: 'mode-option', 'data-mode': 'traditional',
-          innerHTML: '<div class="mode-name">📝 传统模式</div><div class="mode-desc">5轮次经典面试（笔试→技术面→综合→自定义）</div>',
-          onClick: () => selectMode('traditional'),
-        }),
-        el('div', { className: 'mode-option', 'data-mode': 'coach',
-          innerHTML: '<div class="mode-name">🎓 教练模式</div><div class="mode-desc">先教后问，降低门槛</div>',
-          onClick: () => selectMode('coach'),
-        }),
-      ),
-    ),
-    // v2.7: 自我介绍环节
-    el('div', { className: 'form-group' },
-      el('label', { className: 'form-label', textContent: '🎤 额外环节' }),
-      el('div', { className: 'self-intro-toggle' },
-        el('label', { className: 'checkbox-label' },
-          el('input', { type: 'checkbox', id: 'self-intro-cb' }),
-          el('span', { className: 'checkbox-text', textContent: '包含自我介绍环节（面试开始前，了解候选人的整体背景和沟通能力）' }),
+  panel.appendChild(el('div', { id: 'setup-view', className: 'setup-layout' },
+    // ── 左侧：分步引导 ──
+    el('div', { className: 'card setup-steps-card' },
+      // 步骤条
+      el('div', { className: 'steps', id: 'setup-steps' },
+        el('div', { className: 'step active', 'data-step': '1' },
+          el('span', { className: 'step-dot', textContent: '1' }),
+          el('span', { className: 'step-label', textContent: '简历与岗位' }),
+        ),
+        el('div', { className: 'step', 'data-step': '2' },
+          el('span', { className: 'step-dot', textContent: '2' }),
+          el('span', { className: 'step-label', textContent: '面试偏好' }),
+        ),
+        el('div', { className: 'step', 'data-step': '3' },
+          el('span', { className: 'step-dot', textContent: '3' }),
+          el('span', { className: 'step-label', textContent: '题型与风格' }),
         ),
       ),
-    ),
-    // v2.7: 题型占比偏好
-    el('div', { className: 'form-group' },
-      el('label', { className: 'form-label', textContent: '⚖️ 题型偏好（可选，影响题目分布比例）' }),
-      el('div', { className: 'type-mix-sliders' },
-        typeMixSlider('知识概念', 'knowledge', 34),
-        typeMixSlider('项目经验', 'project', 33),
-        typeMixSlider('行为/软技能', 'behavior', 33),
+
+      // Step 1：简历与岗位
+      el('div', { className: 'step-card active', 'data-step-card': '1' },
+        el('div', { className: 'form-group' },
+          el('label', { className: 'form-label', textContent: '上传简历文件' }),
+          el('div', { className: 'form-upload' },
+            el('input', { id: 'resume-file', type: 'file', accept: '.pdf,.docx,.txt,.doc' }),
+            el('button', {
+              id: 'upload-btn', className: 'btn btn-secondary btn-sm',
+              textContent: '解析文件',
+              onClick: handleUpload,
+            }),
+          ),
+        ),
+        el('div', { className: 'form-group' },
+          el('label', { className: 'form-label', textContent: '简历文本（必填，可直接粘贴）' }),
+          el('textarea', { id: 'resume-text', className: 'form-textarea',
+            placeholder: '粘贴简历内容，或点击上方"解析文件"自动填入...',
+            onInput: updateSummary }),
+        ),
+        el('div', { className: 'form-group' },
+          el('label', { className: 'form-label', textContent: '岗位描述 JD（可选，让问题更贴合）' }),
+          el('textarea', { id: 'jd-text', className: 'form-textarea',
+            placeholder: '粘贴目标岗位描述...',
+            style: 'min-height: 80px;',
+            onInput: updateSummary }),
+        ),
+      ),
+
+      // Step 2：面试偏好
+      el('div', { className: 'step-card', 'data-step-card': '2' },
+        el('div', { className: 'form-group' },
+          el('label', { className: 'form-label', textContent: '📋 面试模式' }),
+          el('div', { className: 'mode-selector' },
+            el('div', { className: 'mode-option selected', 'data-mode': 'simulation',
+              innerHTML: '<div class="mode-name">🎯 拟真模式</div><div class="mode-desc">6阶段大厂面试流程</div>',
+              onClick: () => selectMode('simulation'),
+            }),
+            el('div', { className: 'mode-option', 'data-mode': 'traditional',
+              innerHTML: '<div class="mode-name">📝 传统模式</div><div class="mode-desc">5轮次经典面试（笔试→技术面→综合→自定义）</div>',
+              onClick: () => selectMode('traditional'),
+            }),
+            el('div', { className: 'mode-option', 'data-mode': 'coach',
+              innerHTML: '<div class="mode-name">🎓 教练模式</div><div class="mode-desc">先教后问，降低门槛</div>',
+              onClick: () => selectMode('coach'),
+            }),
+          ),
+        ),
+        el('div', { className: 'form-group' },
+          el('label', { className: 'form-label', textContent: '🎤 额外环节' }),
+          el('div', { className: 'self-intro-toggle' },
+            el('label', { className: 'checkbox-label' },
+              el('input', { type: 'checkbox', id: 'self-intro-cb', onchange: updateSummary }),
+              el('span', { className: 'checkbox-text', textContent: '包含自我介绍环节（面试开始前，了解候选人的整体背景和沟通能力）' }),
+            ),
+          ),
+        ),
+      ),
+
+      // Step 3：题型与风格
+      el('div', { className: 'step-card', 'data-step-card': '3' },
+        el('div', { className: 'form-group' },
+          el('label', { className: 'form-label', textContent: '🎭 面试官风格' }),
+          el('div', { className: 'style-selector' },
+            el('div', { className: 'style-option selected', 'data-style': 'friendly',
+              innerHTML: '<div class="style-name">友好型</div><div class="style-desc">鼓励式提问</div>',
+              onClick: () => selectStyle('friendly'),
+            }),
+            el('div', { className: 'style-option', 'data-style': 'strict',
+              innerHTML: '<div class="style-name">严格型</div><div class="style-desc">深度追问技术细节</div>',
+              onClick: () => selectStyle('strict'),
+            }),
+            el('div', { className: 'style-option', 'data-style': 'pressure',
+              innerHTML: '<div class="style-name">压力型</div><div class="style-desc">模拟高压面试场景</div>',
+              onClick: () => selectStyle('pressure'),
+            }),
+          ),
+        ),
+        el('div', { className: 'form-group' },
+          el('label', { className: 'form-label', textContent: '⚖️ 题型偏好（可选，影响题目分布比例）' }),
+          el('div', { className: 'type-mix-sliders' },
+            typeMixSlider('知识概念', 'knowledge', 34),
+            typeMixSlider('项目经验', 'project', 33),
+            typeMixSlider('行为/软技能', 'behavior', 33),
+          ),
+          el('div', { className: 'mix-balance-row' },
+            el('button', {
+              className: 'btn btn-ghost btn-sm',
+              textContent: '一键均衡 33/33/34',
+              onClick: () => {
+                [['knowledge', 34], ['project', 33], ['behavior', 33]].forEach(([k, v]) => {
+                  const slider = $(`#mix-slider-${k}`);
+                  if (slider) slider.value = v;
+                  updateMixValue(k);
+                });
+                updateSummary();
+              },
+            }),
+          ),
+        ),
+      ),
+
+      // 步骤导航
+      el('div', { className: 'step-nav' },
+        el('button', { id: 'prev-step-btn', className: 'btn btn-ghost',
+          textContent: '上一步', onClick: () => setSetupStep(setupStep - 1) }),
+        el('button', { id: 'next-step-btn', className: 'btn btn-primary',
+          textContent: '下一步', onClick: handleNextStep }),
       ),
     ),
-    // 面试官风格
-    el('div', { className: 'form-group' },
-      el('label', { className: 'form-label', textContent: '🎭 面试官风格' }),
-      el('div', { className: 'style-selector' },
-        el('div', { className: 'style-option selected', 'data-style': 'friendly',
-          innerHTML: '<div class="style-name">友好型</div><div class="style-desc">鼓励式提问</div>',
-          onClick: () => selectStyle('friendly'),
-        }),
-        el('div', { className: 'style-option', 'data-style': 'strict',
-          innerHTML: '<div class="style-name">严格型</div><div class="style-desc">深度追问技术细节</div>',
-          onClick: () => selectStyle('strict'),
-        }),
-        el('div', { className: 'style-option', 'data-style': 'pressure',
-          innerHTML: '<div class="style-name">压力型</div><div class="style-desc">模拟高压面试场景</div>',
-          onClick: () => selectStyle('pressure'),
+
+    // ── 右侧：配置摘要 + 开始 ──
+    el('div', { className: 'setup-summary' },
+      el('div', { className: 'card' },
+        el('div', { className: 'card-title', textContent: '本场配置' }),
+        el('div', { className: 'summary-item' },
+          el('span', { className: 'summary-label', textContent: '简历' }),
+          el('span', { className: 'summary-value', id: 'summary-resume', textContent: '未填写' }),
+        ),
+        el('div', { className: 'summary-item' },
+          el('span', { className: 'summary-label', textContent: '岗位' }),
+          el('span', { className: 'summary-value', id: 'summary-jd', textContent: '未填写' }),
+        ),
+        el('div', { className: 'summary-item' },
+          el('span', { className: 'summary-label', textContent: '模式' }),
+          el('span', { className: 'summary-value', id: 'summary-mode', textContent: '拟真模式' }),
+        ),
+        el('div', { className: 'summary-item' },
+          el('span', { className: 'summary-label', textContent: '风格' }),
+          el('span', { className: 'summary-value', id: 'summary-style', textContent: '友好型' }),
+        ),
+        el('div', { className: 'summary-item' },
+          el('span', { className: 'summary-label', textContent: '题型' }),
+          el('span', { className: 'summary-value', id: 'summary-mix', textContent: '知识34% · 项目33% · 行为33%' }),
+        ),
+        el('div', { className: 'summary-item' },
+          el('span', { className: 'summary-label', textContent: '自我介绍' }),
+          el('span', { className: 'summary-value', id: 'summary-self', textContent: '不包含' }),
+        ),
+        el('button', {
+          id: 'start-btn', className: 'btn btn-primary btn-block',
+          textContent: '🚀 开始面试',
+          onClick: startInterview,
         }),
       ),
     ),
-    el('button', {
-      id: 'start-btn', className: 'btn btn-primary btn-block',
-      textContent: '🚀 开始面试',
-      onClick: startInterview,
-    }),
   ));
 
-  // 面试进行区
-  panel.appendChild(el('div', { id: 'interview-area' }));
+  // 面试进行区（实战态 / 复盘态挂载点）
+  panel.appendChild(el('div', { id: 'interview-area', className: 'hidden' }));
+
+  updateSummary();
+}
+
+/* v4.0: 步骤切换 */
+function setSetupStep(step) {
+  setupStep = Math.min(3, Math.max(1, step));
+  $$('#setup-steps .step').forEach(s => {
+    const n = parseInt(s.dataset.step, 10);
+    s.classList.toggle('active', n === setupStep);
+    s.classList.toggle('done', n < setupStep);
+  });
+  $$('.step-card').forEach(c => c.classList.toggle('active', parseInt(c.dataset.stepCard, 10) === setupStep));
+
+  const prevBtn = $('#prev-step-btn');
+  const nextBtn = $('#next-step-btn');
+  if (prevBtn) prevBtn.style.visibility = setupStep === 1 ? 'hidden' : 'visible';
+  if (nextBtn) nextBtn.textContent = setupStep === 3 ? '🚀 开始面试' : '下一步';
+}
+
+/* v4.0: 下一步（含即时校验） */
+function handleNextStep() {
+  if (setupStep === 1) {
+    const resumeText = $('#resume-text').value.trim();
+    if (!resumeText) { toast('请先填写简历内容（可直接粘贴或上传解析）', 'warning'); return; }
+  }
+  if (setupStep < 3) setSetupStep(setupStep + 1);
+  else startInterview();
+}
+
+/* v4.0: 实时刷新右侧配置摘要 */
+function updateSummary() {
+  const set = (id, text) => { const node = $(`#${id}`); if (node) node.textContent = text; };
+  set('summary-resume', $('#resume-text').value.trim() ? '已填写' : '未填写');
+  set('summary-jd', $('#jd-text').value.trim() ? '已填写' : '未填写');
+  const modeNames = { simulation: '拟真模式', traditional: '传统模式', coach: '教练模式' };
+  set('summary-mode', modeNames[currentMode] || currentMode);
+  const styleNames = { friendly: '友好型', strict: '严格型', pressure: '压力型' };
+  set('summary-style', styleNames[currentStyle] || currentStyle);
+  const mix = getQuestionTypeMix();
+  set('summary-mix', `知识${mix.knowledge}% · 项目${mix.project}% · 行为${mix.behavior}%`);
+  set('summary-self', $('#self-intro-cb')?.checked ? '包含' : '不包含');
+}
+
+/* v4.0: 进入实战态（隐藏 Setup，显示面试进行区） */
+function enterSessionView() {
+  $('#setup-view')?.classList.add('hidden');
+  const area = $('#interview-area');
+  if (area) area.classList.remove('hidden');
 }
 
 function selectStyle(style) {
@@ -120,6 +252,7 @@ function selectStyle(style) {
   $$('.style-option').forEach(el => el.classList.remove('selected'));
   const selected = $(`.style-option[data-style="${style}"]`);
   if (selected) selected.classList.add('selected');
+  updateSummary();
 }
 
 // v2.4: 选择面试模式
@@ -151,6 +284,7 @@ function updateMixValue(key) {
   if (slider && valSpan) {
     valSpan.textContent = `${slider.value}%`;
   }
+  updateSummary();
 }
 
 function getQuestionTypeMix() {
@@ -199,6 +333,9 @@ async function startInterview() {
     const result = await generateQuestions(resumeText, jdText, currentStyle, currentMode, includeSelfIntro, questionTypeMix);
     const sessionId = result.session_id;
 
+    // v4.0: 进入实战态
+    enterSessionView();
+
     // 连接 WebSocket
     connectWS(sessionId);
   } catch (e) {
@@ -210,6 +347,7 @@ async function startInterview() {
 
 function connectWS(sessionId) {
   currentSessionId = sessionId;
+  window._interviewActive = true; // v4.0: 供全局 Header 面试状态灯使用
   // v3.1: 重置模块级状态，防止快速开始两次面试时状态污染
   roundInfo = [];
   currentRound = 0;
@@ -261,35 +399,46 @@ let currentQuestion = null;
 let currentSessionId = '';  // v2.5: 用于反馈
 let _answerTimeout = null;  // v3.1: 回答超时计时器
 
-function handleWSMessage(type, data) {
+// v4.0: 初始化实战双栏布局（对话流 + 固定诊断面板）
+function initSessionLayout(data) {
   const area = $('#interview-area');
+  area.classList.remove('hidden');
+  area.innerHTML = '';
+  roundInfo = data.rounds_info || [];
+  area.appendChild(el('div', { className: 'session-layout' },
+    el('div', { className: 'chat-flow', id: 'chat-flow' }),
+    el('div', { className: 'diag-sidebar', id: 'diag-sidebar' }),
+  ));
+  const sidebar = $('#diag-sidebar');
+  // 阶段进度
+  sidebar.appendChild(buildStageIndicator(0));
+  // v2.4: 显示模式标签
+  if (data.mode === 'traditional') {
+    sidebar.appendChild(el('div', { className: 'mode-badge',
+      textContent: '📝 传统模式 · 5轮次面试' }));
+  }
+}
+
+function handleWSMessage(type, data) {
   switch (type) {
     case 'interviewer_info':
-      area.innerHTML = '';
-      roundInfo = data.rounds_info || [];
-      area.appendChild(buildStageIndicator(0));
-      // v2.4: 显示模式标签
-      if (data.mode === 'traditional') {
-        const modeBadge = el('div', { className: 'mode-badge',
-          textContent: '📝 传统模式 · 5轮次面试' });
-        area.appendChild(modeBadge);
-      }
+      initSessionLayout(data);
       break;
 
     case 'interviewer_change':
-      showInterviewerChange(area, data);
+      showInterviewerChange($('#chat-flow'), data);
       break;
 
     // v2.6: 本场诊断维度权重（按 JD 动态计算）
     case 'dimension_weights':
       dimWeights = data;
-      showWeightsBanner(area, data);
-      mountLiveRadar(area);
+      showWeightsBanner($('#diag-sidebar'), data);
+      mountLiveRadar($('#diag-sidebar'));
       break;
 
     // v2.6: 流式诊断进度
     case 'diagnosis_status':
-      showStreamStatus(area, data);
+      showStreamStatus($('#chat-flow'), data);
       break;
 
     case 'diagnosis_chunk':
@@ -302,7 +451,7 @@ function handleWSMessage(type, data) {
 
     // v2.6: 实时雷达刷新
     case 'radar_update':
-      mountLiveRadar(area);
+      mountLiveRadar($('#diag-sidebar'));
       updateLiveRadar(data);
       break;
 
@@ -315,12 +464,13 @@ function handleWSMessage(type, data) {
 
     case 'round_start':
       currentRound = data.round;
-      area.querySelectorAll('.stage-dot').forEach(d => {
+      document.querySelectorAll('.stage-dot').forEach(d => {
         const r = parseInt(d.dataset.round);
         if (r < currentRound) { d.className = 'stage-dot done'; }
         else if (r === currentRound) { d.className = 'stage-dot current'; }
       });
-      area.appendChild(el('div', { className: 'card', style: 'text-align:center;border-left:4px solid var(--primary);' },
+      const flowEl = $('#chat-flow');
+      if (flowEl) flowEl.appendChild(el('div', { className: 'card', style: 'text-align:center;border-left:4px solid var(--primary);' },
         el('div', { style: 'font-size:.9rem;color:var(--text-secondary);', textContent: `📋 第 ${data.round + 1} / ${roundInfo.length} 轮` }),
         el('div', { style: 'font-size:1.1rem;font-weight:600;margin-top:4px;', textContent: data.name }),
       ));
@@ -328,21 +478,21 @@ function handleWSMessage(type, data) {
 
     case 'question':
       currentQuestion = data;
-      showQuestion(area, data);
+      showQuestion($('#chat-flow'), data);
       break;
 
     // v2.1: 追加题目（质量不达标时追加）
     case 'extra_question':
-      showExtraQuestion(area, data);
+      showExtraQuestion($('#chat-flow'), data);
       break;
 
     // v2.1: 质量检查结果
     case 'round_quality_check':
-      showQualityCheck(area, data);
+      showQualityCheck($('#chat-flow'), data);
       break;
 
     case 'diagnosis_result':
-      showDiagnosis(area, data);
+      showDiagnosis($('#chat-flow'), data);
       break;
 
     // v2.1: 安全拦截
@@ -357,11 +507,11 @@ function handleWSMessage(type, data) {
 
     case 'follow_up':
       pendingFollowUp = true;
-      showFollowUp(area, data.question);
+      showFollowUp($('#chat-flow'), data.question);
       break;
 
     case 'round_summary':
-      showRoundSummary(area, data);
+      showRoundSummary($('#chat-flow'), data);
       break;
 
     case 'interview_done':
@@ -478,8 +628,8 @@ function showQuestion(area, data) {
     data.intent ? el('div', { className: 'question-intent', textContent: `🎯 考察: ${data.intent}` }) : '',
   );
 
-  // 回答区（含语音输入按钮）
-  const answerArea = el('div', { className: 'answer-area' },
+  // 回答区（含语音输入按钮；v4.0: sticky 底部浮起输入条）
+  const answerArea = el('div', { className: 'answer-area answer-dock' },
     el('div', { className: 'answer-input-wrap' },
       el('textarea', { id: 'answer-input', className: 'answer-textarea', placeholder: '在此输入你的回答...' }),
       voiceSupport.stt ? el('button', {
@@ -817,19 +967,30 @@ function showDiagnosis(area, data) {
   const oScore = Number(data.overall_score || 0);
   const weights = data.weights || dimWeights?.weights || {};
   const weakest = data.weakest_dimension || '';
+  // v4.0: 原文对照（读取当前回答输入）
+  const rawAnswer = ($('#answer-input')?.value || '').trim();
 
   const diagPanel = el('div', { className: 'diagnosis-panel' },
     el('div', { className: 'diag-section' },
       el('div', { className: 'diag-section-title', textContent: '📊 各维度诊断' }),
 
-      // 总评分（加权）
-      el('div', { className: 'overall-score' },
-        el('div', { className: 'score-value', textContent: oScore.toFixed(1) }),
-        el('div', { className: 'score-label', textContent: '加权综合评分 / 5' }),
-        data.weight_desc ? el('div', {
-          style: 'font-size:.75rem;color:var(--text-muted);margin-top:4px;',
-          textContent: `权重：${data.weight_desc}`,
-        }) : '',
+      // v4.0: 环形总分 Hero（5 分制）
+      el('div', { className: 'diag-hero' },
+        el('div', {
+          className: 'diag-hero-ring',
+          innerHTML: `
+            <svg class="score-ring" viewBox="0 0 120 120" width="120" height="120" role="img" aria-label="本题综合评分 ${oScore.toFixed(1)} 分（满分 5 分）">
+              <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+              <circle class="ring-fill" cx="60" cy="60" r="52" stroke-dasharray="326.7" stroke-dashoffset="${(326.7 * (1 - Math.min(oScore, 5) / 5)).toFixed(1)}"></circle>
+              <text class="ring-text" x="60" y="60" text-anchor="middle" dominant-baseline="central">${oScore.toFixed(1)}</text>
+            </svg>`,
+        }),
+        el('div', { className: 'diag-hero-info' },
+          el('div', { className: 'diag-hero-score-label', textContent: '本题综合评分 · 满分 5' }),
+          data.weight_desc ? el('div', { className: 'diag-hero-weight', textContent: `权重：${data.weight_desc}` }) : '',
+          data.overall_comment ? el('div', { className: 'diag-hero-comment', textContent: `💬 ${data.overall_comment}` }) : '',
+          weakest ? el('span', { className: 'badge badge-warning', textContent: `优先改进：${data.weakest_dimension_name || DIM_NAMES[weakest] || weakest}` }) : '',
+        ),
       ),
 
       // 各维度
@@ -846,20 +1007,11 @@ function showDiagnosis(area, data) {
               el('div', { className: `dim-bar-fill ${scoreClass(s)}`, style: `width:${s * 20}%` }),
             ),
             el('div', { className: 'dim-score', textContent: String(s) }),
+            isWeak ? el('span', { className: 'dim-weak-badge', textContent: '最弱项' }) : '',
             el('div', { className: 'dim-comment', textContent: dim.comment || '' }),
           );
         }),
       ),
-
-      data.overall_comment ? el('div', {
-        className: 'diag-overall-comment',
-        textContent: `💬 ${data.overall_comment}`,
-      }) : '',
-
-      weakest ? el('div', {
-        className: 'diag-weak-hint',
-        textContent: `🔍 当前最薄弱：${data.weakest_dimension_name || DIM_NAMES[weakest] || weakest}`,
-      }) : '',
 
       // v2.7: 风险点识别
       data.risk_points?.length ? el('div', { className: 'diag-risk-section' },
@@ -870,11 +1022,18 @@ function showDiagnosis(area, data) {
       ) : '',
     ),
 
-    // 改写示范
+    // 改写示范（v4.0: 原文 / 示范对照）
     data.rewritten_answer ? el('div', { className: 'diag-section' },
       el('div', { className: 'diag-section-title', textContent: '✨ 改写示范' }),
       el('div', { className: 'rewrite-section' },
-        el('div', { className: 'rewrite-answer', textContent: data.rewritten_answer }),
+        rawAnswer ? el('div', { className: 'rewrite-block' },
+          el('div', { className: 'rewrite-block-label', textContent: '你的回答' }),
+          el('div', { className: 'rewrite-original', textContent: rawAnswer }),
+        ) : '',
+        el('div', { className: 'rewrite-block' },
+          el('div', { className: 'rewrite-block-label rewrite-label-ai', textContent: 'AI 示范' }),
+          el('div', { className: 'rewrite-answer', textContent: data.rewritten_answer }),
+        ),
       ),
       data.key_changes?.length ? el('div', {},
         el('div', { style: 'font-size:.8rem;color:var(--text-secondary);margin-bottom:6px;', textContent: '关键改动：' }),
@@ -985,22 +1144,14 @@ function showExtraQuestion(area, data) {
 }
 
 function finishInterview(data) {
+  // 面试已完成，主动关闭连接（后端 handler 返回也会关连接，提前关避免误触发重连）
+  if (ws && ws.close) ws.close();
   const area = $('#interview-area');
-  area.innerHTML = '';
+  area.classList.add('hidden');
 
-  area.appendChild(el('div', { className: 'card', style: 'text-align:center;border-left:4px solid var(--primary);' },
-    el('div', { style: 'font-size:1.3rem;font-weight:600;color:var(--primary);', textContent: '🎉 面试完成！' }),
-    el('div', { style: 'font-size:.9rem;color:var(--text-secondary);margin-top:8px;', textContent: '切换到「报告」Tab 查看综合评估' }),
-    el('button', {
-      className: 'btn btn-primary', style: 'margin-top:16px;',
-      textContent: '查看综合报告',
-      onClick: () => { document.querySelector('[data-tab="report"]')?.click(); },
-    }),
-  ));
-
-  $('#start-btn').style.display = 'block';
-  $('#start-btn').disabled = false;
-  $('#start-btn').textContent = '🚀 开始面试';
+  // v4.0: 回到准备态（重建 Setup，清除已填内容）
+  window._interviewActive = false;
+  initInterview();
 
   // 保存报告数据到全局，供 report.js 使用
   // 后端 interview_done 的 data 即为报告本体

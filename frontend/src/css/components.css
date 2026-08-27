@@ -1,0 +1,254 @@
+/* ===================================================
+   components.css — 组件层：全局框架（v4.0）
+   Header / 侧边导航 / 底部导航 / 面试状态灯 / 容器
+   =================================================== */
+
+/* ── Header ── */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+  padding: 0 24px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-weight: 700;
+  font-size: var(--text-md);
+  color: var(--color-text);
+}
+
+.brand-logo {
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--indigo-600), var(--indigo-400));
+  display: grid;
+  place-items: center;
+  color: #fff;
+}
+
+.version-badge {
+  font-size: var(--text-xs);
+  color: var(--indigo-700);
+  background: var(--indigo-50);
+  border: 1px solid var(--indigo-100);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-weight: 500;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ── 面试状态灯 ── */
+.status-light {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  padding: 5px 12px;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.status-light.visible {
+  display: inline-flex;
+}
+
+.status-light:hover {
+  border-color: var(--green-500);
+  color: var(--color-text);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green-500);
+  animation: status-pulse 2s infinite;
+}
+
+@keyframes status-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+  50% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0); }
+}
+
+/* ── App 主体（导航 + 内容）── */
+.app-body {
+  display: flex;
+  align-items: flex-start;
+}
+
+/* ── 侧边导航 ── */
+.app-nav {
+  width: 220px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 56px;
+  height: calc(100vh - 56px);
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-3);
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: var(--radius-md);
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-base);
+  font-weight: 500;
+  text-align: left;
+  position: relative;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.nav-item svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.nav-item:hover {
+  background: var(--slate-100);
+  color: var(--color-text);
+}
+
+.nav-item.active {
+  background: var(--indigo-50);
+  color: var(--indigo-700);
+  font-weight: 600;
+}
+
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: 2px;
+  background: var(--indigo-600);
+}
+
+/* ── 主内容容器 ── */
+.container {
+  flex: 1;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-5);
+}
+
+/* ── 底部导航（移动端）── */
+.bottom-nav {
+  display: none;
+}
+
+/* ── 响应式 ── */
+
+/* 平板：图标栏 */
+@media (min-width: 768px) and (max-width: 1024px) {
+  .app-nav {
+    width: 64px;
+    padding: var(--space-4) var(--space-2);
+    align-items: center;
+  }
+
+  .nav-item {
+    justify-content: center;
+    padding: 10px;
+  }
+
+  .nav-item .nav-label {
+    display: none;
+  }
+
+  .nav-item.active::before {
+    left: auto;
+    right: -1px;
+  }
+
+  .container {
+    padding: var(--space-5) var(--space-4);
+  }
+}
+
+/* 移动端：底部 Tab 导航，隐藏侧边栏 */
+@media (max-width: 767px) {
+  .app-nav {
+    display: none;
+  }
+
+  .app-body {
+    display: block;
+  }
+
+  .container {
+    padding: var(--space-5) var(--space-4);
+  }
+
+  body {
+    padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .bottom-nav {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    height: calc(56px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    background: var(--color-surface);
+    border-top: 1px solid var(--color-border);
+  }
+
+  .bottom-nav .nav-item {
+    flex: 1;
+    flex-direction: column;
+    gap: 2px;
+    justify-content: center;
+    text-align: center;
+    font-size: var(--text-xs);
+    padding: 6px 4px;
+  }
+
+  .bottom-nav .nav-item svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .bottom-nav .nav-item.active::before {
+    display: none;
+  }
+
+  .bottom-nav .nav-item.active {
+    color: var(--indigo-700);
+  }
+}

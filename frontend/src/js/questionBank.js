@@ -15,7 +15,6 @@ import {
 const ROUND_TYPES = ['全部阶段', '破冰环节', '技术广度', '技术深度', '项目拷问', '行为面试', '反问收尾'];
 
 let currentFilters = { round_type: '', search: '', favorited: false, source: '' };
-let editingId = null;
 
 /** 初始化题库面板 */
 export function initQuestionBank() {
@@ -111,8 +110,7 @@ async function loadQuestions() {
     ));
 
     questions.forEach(q => {
-      const isEditing = editingId === q.id;
-      table.appendChild(buildQuestionRow(q, isEditing));
+      table.appendChild(buildQuestionRow(q));
     });
 
     container.appendChild(table);
@@ -129,11 +127,7 @@ async function loadQuestions() {
 
 // ===== 构建题目行（或编辑行）=====
 
-function buildQuestionRow(q, isEditing) {
-  if (isEditing) {
-    return buildEditRow(q);
-  }
-
+function buildQuestionRow(q) {
   const diffStars = '⭐'.repeat(q.difficulty || 1) + '☆'.repeat(5 - (q.difficulty || 1));
 
   return el('div', { className: `qb-row ${q.is_favorited ? 'qb-fav' : ''}` },
@@ -157,7 +151,7 @@ function buildQuestionRow(q, isEditing) {
     el('div', { className: 'qb-cell qb-cell-usage', style: 'text-align:center;', textContent: q.usage_count || 0 }),
     el('div', { className: 'qb-cell qb-cell-actions' },
       el('button', { className: 'btn btn-sm', style: 'margin-right:4px;', textContent: '✏️', title: '编辑',
-          onClick: () => { editingId = q.id; loadQuestions(); } }),
+          onClick: () => openEditQbModal(q) }),
       el('button', { className: 'btn btn-sm btn-danger', textContent: '🗑️', title: '删除',
           onClick: async () => {
             if (!confirm('确定删除这道题目吗？')) return;
@@ -169,118 +163,92 @@ function buildQuestionRow(q, isEditing) {
   );
 }
 
-// ===== 编辑行 =====
+// ===== 新建/编辑 Modal（v4.0）=====
 
-function buildEditRow(q) {
-  const container = $('#qb-form-container');
-  container.innerHTML = '';
+function openEditQbModal(q) {
+  openQbFormModal({
+    title: '✏️ 编辑题目',
+    initial: {
+      question_text: q.question_text || q.question,
+      round_type: q.round_type || '',
+      intent: q.intent || '',
+      difficulty: q.difficulty || 3,
+    },
+    submitLabel: '💾 保存',
+    onSubmit: async (data) => { await updateQuestion(q.id, data); toast('更新成功', 'success'); },
+  });
+}
 
-  container.appendChild(el('div', { className: 'card', style: 'border-left:4px solid var(--primary);' },
-    el('div', { style: 'font-weight:600;margin-bottom:12px;', textContent: '✏️ 编辑题目' }),
-    el('textarea', { id: 'qb-edit-question', className: 'form-input', style: 'min-height:80px;',
-        placeholder: '题目内容', textContent: q.question_text || q.question }),
-    el('div', { style: 'display:flex;gap:8px;margin-top:8px;' },
-      el('select', { id: 'qb-edit-round', className: 'form-input', style: 'flex:1;' },
-        ...ROUND_TYPES.filter(r => r !== '全部阶段').map(rt =>
-          el('option', { value: rt, selected: rt === (q.round_type || ''), textContent: rt })),
+function openCreateQbModal() {
+  openQbFormModal({
+    title: '➕ 新建题目',
+    initial: { round_type: '', difficulty: 3 },
+    submitLabel: '💾 创建',
+    onSubmit: async (data) => { await createQuestion(data); toast('创建成功', 'success'); },
+  });
+}
+
+/** 通用题目表单 Modal */
+function openQbFormModal({ title, initial = {}, submitLabel, onSubmit }) {
+  const overlay = el('div', { className: 'modal-overlay' });
+  const close = () => { overlay.remove(); document.body.classList.remove('drawer-open'); };
+
+  const diffVal = initial.difficulty ?? 3;
+  const diffLabel = el('span', { className: 'qb-diff-label', textContent: '⭐'.repeat(diffVal) });
+
+  const questionInput = el('textarea', { className: 'form-input', style: 'min-height:80px;',
+    placeholder: '输入题目内容...', textContent: initial.question_text || '' });
+  const roundSelect = el('select', { className: 'form-input', style: 'flex:1;' },
+    ...ROUND_TYPES.filter(r => r !== '全部阶段').map(rt =>
+      el('option', { value: rt, selected: rt === (initial.round_type || ''), textContent: rt })));
+  const intentInput = el('input', { className: 'form-input', style: 'flex:2;', placeholder: '考察意图（可选）',
+    value: initial.intent || '' });
+  const diffInput = el('input', { type: 'range', min: '1', max: '5', value: String(diffVal), style: 'flex:1;',
+    onInput: () => { diffLabel.textContent = '⭐'.repeat(Number(diffInput.value)); } });
+
+  const modal = el('div', { className: 'modal', role: 'dialog', 'aria-label': title },
+    el('div', { className: 'modal-header' },
+      el('div', { className: 'modal-title', textContent: title }),
+      el('button', { className: 'btn btn-ghost btn-sm', textContent: '✕', onClick: close }),
+    ),
+    el('div', { className: 'modal-body' },
+      questionInput,
+      el('div', { style: 'display:flex;gap:8px;margin-top:8px;' }, roundSelect, intentInput),
+      el('div', { className: 'qb-diff-row' },
+        el('span', { className: 'qb-diff-caption', textContent: '难度' }),
+        diffInput,
+        diffLabel,
       ),
-      el('input', { id: 'qb-edit-intent', className: 'form-input', style: 'flex:2;', placeholder: '考察意图',
-          value: q.intent || '' }),
     ),
-    el('div', { style: 'display:flex;gap:8px;margin-top:8px;align-items:center;' },
-      el('span', { style: 'font-size:.85rem;color:var(--text-muted);', textContent: '难度:' }),
-      el('input', { id: 'qb-edit-diff', type: 'range', min: '1', max: '5', value: q.difficulty || 3,
-          style: 'flex:1;', onInput: () => {
-            const v = $('#qb-edit-diff').value;
-            const lbl = $('#qb-edit-diff-label');
-            if (lbl) lbl.textContent = '⭐'.repeat(v);
-          } }),
-      el('span', { id: 'qb-edit-diff-label', style: 'font-size:.85rem;min-width:60px;', textContent: '⭐'.repeat(q.difficulty || 3) }),
-    ),
-    el('div', { style: 'display:flex;gap:8px;margin-top:12px;' },
-      el('button', { className: 'btn btn-primary', textContent: '💾 保存', onClick: async () => {
-          const data = {
-            question_text: $('#qb-edit-question').value,
-            round_type: $('#qb-edit-round').value,
-            intent: $('#qb-edit-intent').value,
-            difficulty: parseInt($('#qb-edit-diff').value),
-          };
+    el('div', { className: 'modal-footer' },
+      el('button', { className: 'btn btn-secondary', textContent: '取消', onClick: close }),
+      el('button', { className: 'btn btn-primary', textContent: submitLabel, onClick: async () => {
+          const text = questionInput.value.trim();
+          if (!text) { toast('请输入题目内容', 'warning'); return; }
           try {
-            await updateQuestion(q.id, data);
-            toast('更新成功', 'success');
-            editingId = null;
-            container.innerHTML = '';
+            await onSubmit({
+              question_text: text,
+              round_type: roundSelect.value,
+              intent: intentInput.value.trim(),
+              difficulty: parseInt(diffInput.value, 10),
+            });
+            close();
             loadQuestions();
-          } catch (e) { toast('更新失败: ' + e.message, 'error'); }
-        } }),
-      el('button', { className: 'btn btn-secondary', textContent: '取消', onClick: () => {
-          editingId = null;
-          container.innerHTML = '';
-          loadQuestions();
+          } catch (e) { toast('保存失败: ' + e.message, 'error'); }
         } }),
     ),
-  ));
+  );
 
-  container.scrollIntoView({ behavior: 'smooth' });
-  return el('div', { style: 'background:#eef2ff;border-radius:8px;margin:4px 0;' });
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  document.body.classList.add('drawer-open');
+  questionInput.focus();
 }
 
 // ===== 新建表单 =====
 
 function showCreateForm() {
-  const container = $('#qb-form-container');
-  if (!container) return;
-
-  // 如果编辑先取消
-  editingId = null;
-
-  container.innerHTML = '';
-  container.appendChild(el('div', { className: 'card', style: 'border-left:4px solid var(--success);' },
-    el('div', { style: 'font-weight:600;margin-bottom:12px;', textContent: '➕ 新建题目' }),
-    el('textarea', { id: 'qb-new-question', className: 'form-input', style: 'min-height:80px;',
-        placeholder: '输入题目内容...' }),
-    el('div', { style: 'display:flex;gap:8px;margin-top:8px;' },
-      el('select', { id: 'qb-new-round', className: 'form-input', style: 'flex:1;' },
-        ...ROUND_TYPES.filter(r => r !== '全部阶段').map(rt =>
-          el('option', { value: rt, textContent: rt })),
-      ),
-      el('input', { id: 'qb-new-intent', className: 'form-input', style: 'flex:2;', placeholder: '考察意图（可选）' }),
-    ),
-    el('div', { style: 'display:flex;gap:8px;margin-top:8px;align-items:center;' },
-      el('span', { style: 'font-size:.85rem;color:var(--text-muted);', textContent: '难度:' }),
-      el('input', { id: 'qb-new-diff', type: 'range', min: '1', max: '5', value: '3', style: 'flex:1;',
-          onInput: () => {
-            const v = $('#qb-new-diff').value;
-            const lbl = $('#qb-new-diff-label');
-            if (lbl) lbl.textContent = '⭐'.repeat(v);
-          } }),
-      el('span', { id: 'qb-new-diff-label', style: 'font-size:.85rem;min-width:60px;', textContent: '⭐⭐⭐' }),
-    ),
-    el('div', { style: 'display:flex;gap:8px;margin-top:12px;' },
-      el('button', { className: 'btn btn-primary', textContent: '💾 创建', onClick: async () => {
-          const text = $('#qb-new-question').value.trim();
-          if (!text) { toast('请输入题目内容', 'warning'); return; }
-          try {
-            await createQuestion({
-              question_text: text,
-              round_type: $('#qb-new-round').value,
-              intent: $('#qb-new-intent').value.trim(),
-              difficulty: parseInt($('#qb-new-diff').value),
-            });
-            toast('创建成功', 'success');
-            container.innerHTML = '';
-            loadQuestions();
-          } catch (e) { toast('创建失败: ' + e.message, 'error'); }
-        } }),
-      el('button', { className: 'btn btn-secondary', textContent: '取消', onClick: () => {
-          container.innerHTML = '';
-          loadQuestions();
-        } }),
-    ),
-  ));
-
-  container.scrollIntoView({ behavior: 'smooth' });
-  $('#qb-new-question')?.focus();
+  openCreateQbModal();
 }
 
 // ===== 导入表单 =====

@@ -1,8 +1,8 @@
 
-<h1 align="center">🤖 AI 模拟面试官</h1>
+<h1 align="center">🤖 AI 模拟面试官与职业规划</h1>
 
 <p align="center">
-  <strong>v3.1 — 生产级加固 + 市场数据深度集成</strong>
+  <strong>v4.0 — 全新 UIUX 重构（Vite 工程化 + Design Tokens + 深色主题，课程项目级，非生产级）</strong>
 </p>
 
 <p align="center">
@@ -15,7 +15,7 @@
 
 <p align="center">
   基于大语言模型的多轮模拟面试系统<br>
-  支持简历解析、双 Agent 诊断、流式反馈、语音交互、题库管理
+  支持简历解析、双 Agent 诊断、流式反馈、语音交互、题库管理、职业路径规划
 </p>
 
 ---
@@ -26,6 +26,8 @@ AI 模拟面试官是一个面向求职者的智能面试练习平台。上传�
 
 ### 核心亮点
 
+- **全新 UIUX（v4.0）**：三步引导准备 Setup + 双栏面试工作台（对话流 + 固定诊断面板）+ 复盘态诊断卡（环形总分/原文改写对照）+ 报告 Dashboard + 深色主题（跟随系统）
+- **Vite 工程化（v4.0）**：Design Tokens 四层 CSS 架构 + 左垂直导航（桌面/平板/移动三态自适应）+ npm 开发/构建脚本
 - **双 Agent 诊断引擎**：Diagnostician（诊断）+ Rewriter（改写）独立协作，非单一评分
 - **动态维度权重**：根据 JD 自动调整各维度权重 + SHA256 缓存，诊断更贴合岗位
 - **流式诊断反馈**：WebSocket 实时推送诊断结果、追问、雷达图数据
@@ -34,14 +36,16 @@ AI 模拟面试官是一个面向求职者的智能面试练习平台。上传�
 - **语音交互**：浏览器内置 Web Speech API 实现题目朗读（TTS）+ 语音回答（STT）
 - **Gap 分析**：简历-岗位六维度透明匹配（技能/城市/学历/经验/薪资/可信度），含市场基准参照
 - **跨岗位对比**：一份简历同时对比多个 JD，输出排名与择岗建议
+- **职业规划路径**（v3.2）：以 Gap 六维快照为基线，LLM 推理多阶段时间轴路径（需补技能/里程碑/岗位跃迁），替代横截面打分
+- **分层依赖强制**（v3.2）：import-linter 契约（L1-L4）确定性拦截所有 import 越层，`run.py lint` 一键校验
 - **岗位画像研究**：DuckDuckGo 搜索 + LLM 分析，自动丰富 JD 背景
 - **市场数据注入**：出题时自动注入市场行情（热门技能/薪资分位/学历分布）
-- **Web 安全加固**：slowapi 频率限制 + 安全响应头 + 请求体大小限制
-- **安全防护**：5 层安全体系（频率限制 + 输入注入检测 / 输出泄露检测 / 状态校验 / 记忆防污染）
+- **Web 层限流**：slowapi 频率限制 + 安全响应头 + 请求体大小限制（降低滥用，非安全边界）
+- **启发式内容检查**：基于关键词/正则拦截最幼稚的注入尝试（非安全边界，可被绕过；详见「已知局限」）
 - **多 AI 后端**：DeepSeek / 通义千问 / 智谱 GLM / OpenAI 可切换
 - **题库管理**：CRUD + 收藏 + 从面试会话导入
 - **Docker 部署**：Dockerfile + docker-compose.yml 一键部署
-- **自动化测试**：50 个测试用例覆盖核心路径
+- **自动化测试**：268 个测试用例覆盖核心路径
 
 ---
 
@@ -77,8 +81,16 @@ cp .env.example .env
 python run.py
 ```
 
+前端开发模式（v4.0，可选，提供热更新）：
+```bash
+cd frontend
+npm install
+npm run dev     # http://localhost:5173（自动代理 /api /ws /upload 到 :8000）
+npm run build   # 产出 dist/，由 FastAPI 托管（http://localhost:8000）
+```
+
 启动后访问：
-- 🎯 **面试页面**：http://localhost:8000
+- 🎯 **面试页面**：http://localhost:8000（生产构建）或 http://localhost:5173（开发热更新）
 - 📚 **API 文档**：http://localhost:8000/docs
 
 ### Docker 部署（标准化，推荐）
@@ -153,11 +165,14 @@ OPENAI_MODEL=gpt-4o-mini
 
 ```
 AI-simulated-interviewer/
-├── run.py                        # 一键启动入口（本地开发）
-├── Dockerfile                    # 生产级容器镜像
+├── run.py                        # 一键启动入口 + lint 子命令（import-linter）
+├── CHARTER.md                    # [v3.2] 不变宪章：架构约束/决策记录卡/已知局限
+├── CHANGELOG.md                  # [v3.2] 版本迭代叙事
+├── .importlinter                 # [v3.2] 分层依赖契约（L1-L4）
+├── Dockerfile                    # 容器镜像（课程项目级）
 ├── docker-compose.yml            # Docker Compose 部署
 ├── .dockerignore                 # 容器构建忽略清单
-├── requirements.txt              # Python 依赖
+├── requirements.txt              # Python 依赖（含 dev 依赖 import-linter）
 ├── .env.example                  # 环境变量模板
 │
 ├── backend/                      # Python 后端
@@ -167,10 +182,11 @@ AI-simulated-interviewer/
 │   ├── llm_client.py             # 多 AI 后端客户端（含流式）
 │   ├── db.py                     # SQLite 多表操作（aiosqlite）+ JD 权重缓存表
 │   ├── schemas.py                # Pydantic 数据模型（含跨岗位对比）
-│   ├── security.py               # 5 层安全防护
+│   ├── security.py               # 启发式内容检查（课程项目级，非安全边界）
 │   ├── diagnosis_engine.py       # 双 Agent 诊断引擎
 │   ├── dimension_weights.py      # JD 动态维度权重（含 SHA256 缓存）
 │   ├── gap_analyzer.py           # 简历-岗位 Gap 分析 + 市场基准参照
+│   ├── career_planner.py         # [v3.2] 职业路径规划（以 Gap 为基线做多阶段推理）
 │   ├── question_gen.py           # 问题生成（含市场数据注入）
 │   ├── question_bank.py          # 题库 CRUD 管理
 │   ├── resume_parser.py          # 简历解析（PDF/DOCX/TXT）
@@ -199,6 +215,7 @@ AI-simulated-interviewer/
 │       ├── report.js             # 综合报告 + Gap 分析 + 跨岗位对比
 │       ├── history.js            # 历史记录
 │       ├── questionBank.js       # 题库管理界面
+│       ├── careerPlan.js         # [v3.2] 职业规划 Tab（时间轴 + 阶段卡片 + 技能曲线）
 │       ├── voice.js              # 语音交互（TTS + STT）
 │       └── utils.js              # 工具函数
 │
@@ -214,7 +231,8 @@ AI-simulated-interviewer/
 │   ├── test_web_research.py      # 岗位画像研究
 │   ├── test_data_support.py      # 技能匹配
 │   ├── test_market_cleaner.py    # 市场数据清洗
-│   └── test_market_importer.py   # 市场数据导入
+│   ├── test_market_importer.py   # 市场数据导入
+│   └── test_career_planner.py    # [v3.2] 职业规划（schema + 路由 + 降级路径）
 │
 ├── docs/                         # 需求文档与周报
 │   ├── week1_*.md                # v1 模块需求
@@ -244,7 +262,8 @@ AI-simulated-interviewer/
 | **岗位研究** | DuckDuckGo 搜索 + LLM 分析 |
 | **日志** | logging + RotatingFileHandler（5MB×3 旋转） |
 | **部署** | Docker + Docker Compose（跨平台一键部署） |
-| **测试** | pytest（50 用例） |
+| **分层校验** | import-linter 契约（L1-L4，`run.py lint` 强制） |
+| **测试** | pytest（257 用例） |
 
 ---
 
@@ -291,18 +310,46 @@ AI-simulated-interviewer/
 
 ---
 
-## 🔒 安全特性
+## 🔒 内容护栏（启发式，非安全边界）
 
-| 层级 | 防护内容 |
-|------|---------|
-| L0 频率限制 | slowapi 全局限流 + 高敏感端点独立限流 |
-| L1 输入注入检测 | 50+ 正则模式：角色逃逸 / Prompt 盗取 / 越狱 / 编码绕过 |
-| L2 输出泄露检测 | System Prompt 片段泄漏检测 |
-| L3 状态异常校验 | 重复回答检测（Jaccard 相似度）+ 内容质量校验 |
-| L4 记忆防污染 | 检测篡改历史 / 替换简历 / 撤回回答行为 |
-| HTTP 安全头 | x-content-type-options / x-frame-options / x-xss-protection |
+本系统包含一层**课程项目级的内容护栏**，目的是拦截最幼稚的注入尝试、重复刷屏和明显的流程操控，**不是**一道能被认真对待的安全边界：
+
+| 层级 | 内容 | 性质 |
+|------|------|------|
+| 频率限制 | slowapi 全局限流 + 高敏感端点独立限流 | 降低滥用 |
+| 输入检查（硬） | 角色逃逸 / Prompt 盗取 / 越狱 / 特殊 token 等**高置信**模式 | 正则拦截，可被绕过 |
+| 输入检查（软） | "从现在开始""你必须输出"等易误伤句式 | 仅告警，不阻断 |
+| 输出检查 | System Prompt 片段泄漏 | 仅记录，不阻断 |
+| 状态校验 | 重复回答检测（Jaccard）+ 内容质量校验 | 防刷屏 |
+| 记忆防污染 | 检测篡改历史 / 替换简历意图 | 启发式 |
+| HTTP 安全头 | x-content-type-options / x-frame-options / x-xss-protection | 纵深防御一角 |
+
+**已知绕过方式**：换说法、错别字、同义词、中英混杂、Base64/拼音/编码变形均可绕过上述正则。生产环境必须依赖**认证/授权 + 服务端可信边界 + 模型侧指令隔离**，而非客户端关键词过滤。
 
 **请求体限制**：简历上传 10MB，普通请求 1MB。
+
+---
+
+## ⚠️ 已知局限与架构取舍
+
+本系统定位为**课程项目**，以下局限是已知的、刻意的取舍，而非待修复的 bug：
+
+| 局限 | 说明 | 可选演进方向（未实现） |
+|------|------|------------------------|
+| **无认证/授权** | `session_id` 为随机串，防猜测但**不是访问控制**；拿到链接可读他人简历/诊断/报告 | 接入登录体系 + 会话归属校验；敏感接口加 `Depends(auth)` |
+| **WebSocket 无连接身份校验** | `/ws/interview/{session_id}` 仅校验会话存在性，不校验连接者身份；任何持有 session_id 的客户端均可接管该会话流程，与"无认证/授权"同源 | 接入认证层 + 连接归属校验；v3.1 已为 `switch_provider` 单例重赋值加锁消除重赋值竞态 |
+| **全局单例可变状态** | `llm_client`/`diagnosis_engine` 为模块级单例，被所有会话共享、无按会话隔离；多后端高频切换或并发导入下内部 provider 状态存在理论竞态 | 引入按会话隔离的客户端实例或请求作用域依赖（课程项目阶段仅文档披露，不做隔离） |
+| **双 Agent 成本** | Diagnostician + Rewriter 每题至少 2 次 LLM 调用，流式下延迟与 token 成本翻倍 | 做单 Agent + 结构化输出（JSON）的对比实验，量化"分 vs 合"的质量/成本权衡后再决策 |
+| **SQLite 扩展性** | 单文件数据库；多 Worker 下 WebSocket 需 sticky session，水平扩展受限 | 换异步 Postgres / 引入连接池；或改用内存态 + 持久化分离 |
+| **内容护栏可被绕过** | 见上节，正则过滤防不住认真攻击者 | 见上节演进方向 |
+| **测试偏纯函数** | 50 个用例覆盖了权重计算、Schema 校验等确定性逻辑；但**诊断准确性、追问是否抓最弱维度、评分稳定性**依赖 LLM 输出，难以在单测中验证 | 引入基于黄金样本的回归评测（LLM-as-judge / 人工抽检），把"核心主张"纳入可观测范围 |
+| **市场基准数据来源（学术诚信披露）** | Gap 分析的"市场基准参照"数据来自本人此前已完成并提交的采集项目（job-crawler）的 `data.db`，经 importer + store 导入 `market.db`，**本次仅做管道整合、不含数据采集工作量** | 若评审基于"本次周期实际产出"，可评估替换为小样本人工整理/公开数据集 |
+| **权重注入 prompt 因果未验证** | Diagnostician prompt 中的权重真正生效处在 `weighted_score()` 加权平均；prompt 是否改变模型打分分布未经 A/B 验证（已有 prompt 已改为中性诚实表述） | 做"有无权重说明文字"的 A/B 对照实验，量化影响 |
+| **LLM 权重稳定性未测** | `analyze_jd_weights()` 用 LLM 判 JD 权重，`temperature=0.2` 非完全确定，"千岗千面"卖点的同-JD 权重方差从未测过 | 固定 JD 反复采样统计权重方差，给出稳定性区间 |
+| **输出检测仅监控不阻断** | `security.check_output()` 检测到泄漏仅记日志、不拦截、不脱敏，泄漏内容原样返回前端，属可观测性而非输出安全边界 | 需要时做输出脱敏/阻断（产品化阶段事项） |
+| **职业规划路径未经验证** | v3.2 的路径推理为单次 LLM 生成，阶段划分/顺序/里程碑合理性未做 A/B 或专家校验；LLM 失败时走启发式三段式兜底 | 用真实职业样本做专家评审；将"路径可行性"纳入黄金样本回归评测 |
+
+> **关键结论**："50 个测试用例通过"不等于"核心功能被验证"。核心诊断质量依赖 LLM，当前测试套件验证的是**工程正确性**，而非**诊断有效性**。
 
 ---
 
@@ -315,6 +362,13 @@ AI-simulated-interviewer/
 - [模块差距分析](docs/week3_三个模块差距分析与阶段结论.md)
 - [v2.6 深化诊断核心](docs/week4_深化诊断核心_需求.md)
 - [v3.0 市场数据层改造](docs/week5_v3数据层_需求.md)
+- [前端设计方案（UI/UX 重构·评审稿）](docs/前端设计方案_UIUX重构.md)
+
+### 宪章与契约（v3.2）
+
+- [不变硬约束 CHARTER.md](CHARTER.md)：架构原则 / 诊断五维度 / L1-L4 分层规则 / 决策记录卡模板 / 已知局限
+- [版本迭代叙事 CHANGELOG.md](CHANGELOG.md)：v2 → v3.2 各轮新增、推翻、修复
+- [.importlinter](.importlinter)：分层依赖契约文件（INI 格式，与 CHARTER 约束同步）
 
 ### 自动化测试
 
@@ -326,7 +380,16 @@ pytest tests/ -v
 pytest tests/ --cov=backend --cov-report=term-missing
 ```
 
-测试覆盖：Schema 验证 / API 路由 / Gap 分析器 / 维度权重 / 简历解析 / 报告生成 / 安全防护 / Web 研究 / 技能匹配 / 市场数据
+测试覆盖：Schema 验证 / API 路由 / Gap 分析器 / 维度权重 / 简历解析 / 报告生成 / 安全防护 / Web 研究 / 技能匹配 / 市场数据 / 职业规划
+
+### 分层依赖检查
+
+```bash
+# 校验 L1-L4 分层契约（新增/重构模块后必跑）
+python run.py lint
+```
+
+> Windows 下无需额外操作：`run.py lint` 已内置 `PYTHONUTF8=1`，避免 grimp 按 GBK 解析 UTF-8 源码导致漏检。
 
 
 ---

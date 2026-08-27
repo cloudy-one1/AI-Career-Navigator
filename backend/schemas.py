@@ -302,3 +302,33 @@ class CrossJobCompareResponse(BaseModel):
     results: list[JobCompareItem]
     recommendation: str  # 综合推荐（哪个岗位最佳 + 理由）
     ranking: list[str]   # 岗位名称排序（最佳→最差）
+
+
+# ========== v3.2: 职业规划 ==========
+
+class CareerStage(BaseModel):
+    """职业路径中的单个阶段"""
+    order: int                          # 阶段序号（从 1 开始）
+    title: str                          # 阶段标题，如 "初级前端工程师"
+    timeframe: str                      # 时间区间，如 "0-1 年"
+    target_level: str = ""              # 该阶段末的目标岗位层级（可空）
+    skills_to_acquire: list[str] = []   # 本阶段需补技能
+    milestones: list[str] = []          # 里程碑（可验证成果）
+    transition_action: str = ""         # 岗位跃迁 / 跳槽动作
+    rationale: str = ""                 # 为何此顺序 / 阶段理由
+
+
+class CareerPlanRequest(BaseModel):
+    """职业规划请求：简历 + 目标岗位 + 目标年限"""
+    resume_text: str = Field(..., min_length=10, description="简历文本")
+    target_role: str = Field(..., min_length=2, description="目标岗位/角色")
+    jd_text: str = Field(default="", description="目标岗位 JD（可选，更精准）")
+    timeframe_years: int = Field(default=3, ge=1, le=10, description="目标年限（1-10 年）")
+
+
+class CareerPlanResponse(BaseModel):
+    """职业规划结果：现状基线 + 多阶段时间轴路径"""
+    baseline_gap: GapAnalysisResponse | None = None  # 现状六维快照（路径起点）
+    stages: list[CareerStage] = []                   # 时间轴阶段（从近到远）
+    summary: str = ""                                # 一句话路径总结
+    risk_level: str = ""                             # 路径可行度风险（低/中/高）

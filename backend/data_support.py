@@ -4,7 +4,7 @@
 
 import json
 import os
-from backend.config import config
+from .config import config
 
 # 启动时加载一次
 _skills_data: dict = {}

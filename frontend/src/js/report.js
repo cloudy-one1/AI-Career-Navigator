@@ -27,6 +27,15 @@ export function initReport() {
 
   // v3.1: 跨岗位对比卡片
   panel.appendChild(_buildCompareCard());
+
+  // v4.0: 支持从「历史」Tab 跳转并自动加载
+  const pending = window._pendingReportSession;
+  if (pending) {
+    window._pendingReportSession = null;
+    const input = $('#report-session-id');
+    if (input) input.value = pending;
+    loadReport();
+  }
 }
 
 async function loadLatestReport() {
@@ -72,21 +81,54 @@ function renderReport(report) {
     return;
   }
 
-  // 报告头部
+  // v4.0: 报告 Hero（环形总分 + 元信息）
   const sessionId = report.session_id || '';
-  content.appendChild(el('div', { className: 'report-header card' },
-    el('div', { className: 'report-score', textContent: (report.overall_avg || 0).toFixed(1) }),
-    el('div', { className: 'report-label',
-      textContent: report.scoring?.weighted ? '加权综合评分 / 5' : '综合评分 / 5' }),
-    el('div', { style: 'font-size:.8rem;color:var(--text-muted);margin-top:8px;', textContent: `风格: ${report.interviewer_style || 'friendly'} | ${report.rounds.length} 轮面试` }),
-    sessionId ? el('button', {
-      className: 'btn btn-secondary btn-sm',
-      style: 'margin-top:12px;',
-      textContent: '📥 导出复盘文件',
-      onClick: () => {
-        exportReview(sessionId).catch(e => toast(e.message, 'error'));
-      },
-    }) : '',
+  const oAvg = report.overall_avg || 0;
+  const ringOffset = (326.7 * (1 - Math.min(oAvg, 5) / 5)).toFixed(1);
+  content.appendChild(el('div', { className: 'report-hero card' },
+    el('div', {
+      className: 'report-hero-ring',
+      innerHTML: `
+        <svg class="score-ring" viewBox="0 0 120 120" width="110" height="110" role="img" aria-label="综合评分 ${oAvg.toFixed(1)} 分（满分 5 分）">
+          <circle class="ring-track" cx="60" cy="60" r="52"></circle>
+          <circle class="ring-fill" cx="60" cy="60" r="52" stroke-dasharray="326.7" stroke-dashoffset="${ringOffset}"></circle>
+          <text class="ring-text" x="60" y="60" text-anchor="middle" dominant-baseline="central">${oAvg.toFixed(1)}</text>
+        </svg>`,
+    }),
+    el('div', { className: 'report-hero-info' },
+      el('div', { className: 'report-hero-label', textContent: report.scoring?.weighted ? '加权综合评分' : '综合评分' }),
+      el('div', { className: 'report-hero-sub', textContent: `满分 5 · ${report.interviewer_style || 'friendly'} 风格 · ${report.rounds.length} 轮面试` }),
+      sessionId ? el('button', {
+        className: 'btn btn-secondary btn-sm',
+        style: 'margin-top:12px;width:fit-content;',
+        textContent: '📥 导出复盘文件',
+        onClick: () => {
+          exportReview(sessionId).catch(e => toast(e.message, 'error'));
+        },
+      }) : '',
+    ),
+  ));
+
+  // v4.0: 关键指标条
+  const totalQ = (report.rounds || []).reduce((a, r) => a + (r.questions_count || 0), 0);
+  const totalA = (report.rounds || []).reduce((a, r) => a + (r.answers_count || 0), 0);
+  content.appendChild(el('div', { className: 'report-metrics' },
+    el('div', { className: 'metric-item' },
+      el('div', { className: 'metric-value', textContent: String(report.rounds?.length || 0) }),
+      el('div', { className: 'metric-label', textContent: '轮面试' }),
+    ),
+    el('div', { className: 'metric-item' },
+      el('div', { className: 'metric-value', textContent: `${totalA}/${totalQ}` }),
+      el('div', { className: 'metric-label', textContent: '题已答' }),
+    ),
+    el('div', { className: 'metric-item' },
+      el('div', { className: 'metric-value', textContent: String(report.strengths?.length || 0) }),
+      el('div', { className: 'metric-label', textContent: '强项' }),
+    ),
+    el('div', { className: 'metric-item' },
+      el('div', { className: 'metric-value', textContent: String(report.weaknesses?.length || 0) }),
+      el('div', { className: 'metric-label', textContent: '待提升' }),
+    ),
   ));
 
   // v2.6: 评分权重说明
@@ -103,7 +145,9 @@ function renderReport(report) {
     ));
   }
 
-  // 雷达图
+  // v4.0: 雷达图 + 轮次时间线（双栏）
+  const grid = el('div', { className: 'report-grid-2' });
+
   if (report.dimension_trends?.length) {
     const chartDiv = el('div', { className: 'card' },
       el('div', { className: 'card-title', textContent: '🎯 各维度趋势' }),
@@ -113,26 +157,27 @@ function renderReport(report) {
         ),
       ),
     );
-    content.appendChild(chartDiv);
-
+    grid.appendChild(chartDiv);
     setTimeout(() => drawRadarChart(report), 100);
   }
 
-  // 轮次汇总卡片
   if (report.rounds?.length) {
-    content.appendChild(el('div', { className: 'card' },
-      el('div', { className: 'card-title', textContent: '📋 轮次汇总' }),
-      el('div', { className: 'round-cards' },
-        ...report.rounds.map(r => el('div', { className: 'round-card' },
-          el('div', {},
-            el('div', { className: 'round-card-name', textContent: r.round_name }),
-            el('div', { className: 'round-card-meta', textContent: `${r.answers_count}/${r.questions_count} 题已答` }),
+    grid.appendChild(el('div', { className: 'card' },
+      el('div', { className: 'card-title', textContent: '📋 轮次时间线' }),
+      el('div', { className: 'round-timeline' },
+        ...report.rounds.map(r => el('div', { className: 'timeline-node' },
+          el('div', { className: 'timeline-dot' }),
+          el('div', { className: 'timeline-body' },
+            el('div', { className: 'timeline-name', textContent: r.round_name }),
+            el('div', { className: 'timeline-meta', textContent: `${r.answers_count}/${r.questions_count} 题已答` }),
           ),
-          el('div', { className: 'round-card-score', textContent: (r.avg_score || 0).toFixed(1) }),
+          el('div', { className: 'timeline-score', textContent: (r.avg_score || 0).toFixed(1) }),
         )),
       ),
     ));
   }
+
+  content.appendChild(grid);
 
   // 强项 & 弱项
   const hasStrengths = report.strengths?.length;

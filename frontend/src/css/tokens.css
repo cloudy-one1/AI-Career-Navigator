@@ -1,0 +1,166 @@
+/* ===================================================
+   tokens.css — 设计 Token 层（v4.0）
+   规范来源：docs/前端设计方案_UIUX重构.md 第 4 章
+   =================================================== */
+
+:root {
+  /* ── 品牌主色 Indigo 阶梯（专业可信）── */
+  --indigo-50: #EEF2FF;
+  --indigo-100: #E0E7FF;
+  --indigo-400: #818CF8;
+  --indigo-500: #6366F1;
+  --indigo-600: #4F46E5;
+  --indigo-700: #4338CA;
+  --indigo-800: #3730A3;
+
+  /* ── 辅助色 琥珀（教练陪伴·仅用于鼓励/里程碑/成长）── */
+  --amber-50: #FFFBEB;
+  --amber-400: #FBBF24;
+  --amber-500: #F59E0B;
+  --amber-600: #D97706;
+
+  /* ── 功能色 ── */
+  --green-50: #ECFDF5;
+  --green-500: #10B981;
+  --emerald-50: #ECFDF5;
+  --emerald-200: #A7F3D0;
+  --emerald-500: #10B981;
+  --emerald-600: #059669;
+  --emerald-700: #047857;
+  --red-50: #FEF2F2;
+  --red-500: #EF4444;
+  --blue-500: #3B82F6;
+  --orange-500: #F97316;
+
+  /* ── 中性色 Slate 阶梯 ── */
+  --slate-50: #F8FAFC;
+  --slate-100: #F1F5F9;
+  --slate-200: #E2E8F0;
+  --slate-300: #CBD5E1;
+  --slate-400: #94A3B8;
+  --slate-500: #64748B;
+  --slate-600: #475569;
+  --slate-700: #334155;
+  --slate-800: #1E293B;
+  --slate-900: #0F172A;
+
+  /* ── 语义别名 ── */
+  --color-bg: var(--slate-50);
+  --color-surface: #FFFFFF;
+  --color-text: var(--slate-900);
+  --color-text-secondary: var(--slate-700);
+  --color-text-muted: var(--slate-500);
+  --color-border: var(--slate-200);
+  --color-primary: var(--indigo-600);
+  --color-primary-hover: var(--indigo-700);
+  --color-primary-soft: var(--indigo-50);
+  --color-success: var(--green-500);
+  --color-warning: var(--amber-500);
+  --color-danger: var(--red-500);
+  --color-info: var(--blue-500);
+  --color-accent: var(--amber-500);
+
+  /* ── 字体与排版 ── */
+  --font-family: "PingFang SC", "Microsoft YaHei", -apple-system, "Segoe UI", Roboto, sans-serif;
+  --text-xs: 12px;
+  --text-sm: 13px;
+  --text-base: 14px;
+  --text-md: 16px;
+  --text-lg: 18px;
+  --text-xl: 22px;
+  --text-2xl: 28px;
+  --text-3xl: 36px;
+
+  /* ── 间距 4pt 网格 ── */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  /* ── 圆角 ── */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-full: 999px;
+
+  /* ── 阴影 ── */
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
+  --shadow-md: 0 4px 12px -2px rgba(15, 23, 42, 0.08);
+  --shadow-lg: 0 12px 32px -8px rgba(15, 23, 42, 0.14);
+  --shadow-glow: 0 0 0 4px rgba(79, 70, 229, 0.12);
+
+  /* ── 动效 ── */
+  --dur-fast: 150ms;
+  --dur-base: 250ms;
+  --dur-slow: 350ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+/* ===================================================
+   旧变量别名（迁移期兼容 style.css 既有组件样式）
+   映射表见 docs 附录 B；组件逐步切换后移除本块
+   =================================================== */
+:root {
+  --primary: var(--indigo-600);
+  --primary-light: var(--indigo-400);
+  --primary-dark: var(--indigo-800);
+  --success: var(--green-500);
+  --warning: var(--amber-500);
+  --danger: var(--red-500);
+  --bg: var(--slate-50);
+  --card: #FFFFFF;
+  --border: var(--slate-200);
+  --text: var(--slate-800);
+  --text-secondary: var(--slate-500);
+  --text-muted: var(--slate-400);
+  --radius: var(--radius-md);
+  --shadow: var(--shadow-sm);
+  --transition: var(--dur-base) var(--ease-out);
+  /* --shadow-md / --radius / --transition 与新 Token 同名，
+     直接复用新定义，不再重复声明 */
+}
+
+/* ===================================================
+   v4.0: 深色主题（跟随系统 prefers-color-scheme）
+   覆盖语义层 + 旧别名层；组件级微调见 pages/dark.css
+   =================================================== */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --color-bg: #0F172A;
+    --color-surface: #1E293B;
+    --color-text: #E2E8F0;
+    --color-text-secondary: #94A3B8;
+    --color-text-muted: #64748B;
+    --color-border: #334155;
+    --color-primary: #818CF8;
+    --color-primary-hover: #A5B4FC;
+    --color-primary-soft: rgba(129, 140, 248, 0.14);
+    --color-success: #34D399;
+    --color-warning: #FBBF24;
+    --color-danger: #F87171;
+    --color-info: #60A5FA;
+    --color-accent: #FBBF24;
+
+    --primary: #818CF8;
+    --primary-light: #A5B4FC;
+    --primary-dark: #6366F1;
+    --success: #34D399;
+    --warning: #FBBF24;
+    --danger: #F87171;
+    --bg: #0F172A;
+    --card: #1E293B;
+    --border: #334155;
+    --text: #E2E8F0;
+    --text-secondary: #94A3B8;
+    --text-muted: #64748B;
+
+    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+    --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.5);
+    --shadow-lg: 0 12px 32px -8px rgba(0, 0, 0, 0.6);
+  }
+}
