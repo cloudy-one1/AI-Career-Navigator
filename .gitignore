@@ -32,6 +32,13 @@ frontend/dist/
 /docs/AI对话存档/
 .import_linter_cache/
 
+# === 二进制 / 产品文档（不入库） ===
+*.docx
+*.doc
+*.pdf
+*.pptx
+*.xlsx
+
 # === IDE / 编辑器 ===
 .vscode/
 .idea/
