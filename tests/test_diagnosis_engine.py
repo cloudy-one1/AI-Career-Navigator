@@ -84,6 +84,34 @@ class TestWeakestCrossCheck:
         assert res["weakest_dimension"] == ""
 
 
+class TestNextActionNormalize:
+    """v6.0: next_action 三态规整（对标 career-copilot normalizeNextAction）。"""
+
+    def test_valid_action_kept(self):
+        diag = _build_diagnosis(BASE_SCORES)
+        diag["next_action"] = "next_question"
+        res = normalize_result(diag, {}, weights=None)
+        assert res["next_action"] == "next_question"
+
+    def test_action_case_normalized(self):
+        diag = _build_diagnosis(BASE_SCORES)
+        diag["next_action"] = "Complete"
+        res = normalize_result(diag, {}, weights=None)
+        assert res["next_action"] == "complete"
+
+    def test_invalid_action_derived_from_follow_up_text(self):
+        diag = _build_diagnosis(BASE_SCORES)
+        diag["next_action"] = "不知道"          # 非法值
+        diag["follow_up_question"] = "追问一下"  # 但有追问文本
+        res = normalize_result(diag, {}, weights=None)
+        assert res["next_action"] == "follow_up"
+
+    def test_missing_action_without_follow_up_is_empty(self):
+        # 未声明且无追问文本 → 空串，交由会话层阈值规则兜底
+        res = normalize_result(_build_diagnosis(BASE_SCORES), {}, weights=None)
+        assert res["next_action"] == ""
+
+
 class TestAstreamAsync:
     """_astream 应直接消费 llm_client.chat_stream_async，不再有线程池/队列桥接。"""
 

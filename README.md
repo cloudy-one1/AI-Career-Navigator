@@ -2,7 +2,7 @@
 <h1 align="center">🤖 AI 模拟面试官与职业规划</h1>
 
 <p align="center">
-  <strong>v5.0 — 简历证据检索 + 不会答恢复 + 薄弱点累计 + 会话中多模式切换（课程项目级，非生产级）</strong>
+  <strong>v6.0 — 竞品借鉴专项：Prompt 硬约束 + 三态推进决策 + JSON 四级容错 + Provider 自动探测（课程项目级，非生产级）</strong>
 </p>
 
 <p align="center">
@@ -50,9 +50,13 @@ AI 模拟面试官是一个面向求职者的智能面试练习平台。上传�
 - **不会答恢复（v5.0）**：检测到候选人示弱（不会/不懂/没思路…）自动切换辅导式引导，而非机械继续拷打
 - **薄弱点跨轮累计（v5.0）**：把各轮诊断的薄弱标签跨轮聚合，实时面板 + 报告沉淀「今日弱点」，并新增逐题参考答案背诵（修复参考答案恒为空）
 - **会话中多模式/多阶段切换（v5.0）**：模拟过程中动态切换模式（simulation / traditional / coach / hardcore / interview_only）与阶段（phone_screen / tech_round_1 / tech_round_2 / hr）
+- **Prompt 硬约束 + 三态推进决策（v6.0）**：出题 Prompt 写死题型枚举/难度递进/只出题不替答；诊断与"追问/下一题/收束（next_action）"同一次 LLM 调用产出，会话层只做兜底校验（对标 career-copilot）
+- **JSON 四级容错（v6.0）**：LLM 输出解析走 直接解析→提取{}块→字符级修复→宽松解析 四级降级，轻微畸形输出（围栏/截断/尾逗号/单引号）就地修复，不再浪费 fallback 候选
+- **Provider 注册表自动探测（v6.0）**：`AI_PROVIDER=auto` 按注册顺序自动选用第一个配置了有效 Key 的后端；Key 校验下沉配置层，切换后端时无效 Key 即时告警
+- **命名空间知识库（v6.0）**：`rag:interview/career/resume` 命名空间隔离的本地关键词检索 + `augment_prompt` 注入（零托管依赖，前向储备）
 - **题库管理**：CRUD + 收藏 + 从面试会话导入
 - **Docker 部署**：Dockerfile + docker-compose.yml 一键部署
-- **自动化测试**：438 个测试用例覆盖核心路径（含依赖 API Key 的 LLM 类测试）
+- **自动化测试**：491 个测试用例覆盖核心路径（含依赖 API Key 的 LLM 类测试）
 
 ---
 
@@ -149,7 +153,7 @@ docker compose up -d
 
 ```bash
 # 通用配置（优先使用）
-AI_PROVIDER=deepseek        # deepseek / qwen / zhipu / openai
+AI_PROVIDER=deepseek        # deepseek / qwen / zhipu / openai / auto（v6.0：auto=按注册顺序自动探测第一个 Key 有效的后端）
 
 # DeepSeek（推荐，性价比较高）
 DEEPSEEK_API_KEY=sk-xxx
@@ -385,6 +389,8 @@ AI-simulated-interviewer/
 | **内容护栏可被绕过** | 见上节，正则过滤防不住认真攻击者 | 见上节演进方向 |
 | **测试偏纯函数** | 50 个用例覆盖了权重计算、Schema 校验等确定性逻辑；但**诊断准确性、追问是否抓最弱维度、评分稳定性**依赖 LLM 输出，难以在单测中验证 | 引入基于黄金样本的回归评测（LLM-as-judge / 人工抽检），把"核心主张"纳入可观测范围 |
 | **证据检索为本地启发式** | v5.0 简历证据检索是本地关键词 + 优先级加权，非语义向量检索；中文分词粒度受限，同义/模糊表述可能漏命中，仅作证据提示不替代向量库；可调参数为代码级常量未下沉 `.env` | 引入轻量向量库（如 sqlite-vec / faiss）做语义召回；参数下沉配置 |
+| **知识库为关键词检索且未接入业务流** | v6.0 `knowledge_store.py` 为命名空间隔离的本地关键词检索（对标向量 RAG 的降级实现），同义表述可能漏命中；当前是 L2 前向储备，尚未被任何业务流调用 | 接入职业规划/出题的 Prompt 增强；知识规模大时升级向量索引 |
+| **next_action 依赖模型自觉** | v6.0 三态推进决策采信模型声明，模型误判"回答合格"时可能少追问；已用"回答过短仍强制追问"硬兜底 + 未声明时回退阈值规则，且追问次数上限不受影响 | 用真实面试样本统计 next_action 与人工判断的一致率后再决定是否提升模型话语权 |
 | **参考答案面板未渲染** | v5.0 报告已产出 `detailed_qa`（逐题参考答案）字段，但前端 `report.js` 尚无对应渲染面板，属前后端待对齐 | 在报告 Tab 补逐题参考答案背诵面板 |
 | **市场基准数据来源（学术诚信披露）** | Gap 分析的"市场基准参照"数据来自本人此前已完成并提交的采集项目（job-crawler）的 `data.db`，经 importer + store 导入 `market.db`，**本次仅做管道整合、不含数据采集工作量** | 若评审基于"本次周期实际产出"，可评估替换为小样本人工整理/公开数据集 |
 | **权重注入 prompt 因果未验证** | Diagnostician prompt 中的权重真正生效处在 `weighted_score()` 加权平均；prompt 是否改变模型打分分布未经 A/B 验证（已有 prompt 已改为中性诚实表述） | 做"有无权重说明文字"的 A/B 对照实验，量化影响 |

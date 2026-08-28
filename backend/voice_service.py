@@ -58,6 +58,21 @@ class VoiceService:
         "Mia", "Chloe", "Milo", "Dean",
     })
 
+    # v6.0: 音色别名映射表（对标 career-copilot 的 DASHSCOPE_VOICE_MAP）：
+    # 允许调用方/前端使用 OpenAI 风格英文音色名或性别简称，统一映射到 MiMo 预置音色；
+    # 值为 None 表示"使用配置默认音色"。未知别名照旧回退默认音色并告警。
+    VOICE_ALIASES = {
+        "alloy": "冰糖",      # OpenAI 中性平稳 → MiMo 默认清亮女声
+        "echo": "苏打",
+        "fable": "白桦",
+        "onyx": "Dean",       # OpenAI 沉稳男声
+        "nova": "茉莉",
+        "shimmer": "Mia",
+        "male": "Dean",       # 性别简称
+        "female": "茉莉",
+        "default": None,      # 显式 default → 配置默认音色
+    }
+
     def __init__(self) -> None:
         self.api_key = config.MIMO_API_KEY.strip()
         self.base_url = config.MIMO_BASE_URL.rstrip("/")
@@ -81,10 +96,17 @@ class VoiceService:
         }
 
     def _resolve_voice(self, voice: Optional[str]) -> str:
-        """将请求音色名映射到官方预置音色；非法/缺省值回退到配置默认音色。"""
+        """将请求音色名映射到官方预置音色；非法/缺省值回退到配置默认音色。
+
+        v6.0: 解析顺序 = 预置音色 → 别名映射表（VOICE_ALIASES，大小写不敏感）
+              → 配置默认音色。
+        """
         name = (voice or "").strip()
         if name in self.PRESET_VOICES:
             return name
+        alias = self.VOICE_ALIASES.get(name.lower())
+        if alias:
+            return alias
         if name and name != "default":
             logger.info("未知音色 %r，回退默认音色 %r", name, self.default_voice)
         return self.default_voice

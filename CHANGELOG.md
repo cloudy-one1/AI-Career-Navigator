@@ -1,6 +1,33 @@
 # 变更日志（CHANGELOG）
 
-> 记录 v2 → v5.0 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+> 记录 v2 → v6.0 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+
+---
+
+## v6.0 竞品借鉴专项：Prompt 硬约束 + 评分同轮三态决策 + JSON 四级容错 + Provider 自动探测 + 命名空间知识库 + 音色映射表（2026-08-28）
+
+> 对标 [career-copilot](https://github.com/peeker-tao/career-copilot)（React + NestJS + Prisma/PostgreSQL + Redis）逐项深度学习后落地的 6 项可借鉴设计。原则：**只借工程模式，不抄技术栈**（对方用 Redis+向量 RAG，本项目按"零托管依赖"宪章降为本地关键词实现）；市场数据实时性、真实流式、语音实时性三项本项目本就领先，不在借鉴范围。全量测试 491 例全绿、分层 lint 通过。
+
+### 新增（功能线）
+- **出题/诊断 Prompt 硬约束（对标 interview.system.ts）**：`question_gen.get_question_gen_system_prompt()` 新增 4 条约束——只出题不替答、`question_type` 枚举（knowledge/project/behavior）、easy→mid→hard 难度递进、5-8 轮整场意识；`DIAGNOSTICIAN_SYSTEM_PROMPT` 补"连续追问不得超过 2 次"（与 `FOLLOW_UP_MAX_COUNT=2` 双保险）。
+- **评分同轮三态决策（对标 nextAction）**：Diagnostician JSON schema 新增 `next_action`（`follow_up` / `next_question` / `complete`），评分与"追问/推进/收束"一次调用产出；`normalize_result()` 规整三态（非法值由追问文本推导，空值交会话层兜底）；`session.should_follow_up()` 采信模型推进决策——`next_question/complete` 且无追问文本时低分不再强制追问，但**回答过短仍强制追问**（防敷衍被放行），未声明时走原阈值规则（向后兼容）。
+- **JSON 四级容错提取（对标 safeJsonParse）**：`llm_client.safe_json_extract()`——L1 直接解析 → L2 字符串感知提取配平 `{}` 块（兼容围栏/前后缀文本）→ L3 字符级修复（字符串内裸换行/未转义引号启发式判定/截断补闭合引号与括号）→ L4 宽松解析（尾逗号/值位单引号/True-False-None-undefined 字面量），并规避 `it's` 类正文撇号误伤。`chat_json` 的候选可用性判定与最终解析均走四级容错（轻微畸形输出就地修复，不再浪费一次 fallback 候选）；`diagnosis_engine._extract_json` 委托同源实现。
+- **Provider 注册表自动探测（对标 PROVIDER_REGISTRY / createProvider）**：`validate_api_key` 下沉 `config`（`llm_client._api_key_issue` 保留别名兼容测试）；新增 `AI_PROVIDER=auto`——按 `AI_PROVIDERS` 注册顺序探测第一个 Key 有效的后端，未知值回退 deepseek；`LLM_BASE_URL / LLM_API_KEY / LLM_MODEL / LLM_FALLBACK_CHAIN` 全部跟随 `AI_PROVIDER_RESOLVED` 解析；`switch_provider` 支持 `auto` 并在目标 Key 无效时告警。默认值 `deepseek` 不变，零行为破坏。
+- **命名空间知识库（对标 SimpleRagService / augmentCall）**：新增 L2 模块 `backend/knowledge_store.py`——`rag:interview / rag:career / rag:resume` 命名空间隔离，复用 `resume_retriever` 分块 + 关键词加权评分（零第三方检索依赖），`augment_prompt()` 把检索块以【参考知识库相关内容】注入 System Prompt（附反幻觉约束，与简历证据包同一口径）；已纳入 `.importlinter` L2 契约（顺带补上此前遗漏的 `voice_service` 与 `resume_retriever` 契约登记）。
+- **音色别名映射表（对标 DASHSCOPE_VOICE_MAP）**：`voice_service.VOICE_ALIASES`——OpenAI 风格音色（alloy/echo/fable/onyx/nova/shimmer）与性别简称（male/female）统一映射到 MiMo 预置音色；解析顺序 = 预置音色 → 别名（大小写不敏感）→ 配置默认音色。
+
+### 工程化
+- **测试**：新增 `test_json_utils`（19 例）/ `test_knowledge_store`（14 例）/ `test_provider_registry`（18 例，chat_json 容错用例直接替换 `_candidates` 为 mock 候选，**绝不发起真实网络请求**）/ `test_prompt_constraints`（2 例），扩展 `test_session`（next_action 决策 1 例）/ `test_diagnosis_engine`（三态规整 4 例）/ `test_voice_service`（音色别名 4 例），共 62 例；全量 **491 例通过**。
+- **配置**：`.env.example` 新增 `AI_PROVIDER=auto` 说明。
+
+### 修复
+- `.importlinter` L2 契约清单滞后：v5.0 的 `resume_retriever`、v4.2 的 `voice_service` 未登记（因不在契约内而未被 lint 检查），本轮补齐并新增 `knowledge_store`。
+- 测试副产物修复：新增的 `chat_json` 容错测试最初 mock 打在 `self.client` 上，而 `_call_with_fallback` 走候选池 `cand.client`，导致测试发起**真实 API 调用**（消耗配额）；改为整体替换 `_candidates` 为 mock 候选，从机制上杜绝。
+
+### 范围与约束
+- `next_action` 采信模型推进决策存在"模型误判放行"风险：已用"回答过短仍强制追问"硬兜底 + 未声明时回退阈值规则，且 `FOLLOW_UP_MAX_COUNT=2` 上限不受影响。
+- `KnowledgeStore` 为**本地关键词检索**（非向量）：同义/模糊表述可能漏命中，适合知识条目 < 数千条的原型规模；当前为 L2 通用能力，尚未接入任何业务流（简历证据包仍走 `ResumeRetriever`），属前向储备。
+- `AI_PROVIDER=auto` 为**选择加入**（opt-in），显式指定后端时行为与 v5.0 完全一致。
 
 ---
 

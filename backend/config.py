@@ -3,6 +3,8 @@
 v2.1: 多 AI 后端可切换 + 质量驱动推进参数。
 v2.2: 扩展 6 阶段面试流程。
 v2.4: 双模式面试（拟真/传统）+ 7种面试官角色 + 自动切换。
+v6.0: Provider 注册表增强 —— AI_PROVIDER=auto 自动探测 + Key 校验下沉到配置层
+      （对标 career-copilot 的 PROVIDER_REGISTRY + createProvider 自动探测）。
 """
 
 import os
@@ -15,9 +17,25 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 
+def validate_api_key(key: str) -> str | None:
+    """校验 API Key 有效性（canonical 实现，llm_client._api_key_issue 为其向后兼容别名）。
+
+    返回 None 表示正常，否则返回问题描述（中文）。
+    识别三类无效 Key：空、含非 ASCII 字符（如中文占位符）、占位符模板。
+    """
+    if not key:
+        return "API Key 未配置"
+    if any(ord(c) > 127 for c in key):
+        return "API Key 含非 ASCII 字符（如中文），请填写纯英文数字的真实 Key"
+    if any(t in key for t in ("sk-xxxx", "sk-your-", "key-here", "替换", "your-key")):
+        return "API Key 是占位符模板，请填写真实 Key"
+    return None
+
+
 class Config:
     # ===== 多 AI 后端配置 =====
-    # 当前使用的后端: deepseek / qwen / zhipu / openai
+    # 当前使用的后端: deepseek / qwen / zhipu / openai / auto
+    # v6.0: "auto" = 按 AI_PROVIDERS 注册顺序自动探测第一个 Key 有效的后端
     AI_PROVIDER = os.getenv("AI_PROVIDER", "deepseek")
 
     AI_PROVIDERS = {
@@ -56,20 +74,49 @@ class Config:
     }
 
     # 当前使用的 API 配置（根据 AI_PROVIDER 动态解析）
+    def provider_key_issue(self, pid: str) -> str | None:
+        """校验指定注册后端的 Key 配置状态（无效返回中文问题描述，有效返回 None）。"""
+        info = self.AI_PROVIDERS.get(pid)
+        if not info:
+            return f"未知 provider: {pid}"
+        key = os.getenv("LLM_API_KEY", "") or os.getenv(info["api_key_env"], "")
+        return validate_api_key(key)
+
+    @property
+    def AI_PROVIDER_RESOLVED(self) -> str:
+        """v6.0: 解析实际生效的 provider（Provider 注册表自动探测）。
+
+        - 显式合法值（deepseek/qwen/zhipu/openai）→ 原样返回，行为不变；
+        - "auto" → 按 AI_PROVIDERS 注册顺序探测第一个 Key 有效的后端；
+        - 未知值 → 回退 deepseek 并告警。
+        """
+        p = (self.AI_PROVIDER or "").strip()
+        if p in self.AI_PROVIDERS:
+            return p
+        if p == "auto":
+            for pid in self.AI_PROVIDERS:
+                if not self.provider_key_issue(pid):
+                    logger.info(f"AI_PROVIDER=auto 自动探测到 provider={pid}")
+                    return pid
+            logger.warning("AI_PROVIDER=auto 未探测到任何有效 Key，回退 deepseek")
+            return "deepseek"
+        logger.warning(f"未知 AI_PROVIDER={p!r}，回退 deepseek")
+        return "deepseek"
+
     @property
     def LLM_BASE_URL(self) -> str:
-        provider = self.AI_PROVIDERS.get(self.AI_PROVIDER, self.AI_PROVIDERS["deepseek"])
+        provider = self.AI_PROVIDERS.get(self.AI_PROVIDER_RESOLVED, self.AI_PROVIDERS["deepseek"])
         return os.getenv("LLM_BASE_URL", provider["base_url"])
 
     @property
     def LLM_API_KEY(self) -> str:
-        provider = self.AI_PROVIDERS.get(self.AI_PROVIDER, self.AI_PROVIDERS["deepseek"])
+        provider = self.AI_PROVIDERS.get(self.AI_PROVIDER_RESOLVED, self.AI_PROVIDERS["deepseek"])
         env_key = provider.get("api_key_env", "DEEPSEEK_API_KEY")
         return os.getenv("LLM_API_KEY", os.getenv(env_key, ""))
 
     @property
     def LLM_MODEL(self) -> str:
-        provider = self.AI_PROVIDERS.get(self.AI_PROVIDER, self.AI_PROVIDERS["deepseek"])
+        provider = self.AI_PROVIDERS.get(self.AI_PROVIDER_RESOLVED, self.AI_PROVIDERS["deepseek"])
         env_key = provider.get("model_env", "DEEPSEEK_MODEL")
         return os.getenv("LLM_MODEL", os.getenv(env_key, provider["default_model"]))
 
@@ -94,7 +141,8 @@ class Config:
             if ":" in part:
                 provider, model = part.split(":", 1)
             else:
-                provider, model = self.AI_PROVIDER, part
+                # v6.0: 裸 model 条目沿用解析后的实际 provider（兼容 AI_PROVIDER=auto）
+                provider, model = self.AI_PROVIDER_RESOLVED, part
             provider = provider.strip()
             model = model.strip()
             if provider not in self.AI_PROVIDERS:

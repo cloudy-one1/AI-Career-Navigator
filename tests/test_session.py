@@ -189,6 +189,29 @@ class TestFollowUp:
         # 正常 -> False
         assert s.should_follow_up("x" * 50, {"overall_score": 4.0}) is False
 
+    def test_should_follow_up_honors_next_action(self):
+        """v6.0: 采信诊断同轮产出的 next_action 三态决策。"""
+        s, _, _ = _make_session()
+        # 模型声明 next_question/complete 且无追问文本：低分也不再强制追问
+        assert s.should_follow_up(
+            "x" * 50, {"overall_score": 2.0, "next_action": "next_question"}
+        ) is False
+        assert s.should_follow_up(
+            "x" * 50, {"overall_score": 4.0, "next_action": "complete"}
+        ) is False
+        # 但回答过短仍强制追问（防敷衍回答被"放行"）
+        assert s.should_follow_up(
+            "太短", {"overall_score": 4.0, "next_action": "complete"}
+        ) is True
+        # 声明 next_question 但模型仍产出追问文本 → 仍追问（追问优先）
+        assert s.should_follow_up(
+            "x" * 50,
+            {"overall_score": 4.0, "next_action": "next_question",
+             "follow_up_question": "追问?"},
+        ) is True
+        # 未声明 next_action → 走原有阈值规则（向后兼容）
+        assert s.should_follow_up("x" * 50, {"overall_score": 2.0}) is True
+
     @pytest.mark.asyncio
     async def test_generate_follow_up_prefers_preset(self):
         s, llm, _ = _make_session()

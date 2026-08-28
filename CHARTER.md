@@ -32,7 +32,7 @@ Diagnostician + Rewriter 是两个独立 Agent，**禁止合并为单一 Agent**
 | 层级 | 模块 | 允许依赖 |
 |---|---|---|
 | L1 基础设施 | `config.py` `logger.py` `llm_client.py` `db.py` | 仅标准库 / 三方库，**无项目内 import**（config 除外） |
-| L2 领域模型/数据 | `schemas.py` `security.py` `resume_parser.py` `dimension_weights.py` `gap_analyzer.py` `market/*` | 仅 L1（`from .config import ...` `from .db import ...`） |
+| L2 领域模型/数据 | `schemas.py` `security.py` `resume_parser.py` `resume_retriever.py`（v5.0） `dimension_weights.py` `gap_analyzer.py` `knowledge_store.py`（v6.0） `voice_service.py`（v4.2） `market/*` | 仅 L1（`from .config import ...` `from .db import ...`） |
 | L3 业务逻辑 | `question_gen.py` `diagnosis_engine.py` `interview_engine/*` `web_research.py` `question_bank.py` `data_support.py` `career_planner.py` | L1 + L2，禁止 import L4 |
 | L4 应用入口 | `main.py` | 所有层 |
 

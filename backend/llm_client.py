@@ -1,29 +1,192 @@
 """
 LLM 调用封装：OpenAI 兼容接口 + 流式输出支持。
 v2.1: 多 AI 后端可切换（DeepSeek / Qwen / 智谱 / OpenAI）。
+v6.0: Provider 注册表自动探测（AI_PROVIDER=auto）+ LLM 输出 JSON 四级容错提取
+      （对标 career-copilot 的 PROVIDER_REGISTRY / safeJsonParse）。
 """
 
 import json
 import logging
+import re
 from openai import OpenAI, AsyncOpenAI
-from .config import config
+from .config import config, validate_api_key
 
 logger = logging.getLogger(__name__)
 
+# v6.0: Key 校验下沉到 config 层（注册表所在层，供 AI_PROVIDER_RESOLVED 自动探测复用）；
+# 此处保留别名，兼容既有调用方与测试（from backend.llm_client import _api_key_issue）。
+_api_key_issue = validate_api_key
 
-def _api_key_issue(key: str) -> str | None:
-    """校验 API Key 有效性。
 
-    返回 None 表示正常，否则返回问题描述（中文）。
-    识别三类无效 Key：空、含非 ASCII 字符（如中文占位符）、占位符模板。
-    """
-    if not key:
-        return "API Key 未配置"
-    if any(ord(c) > 127 for c in key):
-        return "API Key 含非 ASCII 字符（如中文），请填写纯英文数字的真实 Key"
-    if any(t in key for t in ("sk-xxxx", "sk-your-", "key-here", "替换", "your-key")):
-        return "API Key 是占位符模板，请填写真实 Key"
+# ===== v6.0: LLM 输出 JSON 四级容错提取 =====
+# 对标 career-copilot safeJsonParse：
+#   L1 直接解析 → L2 提取首个配平 {} 块 → L3 字符级修复 → L4 宽松解析
+
+def _extract_balanced_json(s: str) -> str | None:
+    """从 s 中提取第一个字符串感知、深度配平的 {...} 块；未配平（截断）返回 None。"""
+    start = s.find("{")
+    if start == -1:
+        return None
+    depth = 0
+    in_str = False
+    esc = False
+    for i in range(start, len(s)):
+        ch = s[i]
+        if in_str:
+            if esc:
+                esc = False
+            elif ch == "\\":
+                esc = True
+            elif ch == '"':
+                in_str = False
+            continue
+        if ch == '"':
+            in_str = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return s[start:i + 1]
     return None
+
+
+def _repair_json_text(s: str) -> str:
+    """L3 字符级修复：转义字符串内未转义引号与裸换行/制表符，闭合截断的括号。
+
+    引号判定启发式：字符串内部的 `"` 若其后第一个非空白字符不是 , } ] : 或结尾，
+    则视为未转义的字符串内引号（如 `"他说"你好"然后"`），转义之。
+    """
+    n = len(s)
+    out: list[str] = []
+    i = 0
+    in_str = False
+    esc = False
+    stack: list[str] = []  # 字符串外未闭合的 } ]
+    while i < n:
+        ch = s[i]
+        if in_str:
+            if esc:
+                esc = False
+                out.append(ch)
+                i += 1
+                continue
+            if ch == "\\":
+                out.append(ch)
+                if i + 1 < n:
+                    out.append(s[i + 1])
+                    i += 2
+                else:
+                    i += 1
+                continue
+            if ch == '"':
+                j = i + 1
+                while j < n and s[j] in " \t\r\n":
+                    j += 1
+                if j >= n or s[j] in ",}]:)":
+                    in_str = False
+                    out.append(ch)
+                else:
+                    out.append('\\"')  # 字符串内未转义引号
+                i += 1
+                continue
+            if ch == "\n":
+                out.append("\\n")
+            elif ch == "\r":
+                pass
+            elif ch == "\t":
+                out.append("\\t")
+            else:
+                out.append(ch)
+            i += 1
+            continue
+        # 字符串外
+        if ch == '"':
+            in_str = True
+            esc = False
+            out.append(ch)
+        elif ch == "{":
+            stack.append("}")
+            out.append(ch)
+        elif ch == "[":
+            stack.append("]")
+            out.append(ch)
+        elif ch == "}":
+            if stack and stack[-1] == "}":
+                stack.pop()
+            out.append(ch)
+        elif ch == "]":
+            if stack and stack[-1] == "]":
+                stack.pop()
+            out.append(ch)
+        else:
+            out.append(ch)
+        i += 1
+    if in_str:
+        out.append('"')  # 截断在字符串中 → 补闭合引号
+    while stack:
+        out.append(stack.pop())  # 截断在结构中 → 逆序补闭合括号
+    return "".join(out)
+
+
+_LOOSE_VALUE_QUOTE_RE = re.compile(r"([{,:\[]\s*)'((?:[^'\\]|\\.)*)'")
+_LOOSE_LITERAL_RE = re.compile(r"\b(True|False|None|undefined)\b")
+_LOOSE_LITERAL_MAP = {"True": "true", "False": "false", "None": "null", "undefined": "null"}
+
+
+def _loose_json(s: str) -> str:
+    """L4 宽松解析：去尾逗号、值位单引号转双引号、Python/JS 字面量转 JSON 字面量。"""
+    s = re.sub(r",\s*([}\]])", r"\1", s)
+    # 仅转换"值位置"的单引号串（前导为 { , : [ ），避免误伤正文中的 it's 等撇号
+    s = _LOOSE_VALUE_QUOTE_RE.sub(r'\1"\2"', s)
+    s = _LOOSE_LITERAL_RE.sub(lambda m: _LOOSE_LITERAL_MAP[m.group(1)], s)
+    return s
+
+
+def safe_json_extract(raw) -> dict | list | None:
+    """LLM 输出 JSON 四级容错提取（L1 直接解析 → L2 提取{}块 → L3 修复 → L4 宽松）。
+
+    返回解析出的 dict/list；四级全部失败返回 None。
+    全项目所有"解析 LLM 输出"的入口统一走本函数（chat_json / diagnosis_engine 等）。
+    """
+    if raw is None:
+        return None
+    if isinstance(raw, (dict, list)):
+        return raw
+    s = str(raw).strip()
+    if not s:
+        return None
+
+    # L1: 直接解析
+    try:
+        return json.loads(s)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # L2: 提取首个配平 {} 块（兼容 markdown 围栏 / 前后缀说明文字）
+    block = _extract_balanced_json(s)
+    if block:
+        try:
+            return json.loads(block)
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    # L3: 字符级修复后解析（截断时取首个 { 到结尾，闭合括号）
+    start = s.find("{")
+    if start == -1:
+        return None
+    candidate = block if block else s[start:]
+    repaired = _repair_json_text(candidate)
+    try:
+        return json.loads(repaired)
+    except (json.JSONDecodeError, ValueError):
+        pass
+
+    # L4: 宽松解析（尾逗号 / 单引号 / 字面量）
+    try:
+        return json.loads(_loose_json(repaired))
+    except (json.JSONDecodeError, ValueError):
+        return None
 
 
 class _Candidate:
@@ -44,7 +207,8 @@ class LLMClient:
     def __init__(self, provider: str | None = None):
         """
         provider: 后端标识，None 则使用环境变量 AI_PROVIDER。
-        支持: deepseek / qwen / zhipu / openai
+        支持: deepseek / qwen / zhipu / openai / auto
+        v6.0: "auto"（或未知值）时按 AI_PROVIDERS 注册顺序自动探测第一个 Key 有效的后端。
         """
         self.provider = provider or config.AI_PROVIDER
         self._init_client()
@@ -57,7 +221,12 @@ class LLMClient:
               主候选（当前 provider/model）始终在首位；配置 LLM_FALLBACK_CHAIN 时追加备用候选。
               候选数受 LLM_FALLBACK_MAX_RETRIES 限制。全局单例语义不变：fallback 仅临时读取
               self._candidates[i]，绝不重赋值 self.provider，不影响其它会话。
+        v6.0: provider 为 auto/未知值时，经 config.AI_PROVIDER_RESOLVED 自动探测
+              （注册表顺序遍历，取第一个 Key 有效的后端），显式指定不受影响。
         """
+        if self.provider not in config.AI_PROVIDERS:
+            self.provider = config.AI_PROVIDER_RESOLVED
+
         self.api_key = config.LLM_API_KEY
         self.base_url = config.LLM_BASE_URL
         self.model = config.LLM_MODEL
@@ -210,10 +379,18 @@ class LLMClient:
         yield json.dumps({"error": f"所有模型流式调用均失败: {last_err}"})
 
     def switch_provider(self, provider: str):
-        """运行时切换 AI 后端。"""
-        if provider not in config.AI_PROVIDERS:
+        """运行时切换 AI 后端。
+
+        v6.0: 支持 "auto"（重新按注册表自动探测）；切换到显式后端时若其 Key
+        无效则告警（注册表校验），但仍允许切换（由调用方决定是否容忍）。
+        """
+        if provider != "auto" and provider not in config.AI_PROVIDERS:
             logger.warning(f"未知 provider: {provider}，保持当前 {self.provider}")
             return False
+        if provider != "auto":
+            issue = config.provider_key_issue(provider)
+            if issue:
+                logger.warning(f"切换到 {provider} 后 {issue}，请检查对应环境变量")
         self.provider = provider
         self._init_client()
         return True
@@ -264,16 +441,16 @@ class LLMClient:
 
     def chat_json(self, system_prompt: str, user_prompt: str,
                   temperature: float = 0.3, max_tokens: int = 2048) -> dict:
-        """发送聊天请求，确保返回 JSON dict（解析失败自动 fallback 下一候选）。"""
+        """发送聊天请求，确保返回 JSON dict（解析失败自动 fallback 下一候选）。
+
+        v6.0: 候选结果可用性判定与最终解析均改走 safe_json_extract 四级容错：
+        轻微畸形的 JSON（围栏/截断/尾逗号/单引号）可被就地修复，无需浪费一次候选降级。
+        """
 
         def _is_valid_json(content: str) -> bool:
             if self._is_error_content(content):
                 return False
-            try:
-                json.loads(content)
-            except (json.JSONDecodeError, ValueError):
-                return False
-            return True
+            return isinstance(safe_json_extract(content), dict)
 
         raw = self._call_with_fallback(
             messages=[
@@ -285,11 +462,11 @@ class LLMClient:
             response_format={"type": "json_object"},
             success_pred=_is_valid_json,
         )
-        try:
-            return json.loads(raw)
-        except json.JSONDecodeError:
-            logger.warning(f"LLM 返回非 JSON 内容，尝试手动提取: {raw[:200]}")
-            return {"error": "JSON 解析失败", "raw": raw[:1000]}
+        data = safe_json_extract(raw)
+        if isinstance(data, dict):
+            return data
+        logger.warning(f"LLM 返回内容四级容错后仍无法解析为 JSON 对象: {str(raw)[:200]}")
+        return {"error": "JSON 解析失败", "raw": str(raw)[:1000]}
 
     def chat_stream(self, system_prompt: str, user_prompt: str,
                     temperature: float = 0.7, max_tokens: int = 2048):

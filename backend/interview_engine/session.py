@@ -553,6 +553,11 @@ class InterviewSession:
         """
         是否需要追问。兼容 main.py 的两参调用与内部无参调用。
         v2.6: 优先采信流式诊断直接产出的 follow_up_question，避免二次 LLM 往返。
+        v6.0: 采信诊断同轮产出的 next_action 三态（follow_up/next_question/complete）：
+          - 模型产出追问文本 → 追问（同轮决策，最高优先）；
+          - next_question/complete 且无追问文本 → 尊重模型推进决策，
+            不再因低分强行追问；但回答过短仍强制追问，防止敷衍回答被"放行"；
+          - 未声明 → 走原有阈值规则兜底（向后兼容）。
         """
         if self.follow_up_count >= config.FOLLOW_UP_MAX_COUNT:
             return False
@@ -569,6 +574,9 @@ class InterviewSession:
             return True
 
         if diag:
+            # v6.0: 模型明确决定"进入下一题/收束议题"时，低分不再触发强制追问
+            if str(diag.get("next_action", "") or "").strip() in ("next_question", "complete"):
+                return False
             score = diag.get("overall_score", 0)
             if score and score < config.FOLLOW_UP_SCORE_THRESHOLD:
                 return True

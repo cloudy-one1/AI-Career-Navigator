@@ -3,23 +3,23 @@
 > 本文件是 CodeBuddy 的项目索引入口，每次新对话自动加载。**请先读以下三份文档再动手**：
 >
 > 1. **不变硬约束** → [CHARTER.md](CHARTER.md)（产品命题 / 架构约束 / 决策记录卡 / 已知局限 / 范围纪律）
-> 2. **版本迭代叙事** → [CHANGELOG.md](CHANGELOG.md)（v2 → v5.0 各轮新增/推翻/修复）
+> 2. **版本迭代叙事** → [CHANGELOG.md](CHANGELOG.md)（v2 → v6.0 各轮新增/推翻/修复）
 > 3. 面向用户的完整说明 → [README.md](README.md)
 
 ---
 
 ## 快速上手
 
-- **核心价值**：诊断候选人的回答质量（STAR 完整性 / 量化程度 / 逻辑连贯性 / 岗位相关性 / 专业深度）+ 职业规划路径（v3.2 补齐的时间轴多阶段路径）+ 市场数据采集与分析（v4.1 新增）+ 云端语音交互（v4.2 MiMo TTS/ASR 新增）+ 模型调用优雅降级（v4.3 fallback）+ 简历证据检索 / 不会答恢复 / 薄弱点跨轮累计 / 会话中多模式切换（v5.0）。
+- **核心价值**：诊断候选人的回答质量（STAR 完整性 / 量化程度 / 逻辑连贯性 / 岗位相关性 / 专业深度）+ 职业规划路径（v3.2 补齐的时间轴多阶段路径）+ 市场数据采集与分析（v4.1 新增）+ 云端语音交互（v4.2 MiMo TTS/ASR 新增）+ 模型调用优雅降级（v4.3 fallback）+ 简历证据检索 / 不会答恢复 / 薄弱点跨轮累计 / 会话中多模式切换（v5.0）+ Prompt 硬约束 / next_action 三态推进决策 / JSON 四级容错 / Provider 自动探测（AI_PROVIDER=auto）/ 命名空间知识库（v6.0，对标 career-copilot）。
 - **技术栈**：Python 3.12 / FastAPI + WebSocket / SQLite (aiosqlite) / 多 AI 后端 / 原生 ES Module 前端 + Chart.js / Playwright（v4.1 采集）/ 小米 MiMo 云端语音（v4.2，TTS/ASR 按官方 chat/completions 协议，域名 api.xiaomimimo.com）
-- **当前版本**：v5.0（见 CHANGELOG.md）
+- **当前版本**：v6.0（见 CHANGELOG.md）
 
 ## 常用命令
 
 ```bash
 python run.py                    # 启动开发服务器（端口 8000，热重载）
 python run.py lint               # [v3.2] 运行 import-linter 分层契约检查
-python -m pytest tests/ -q       # 运行测试套件（当前 400+ 用例）
+python -m pytest tests/ -q       # 运行测试套件（当前 491 用例）
 pip install -r requirements.txt  # 安装依赖（含 dev 依赖）
 python -m playwright install chromium  # [v4.1] 市场数据实时采集所需（跳过则实时采集不可用）
 ```
@@ -29,7 +29,7 @@ python -m playwright install chromium  # [v4.1] 市场数据实时采集所需�
 ```
 AI模拟面试官/
 ├── CHARTER.md              # [v3.2] 不变宪章：架构约束/决策卡/已知局限/范围纪律
-├── CHANGELOG.md            # [v4.2] 版本迭代叙事（v2 → v4.2）
+├── CHANGELOG.md            # 版本迭代叙事（v2 → v6.0）
 ├── CODEBUDDY.md            # 本索引入口
 ├── .importlinter           # [v3.2] 分层依赖契约（L1-L4，import-linter 强制检查）
 ├── .env / .env.example     # 环境变量
@@ -37,10 +37,11 @@ AI模拟面试官/
 ├── run.py                  # 一键启动 + lint 子命令
 ├── backend/                # FastAPI 后端（分层 L1-L4，见 CHARTER.md）
 │   ├── market/crawler/     # [v4.1] B 档内嵌 Playwright 采集子包（L2，随 market 同层）
-│   └── voice_service.py    # [v4.2] MiMo 云端语音服务（TTS/ASR 代理，L2/L3）
+│   ├── voice_service.py    # [v4.2] MiMo 云端语音服务（TTS/ASR 代理，L2/L3）
+│   └── knowledge_store.py  # [v6.0] 命名空间知识库（rag:interview/career/resume，L2）
 ├── frontend/               # 原生 ES Module SPA（Vite）+ Chart.js
 │   └── src/js/marketData.js + src/css/pages/market.css   # [v4.1] 市场数据 Tab（纸墨印章双风格）
-├── tests/                  # pytest 测试套件（400+ 用例）
+├── tests/                  # pytest 测试套件（491 用例）
 ├── data/                   # SQLite 数据库（interview.db / market.db）
 └── docs/                   # 需求文档与周报
 ```
@@ -50,7 +51,7 @@ AI模拟面试官/
 | 层级 | 模块 | 强制检查 |
 |---|---|---|
 | L1 基础设施 | `config` `logger` `llm_client` `db` | `.importlinter` 契约 + `run.py lint` |
-| L2 领域模型/数据 | `schemas` `security` `resume_parser` `resume_retriever`（v5.0，禁止依赖 L3/L4） `dimension_weights` `gap_analyzer` `market/*`（含 v4.1 `crawler/` 子包，采集代码禁止依赖 L3/L4） `voice_service`（v4.2，禁止依赖 L3/L4） | 同上 |
+| L2 领域模型/数据 | `schemas` `security` `resume_parser` `resume_retriever`（v5.0，禁止依赖 L3/L4） `dimension_weights` `gap_analyzer` `knowledge_store`（v6.0，禁止依赖 L3/L4） `market/*`（含 v4.1 `crawler/` 子包，采集代码禁止依赖 L3/L4） `voice_service`（v4.2，禁止依赖 L3/L4） | 同上 |
 | L3 业务逻辑 | `question_gen` `diagnosis_engine` `interview_engine/*` `web_research` `question_bank` `data_support` `career_planner` | 同上 |
 | L4 应用入口 | `main` | 可依赖所有层 |
 

@@ -5,6 +5,11 @@ v2.6 新增：
   - 诊断维度权重按 JD 动态注入，overall_score 改为加权平均
   - Diagnostician 直接产出 follow_up_question，追问与诊断合并为一次流式往返
   - 流式诊断产出与非流式一致的标准化结构，供 WebSocket 直接使用
+v6.0 新增（对标 career-copilot）：
+  - JSON 解析统一走 llm_client.safe_json_extract 四级容错
+  - Diagnostician 产出 next_action 三态（follow_up/next_question/complete），
+    评分与"追问/推进/收束"决策同轮完成，会话层只做兜底校验
+  - Prompt 补充硬约束：题型枚举 / 难度递进 / 连续追问≤2 次
 """
 
 import asyncio
@@ -12,6 +17,7 @@ import json
 import logging
 from typing import AsyncGenerator
 
+from .llm_client import safe_json_extract
 from .security import check_output
 from .dimension_weights import (
     DEFAULT_WEIGHTS,
@@ -47,6 +53,14 @@ DIAGNOSTICIAN_SYSTEM_PROMPT = """你是一位严格的面试回答诊断师。
 请在 follow_up_question 中给出一句真实面试官会问的追问，
 追问要针对最薄弱的那个维度，自然、简短、直击要害，不超过 50 字。
 如果回答质量已经足够（各维度均 ≥ 3 分且内容具体），follow_up_question 输出空字符串。
+连续追问不得超过 2 次（后端会硬性拦截第 3 次）：若上一轮已针对同一维度追问过，
+请换一个角度，或判定回答已充分、直接进入下一题。
+
+【推进决策（next_action，三选一）】
+与评分同轮给出后续走向，不要等下一轮再决定：
+- "follow_up"：需要追问（同时必须在 follow_up_question 中给出追问文本）；
+- "next_question"：回答合格或无需深挖，可直接进入下一题（follow_up_question 为空）；
+- "complete"：回答已达标且当前议题可以收束（follow_up_question 为空）。
 
 输出必须是严格的 JSON 格式：
 {{
@@ -57,6 +71,7 @@ DIAGNOSTICIAN_SYSTEM_PROMPT = """你是一位严格的面试回答诊断师。
   "professional_depth": {{"score": 1-5, "comment": "评语"}},
   "weakest_dimension": "五个维度 key 中得分最低的那个",
   "follow_up_question": "针对薄弱点的追问，无需追问时为空字符串",
+  "next_action": "follow_up / next_question / complete 三选一",
   "overall_comment": "一句话综合评语",
   "risk_points": ["风险点1：如名词堆砌/方案空洞/逻辑矛盾等", "风险点2"]
 }}
@@ -249,22 +264,9 @@ def _build_diagnostician_system(weights: dict | None) -> str:
 
 
 def _extract_json(raw: str) -> dict | None:
-    """从可能带 markdown 围栏或前后缀文本的输出中提取 JSON。"""
-    if not raw:
-        return None
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start != -1 and end > start:
-        try:
-            return json.loads(raw[start:end + 1])
-        except json.JSONDecodeError:
-            return None
-    return None
+    """v6.0: 委托 llm_client.safe_json_extract（四级容错：直接解析→提取{}块→字符修复→宽松解析）。"""
+    data = safe_json_extract(raw)
+    return data if isinstance(data, dict) else None
 
 
 def _parse_diagnosis_fallback(raw_text: str) -> dict:
@@ -335,6 +337,17 @@ def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None) -> di
 
     follow_up = str(diagnosis.get("follow_up_question", "") or "").strip()
 
+    # v6.0: next_action 三态规整（对标 career-copilot 的 normalizeNextAction）：
+    # 模型声明合法值 → 采信；未声明/非法 → 由追问文本推导（有追问即 follow_up），
+    # 仍无法判定时输出空串，交由会话层阈值规则兜底。
+    raw_action = str(diagnosis.get("next_action", "") or "").strip().lower()
+    if raw_action in ("follow_up", "next_question", "complete"):
+        next_action = raw_action
+    elif follow_up:
+        next_action = "follow_up"
+    else:
+        next_action = ""
+
     # v2.7: 提取风险点
     rp = diagnosis.get("risk_points", [])
     if isinstance(rp, str):
@@ -354,6 +367,7 @@ def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None) -> di
         "weakest_dimension": weakest,
         "weakest_dimension_name": DIM_NAMES.get(weakest, ""),
         "follow_up_question": follow_up,
+        "next_action": next_action,
         "risk_points": risk_points,
         "weakness_tags": _extract_weakness_tags(diagnosis, dimensions),
         "rewritten_answer": rewrite.get("rewritten_answer", ""),
