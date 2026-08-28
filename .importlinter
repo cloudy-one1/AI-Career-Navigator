@@ -15,5 +15,5 @@ type = layers
 layers =
     backend.main
     backend.question_gen:backend.diagnosis_engine:backend.interview_engine:backend.web_research:backend.question_bank:backend.data_support:backend.career_planner
-    backend.schemas:backend.security:backend.resume_parser:backend.resume_retriever:backend.dimension_weights:backend.gap_analyzer:backend.knowledge_store:backend.voice_service:backend.market
+    backend.schemas:backend.security:backend.resume_parser:backend.resume_retriever:backend.dimension_weights:backend.gap_analyzer:backend.knowledge_store:backend.voice_service:backend.market:backend.output_sanitizer:backend.resume_anchors:backend.pressure_bank:backend.score_adjustments
     backend.config:backend.logger:backend.llm_client:backend.db

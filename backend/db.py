@@ -136,6 +136,8 @@ async def init_db():
         await db.execute(
             "CREATE INDEX IF NOT EXISTS idx_weakness_dim ON weakness_profile(dimension)"
         )
+        # v6.3: 老库升级（必须在 CREATE TABLE IF NOT EXISTS 之后单独做）
+        await _ensure_weakness_columns(db)
 
         # v3.1: JD 权重缓存表（避免同一 JD 重复调 LLM 分析权重）
         await db.execute("""
@@ -494,7 +496,27 @@ async def get_feedback_stats(session_id: str) -> dict:
         await db.close()
 
 
-# ===== v2.7: Weakness Profile =====
+# ===== v2.7: Weakness Profile（v6.3 扩展为长期记忆闭环）=====
+
+async def _ensure_weakness_columns(db) -> None:
+    """幂等迁移：为 weakness_profile 补 resolved / updated_at 两列。
+
+    为什么必须独立做：init_db 建表用的是 CREATE TABLE IF NOT EXISTS，
+    对**已存在的旧库**完全不生效——直接把新列写进建表语句只对新库有效，
+    老库升级后所有查询都会报 "no such column: resolved"。
+    故这里先查 PRAGMA table_info 再按需 ALTER，且可重复执行。
+    """
+    async with db.execute("PRAGMA table_info(weakness_profile)") as cur:
+        existing = {row[1] for row in await cur.fetchall()}
+    if "resolved" not in existing:
+        await db.execute(
+            "ALTER TABLE weakness_profile ADD COLUMN resolved INTEGER DEFAULT 0"
+        )
+        logger.info("[db] weakness_profile 迁移：新增 resolved 列")
+    if "updated_at" not in existing:
+        await db.execute("ALTER TABLE weakness_profile ADD COLUMN updated_at TEXT")
+        logger.info("[db] weakness_profile 迁移：新增 updated_at 列")
+
 
 async def save_weakness_profile(session_id: str, dimension: str,
                                  avg_score: float, weight: float,
@@ -542,13 +564,91 @@ async def get_global_weakness_profile() -> list[dict]:
             SELECT dimension,
                    ROUND(AVG(avg_score), 2) as historical_avg,
                    ROUND(AVG(weight), 2) as avg_weight,
-                   COUNT(DISTINCT session_id) as session_count
+                   COUNT(DISTINCT session_id) as session_count,
+                   SUM(CASE WHEN COALESCE(resolved, 0) = 0 THEN 1 ELSE 0 END) as open_count
             FROM weakness_profile
             GROUP BY dimension
             ORDER BY historical_avg ASC
         """) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
+    finally:
+        await db.close()
+
+
+# ===== v6.3: 长期记忆闭环（记忆图谱 / 复习建议 / 面试回注入共用同一查询口径）=====
+
+async def list_weakness_points(include_resolved: bool = False,
+                               limit: int | None = None) -> list[dict]:
+    """薄弱点明细列表（长期记忆的数据源）。
+
+    include_resolved=False（默认）只返回未解决的——这是面试回注入、
+    复习建议、图谱主视图的统一口径。
+
+    排序：avg_score 升序（越薄弱越靠前）+ weight 降序（岗位越看重越靠前），
+    与"优先复习最要命的短板"这一产品意图一致。
+    """
+    sql = """
+        SELECT id, session_id, dimension, avg_score, weight, risk_points,
+               COALESCE(resolved, 0) as resolved, created_at, updated_at
+        FROM weakness_profile
+    """
+    params: list = []
+    if not include_resolved:
+        sql += " WHERE COALESCE(resolved, 0) = 0"
+    sql += " ORDER BY avg_score ASC, weight DESC"
+    if limit and limit > 0:
+        sql += " LIMIT ?"
+        params.append(limit)
+
+    db = await get_db()
+    try:
+        async with db.execute(sql, params) as cur:
+            rows = await cur.fetchall()
+            results = []
+            for r in rows:
+                d = dict(r)
+                d["risk_points"] = json.loads(d.get("risk_points", "[]"))
+                results.append(d)
+            return results
+    finally:
+        await db.close()
+
+
+async def list_unresolved_weaknesses(limit: int = 10) -> list[dict]:
+    """未解决薄弱点 top N（面试初始化回注入用）。
+
+    与 list_weakness_points 同口径，只是默认带 limit——三处调用方
+    （回注入 / 建议 / 图谱）共用同一排序语义，避免各写一套 SQL 后漂移。
+    """
+    return await list_weakness_points(include_resolved=False, limit=limit)
+
+
+async def mark_weakness_resolved(point_id: int, resolved: bool = True) -> bool:
+    """标记薄弱点已解决 / 恢复未解决。返回是否命中行。"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """UPDATE weakness_profile
+               SET resolved = ?, updated_at = datetime('now', 'localtime')
+               WHERE id = ?""",
+            (1 if resolved else 0, point_id),
+        )
+        await db.commit()
+        return (cur.rowcount or 0) > 0
+    finally:
+        await db.close()
+
+
+async def delete_weakness(point_id: int) -> bool:
+    """删除单条薄弱点记录。返回是否命中行。"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            "DELETE FROM weakness_profile WHERE id = ?", (point_id,)
+        )
+        await db.commit()
+        return (cur.rowcount or 0) > 0
     finally:
         await db.close()
 

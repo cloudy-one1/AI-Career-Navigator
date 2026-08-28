@@ -190,7 +190,23 @@ def build_report(session) -> dict:
             "risk_points": d.get("risk_points", []) or [],
             "weakness_tags": d.get("weakness_tags", []) or [],
             "has_rewrite": bool(d.get("rewritten_answer", "")),
+            # v6.3: 本题是否借助恢复/教练引导 —— 分数照记但必须标注，
+            # 让读者自己判断这个分数的成色（比悄悄改分数诚实）。
+            "assisted": bool(d.get("assisted", False)),
+            # v6.3: 规则化加减分项（可解释：每条都带命中的原文证据）
+            "score_adjustments": d.get("score_adjustments", []) or [],
         })
+
+    # v6.3: 借助引导的统计 —— 全场有多少题是在提示下完成的。
+    # 这个数字本身就是诊断信号：占比过高说明当前难度/方向与该候选人不匹配。
+    assisted_items = [q for q in qa_breakdown if q.get("assisted")]
+    assistance_stats = {
+        "total": len(qa_breakdown),
+        "assisted_count": len(assisted_items),
+        "assisted_ratio": (round(len(assisted_items) / len(qa_breakdown), 2)
+                           if qa_breakdown else 0),
+        "assisted_questions": [q.get("question", "") for q in assisted_items],
+    }
 
     # v6.2: 思考时长统计（真实面试里"想太久"和"不假思索"都是风险信号）
     thinking_stats = {
@@ -237,6 +253,9 @@ def build_report(session) -> dict:
         # v6.2: 简历解析阶段产出的前置追问点（本场面试的提问依据）
         "resume_points": getattr(session, "resume_points", {}) or {},
         "weakness_tag_summary": weakness_tag_summary,
+        # v6.3: 借助引导统计 + 压力题注入情况（复盘时解释"分数是怎么来的"）
+        "assistance_stats": assistance_stats,
+        "pressure_questions_injected": getattr(session, "pressure_injected", 0),
     }
 
 

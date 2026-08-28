@@ -2,7 +2,7 @@
 <h1 align="center">🤖 AI 模拟面试官与职业规划</h1>
 
 <p align="center">
-  <strong>v6.2 — 竞品借鉴专项三期：面试收尾工程强控 + 简历前置追问点 + 输出净化 + 任务级模型绑定 + 报告逐题拆解 + VAD 节流（课程项目级，非生产级）</strong>
+  <strong>v6.3 — 竞品借鉴专项四期：mock-interviewer 七项能力落地（角色卡三件套 / 简历锚点五分类 / 评分加减分项 / JD gap 注入 / 压力题库 / 恢复红线 + 3 次阈值 / assisted 标记，课程项目级，非生产级）</strong>
 </p>
 
 <p align="center">
@@ -63,9 +63,15 @@ AI 模拟面试官是一个面向求职者的智能面试练习平台。上传�
 - **任务级模型绑定 + 面试禁思考（v6.2，对标 GrillMind）**：`LLM_TASK_MODELS` 按任务（parse/question/interview/diagnosis/rewrite/report/career/market）独立绑定模型；实时面试链路自动剔除推理类模型（首 token 延迟高），离线任务不受限
 - **报告逐题拆解（v6.2，对标 GrillMind）**：`qaBreakdown` 逐题呈现分数/五维/最薄弱维度/风险点，附 `realInterviewImpact`（对真实面试的影响，模型未产出时按规则兜底）与 `thinkingSeconds`（每题思考时长，前端计时上报、追问累加入本题）
 - **语音 VAD 节流 + 朗读结束切回文字（v6.2，对标 GrillMind）**：录音期间采样音量，连续静音 2.5s 且已采集到语音即自动停录并转写（2 分钟硬上限兜底）；题目/追问朗读结束自动聚焦输入框，用户始终落回可打字状态
+- **面试官角色卡三件套（v6.3，对标 mock-interviewer）**：7 种风格各补 `perspective`（视角独白）/ `followup_chain`（追问链）/ `never_ask`（**不会问**负向清单），`get_interviewer_role_prompt()` 拼装完整角色卡——让角色"不问什么"也有硬边界，而非靠模型自觉发挥
+- **简历锚点五分类（v6.3）**：新增 `resume_anchors.py`，把简历值得追问处由 deep/vague 二分升级为技术选型/量化数据/架构设计/业务决策/团队管理五类，每类绑定追问方向；LLM 分类 + 关键词规则双路径互为兜底，数字自动加权
+- **评分规则化加减分项（v6.3）**：新增 `score_adjustments.py`，10 条确定性正则规则（6 扣 4 加），**每条修正带 evidence 原文片段**，解决纯 LLM 评分"不可解释/不可复现"；三重封顶（单题扣分≤3/加分≤2/单维度≤2）+ 夹紧 [1,5]，只作用于已评分维度
+- **JD gap 出题优先级显式注入（v6.3）**：低于 `JD_GAP_SCORE_THRESHOLD` 的 JD 维度作为缺口注入出题 prompt，优先级链 **JD gap（必问）> JD 强匹配（验证）> 简历锚点（补充）**，纠正"模型顺简历走"的偏差；缺口无经历时改用假设/迁移问法
+- **压力题库随机注入（v6.3）**：新增 `pressure_bank.py`，5 类 16 道与简历/JD 解耦的压力题；全局开关 + 整场限量 1 + 破冰/收尾轮不注入 + 按 `attack_level` 抽签（友好/鼓励型概率为 0），补"内容层压力"
+- **恢复红线 + 连续 3 次阈值 + assisted 标记（v6.3）**：coaching 红线**绝不给答案**（工程兜底 `contains_answer_leak`）；连续 3 次触发主动建议跳过（可突破追问上限）；assisted 标记在报告披露"多少题在提示下完成"，占比过高即诊断信号
 - **题库管理**：CRUD + 收藏 + 从面试会话导入
 - **Docker 部署**：Dockerfile + docker-compose.yml 一键部署
-- **自动化测试**：559 个测试用例覆盖核心路径（含依赖 API Key 的 LLM 类测试）
+- **自动化测试**：609 个测试用例覆盖核心路径（含依赖 API Key 的 LLM 类测试）
 
 ---
 
@@ -239,6 +245,10 @@ AI-simulated-interviewer/
 │   │       └── tasks.py                # 后台任务表（互斥/进度/TTL 清理）
 │   ├── voice_service.py          # [v4.2 NEW] MiMo 云端语音代理（TTS 合成 + ASR 识别）
 │   ├── resume_retriever.py       # [v5.0 NEW] 简历证据检索器（分块/加权/预算/证据包）
+│   ├── output_sanitizer.py       # [v6.2 NEW] 面试话术输出净化（禁 Markdown/舞台提示/垫词，L2）
+│   ├── resume_anchors.py         # [v6.3 NEW] 简历锚点五分类（技术选型/量化/架构/业务/团队，L2）
+│   ├── score_adjustments.py      # [v6.3 NEW] 评分规则化加减分项（确定性正则 + evidence，L2）
+│   └── pressure_bank.py          # [v6.3 NEW] 压力题库（5 类 16 道，与简历/JD 解耦，L2）
 │   └── interview_engine/         # 面试引擎子包
 │       ├── __init__.py
 │       ├── session.py            # 核心状态机
@@ -266,7 +276,7 @@ AI-simulated-interviewer/
 │           ├── components.css    # 框架组件
 │           └── pages/            # 领域样式（含 market.css 纸墨印章风格）
 │
-├── tests/                        # 自动化测试（400+ 用例，本机非 LLM 类全绿）
+├── tests/                        # 自动化测试（600+ 用例，本机非 LLM 类全绿）
 │   ├── conftest.py               # 共享 fixtures
 │   ├── test_schemas.py           # Schema 验证
 │   ├── test_api.py               # HTTP 路由集成测试（含安全测试）
@@ -284,7 +294,9 @@ AI-simulated-interviewer/
 │   ├── test_voice_service.py     # [v4.2] MiMo 语音服务（key 校验/错误处理/mock）
 │   ├── test_voice_api.py         # [v4.2] /api/voice/* 代理路由
 │   ├── test_session.py           # [v5.0] 会话状态机（追问/权重/薄弱点/恢复/多模式，49 例）
-│   └── test_resume_retriever.py  # [v5.0] 简历证据检索（分块/命中/预算/溯源，12 例）
+│   ├── test_resume_retriever.py  # [v5.0] 简历证据检索（分块/命中/预算/溯源，12 例）
+│   ├── test_grillmind_borrowings.py  # [v6.2] 收尾强控/追问点/净化/任务绑定/思考时长/逐题拆解（50 例）
+│   └── test_mock_interviewer_borrowings.py  # [v6.3] 角色卡/锚点/加减分/JD gap/压力题/恢复红线（50 例）
 │
 ├── docs/                         # 需求文档与周报
 │   ├── week1_*.md                # v1 模块需求
@@ -316,7 +328,7 @@ AI-simulated-interviewer/
 | **日志** | logging + RotatingFileHandler（5MB×3 旋转） |
 | **部署** | Docker + Docker Compose（跨平台一键部署） |
 | **分层校验** | import-linter 契约（L1-L4，`run.py lint` 强制） |
-| **测试** | pytest（400+ 用例，本机非 LLM 类全绿） |
+| **测试** | pytest（600+ 用例，本机非 LLM 类全绿） |
 
 ---
 
@@ -425,7 +437,7 @@ AI-simulated-interviewer/
 ### 宪章与契约（v3.2）
 
 - [不变硬约束 CHARTER.md](CHARTER.md)：架构原则 / 诊断五维度 / L1-L4 分层规则 / 决策记录卡模板 / 已知局限
-- [版本迭代叙事 CHANGELOG.md](CHANGELOG.md)：v2 → v3.2 各轮新增、推翻、修复
+- [版本迭代叙事 CHANGELOG.md](CHANGELOG.md)：v2 → v6.3 各轮新增、推翻、修复
 - [.importlinter](.importlinter)：分层依赖契约文件（INI 格式，与 CHARTER 约束同步）
 
 ### 自动化测试

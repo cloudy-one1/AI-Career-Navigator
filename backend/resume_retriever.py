@@ -7,8 +7,16 @@
 
 分层契约：本模块属 L2 领域层，仅依赖 L1（config/logger），被 L3 业务层调用。
 不引入任何第三方检索依赖（本地优先、零托管依赖）。
+
+v6.3 注入去重（借鉴 HakiMeet 的 _injected_cache，并修正其缺陷）：
+select_context_tracked() 在返回证据包的同时给出本轮入选块的稳定指纹，
+上游（L3 InterviewSession）持会话级集合，下一轮检索时传入 exclude_hashes 过滤，
+避免长会话中同一段简历证据被反复拼进 prompt。
+指纹用 blake2b 而非内置 hash()——后者受 PYTHONHASHSEED 随机化影响，
+进程重启即失效，无法跨会话保持一致（HakiMeet 即踩此坑）。
 """
 
+import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
@@ -55,9 +63,24 @@ class EvidenceChunk:
     def score(self) -> float:
         return self.priority + len(self.matched_terms) * 8.0
 
+    @property
+    def fingerprint(self) -> str:
+        """块内容稳定指纹（跨进程一致），供上游做注入去重。"""
+        return content_hash(self.text)
+
     def to_block(self) -> str:
         terms = "、".join(self.matched_terms) if self.matched_terms else "无"
         return f"[证据 {self.source}·#{self.chunk_id}｜命中:{terms}]\n{self.text.strip()}"
+
+
+def content_hash(text: str) -> str:
+    """文本内容的稳定摘要（blake2b，8 字节十六进制）。
+
+    为什么不用内置 hash()：内置 hash 对 str 带 PYTHONHASHSEED 随机化，
+    同一文本在不同进程/重启后得到不同值，无法作为持久化的去重键。
+    """
+    return hashlib.blake2b((text or "").strip().encode("utf-8"),
+                           digest_size=8).hexdigest()
 
 
 def _noisy_name(name: str) -> bool:
@@ -142,14 +165,15 @@ class ResumeRetriever:
         hits = [c for c in self.chunks if c.matched_terms]
         return sorted(hits, key=lambda c: c.score, reverse=True)
 
-    def select_context(self, user_text: str, source_name: str | None = None) -> str:
-        """按用户当前回答检索简历，组装【本轮证据包】。
+    def _select(self, user_text: str, source_name: str | None,
+                exclude_hashes: set[str] | None) -> list[EvidenceChunk]:
+        """检索 + 预算筛选，返回入选块。
 
-        预算硬限：最多 MAX_CONTEXT_CHUNKS 块、单源 MAX_CHUNKS_PER_SOURCE、
-        总字符 MAX_CONTEXT_CHARS。无匹配时返回提示语（诊断引擎据此转向澄清追问）。
+        顺序很关键：**先按 exclude_hashes 过滤，再走字符预算**。
+        若先截断再过滤，被过滤掉的名额会白白占用预算，导致本可入选的新证据被挤掉。
         """
         if not self.chunks:
-            return _NO_EVIDENCE_MESSAGE
+            return []
         terms = extract_terms(user_text or "")
         ranked = self._score_chunks(terms)
 
@@ -160,6 +184,8 @@ class ResumeRetriever:
         for chunk in ranked:
             if len(picked) >= MAX_CONTEXT_CHUNKS:
                 break
+            if exclude_hashes and chunk.fingerprint in exclude_hashes:
+                continue
             src = chunk.source
             if source_name and src != source_name:
                 continue
@@ -170,17 +196,51 @@ class ResumeRetriever:
             picked.append(chunk)
             per_source[src] = per_source.get(src, 0) + 1
             total_chars += len(chunk.text)
+        return picked
 
+    def select_context_tracked(
+        self, user_text: str, source_name: str | None = None,
+        exclude_hashes: set[str] | None = None,
+        allow_reuse_when_exhausted: bool = True,
+    ) -> tuple[str, list[str]]:
+        """与 select_context 相同，但额外返回本轮入选块的指纹列表。
+
+        上游据此把已注入内容记入会话级缓存，下一轮通过 exclude_hashes 排除。
+
+        allow_reuse_when_exhausted（默认开）：去重后若无任何新块，回退为
+        **不过滤重检一次**。这不是可选项而是必需项——简历块总数有限，
+        长会话后期所有块都会被注入过，若不做回退，证据包会恒为空，
+        诊断侧将失去依据，去重反而造成能力退化。
+        """
+        picked = self._select(user_text, source_name, exclude_hashes)
+        reused = False
+        if not picked and exclude_hashes and allow_reuse_when_exhausted:
+            picked = self._select(user_text, source_name, None)
+            reused = bool(picked)
         if not picked:
-            return _NO_EVIDENCE_MESSAGE
-
+            return _NO_EVIDENCE_MESSAGE, []
+        if reused:
+            logger.debug("[resume_retriever] 去重后无新证据，本轮回退复用已注入块")
         blocks = "\n\n".join(c.to_block() for c in picked)
         return (
             "【本轮证据包】以下片段来自候选人简历/材料（仅作追问依据）：\n\n"
             f"{blocks}\n\n"
             "证据使用硬规则：只能依据上述证据或候选人本轮亲述来评价/追问；"
             "证据未覆盖之处必须用澄清式追问核实，不得编造候选人经历。"
-        )
+        ), [c.fingerprint for c in picked]
+
+    def select_context(self, user_text: str, source_name: str | None = None,
+                       exclude_hashes: set[str] | None = None) -> str:
+        """按用户当前回答检索简历，组装【本轮证据包】。
+
+        预算硬限：最多 MAX_CONTEXT_CHUNKS 块、单源 MAX_CHUNKS_PER_SOURCE、
+        总字符 MAX_CONTEXT_CHARS。无匹配时返回提示语（诊断引擎据此转向澄清追问）。
+
+        exclude_hashes（v6.3）：排除指纹命中的块，用于跨轮注入去重。
+        只需证据包文本时用它；需要拿到指纹时改用 select_context_tracked()。
+        """
+        text, _ = self.select_context_tracked(user_text, source_name, exclude_hashes)
+        return text
 
     # ── 溯源（调试）──
 
@@ -228,6 +288,7 @@ def build_evidence_package(
     resume_text: str,
     user_text: str,
     extra_documents: list[tuple[str, str, float]] | None = None,
+    exclude_hashes: set[str] | None = None,
 ) -> str:
     """便捷函数：一步构建检索器并返回【本轮证据包】。
 
@@ -235,6 +296,7 @@ def build_evidence_package(
         resume_text: 简历全文（resume_parser 输出）。
         user_text: 候选人当前回答/提问。
         extra_documents: 可选附加材料 [(来源名, 文本, 优先级), ...]。
+        exclude_hashes: v6.3，排除指纹命中的块（跨轮注入去重）。
     """
     retriever = ResumeRetriever()
     if resume_text and resume_text.strip():
@@ -242,7 +304,7 @@ def build_evidence_package(
     if extra_documents:
         for name, text, priority in extra_documents:
             retriever.add_document(name, text, priority)
-    return retriever.select_context(user_text)
+    return retriever.select_context(user_text, exclude_hashes=exclude_hashes)
 
 
 def trace_retrieval(

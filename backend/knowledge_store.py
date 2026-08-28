@@ -18,7 +18,8 @@
 
 import logging
 
-from .resume_retriever import ResumeRetriever, extract_terms, MAX_CONTEXT_CHARS
+from .resume_retriever import (MAX_CONTEXT_CHARS, ResumeRetriever, content_hash,
+                               extract_terms)
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +85,14 @@ class KnowledgeStore:
 
     # ── 检索 ──
 
-    def retrieve(self, namespace: str, query: str, top_k: int = 3) -> list[dict]:
+    def retrieve(self, namespace: str, query: str, top_k: int = 3,
+                 exclude_hashes: set[str] | None = None) -> list[dict]:
         """在命名空间内检索与 query 相关的块，返回按得分降序的命中列表。
 
         预算硬限沿用 resume_retriever 的 MAX_CONTEXT_CHARS，防止 token 膨胀。
+
+        exclude_hashes（v6.3 注入去重）：跳过指纹命中的块。过滤发生在**字符预算之前**，
+        否则被过滤的名额会白占预算，把本可入选的新块挤掉。
         """
         r = self._retriever(namespace)
         if not r.chunks or top_k <= 0:
@@ -99,6 +104,9 @@ class KnowledgeStore:
         for c in ranked:
             if len(results) >= top_k:
                 break
+            fingerprint = c.fingerprint
+            if exclude_hashes and fingerprint in exclude_hashes:
+                continue
             if total_chars + len(c.text) > MAX_CONTEXT_CHARS:
                 continue
             results.append({
@@ -108,6 +116,7 @@ class KnowledgeStore:
                 "matched_terms": list(c.matched_terms),
                 "score": round(c.score, 1),
                 "text": c.text,
+                "content_hash": fingerprint,
             })
             total_chars += len(c.text)
         return results
@@ -130,19 +139,25 @@ class KnowledgeStore:
 
     # ── Prompt 增强（对标 augmentCall）──
 
-    def augment_prompt(self, system_prompt: str, namespace: str, query: str,
-                       top_k: int = 3,
-                       header: str = "【参考知识库相关内容】") -> str:
-        """把检索到的知识块拼进 System Prompt；无命中时原样返回（零副作用）。
+    def augment_prompt_tracked(self, system_prompt: str, namespace: str, query: str,
+                               top_k: int = 3, exclude_hashes: set[str] | None = None,
+                               header: str = "【参考知识库相关内容】") -> tuple[str, list[str]]:
+        """可追踪版本：与 augment_prompt 行为一致，额外返回本轮实际注入块的指纹。
 
-        注入块附带"仅供参考、严禁编造"的使用约束，与简历证据包的
-        反幻觉硬规则保持同一口径。
+        上游（L3）持会话级集合累积这些指纹，下一轮通过 exclude_hashes 传入，
+        即可避免长会话中同一段知识被反复拼进 prompt。
+
+        注意：retrieve 内部已按 MAX_CONTEXT_CHARS 截断，**未入选的块不计入返回的指纹**，
+        它们的指纹不会进缓存，下一轮仍有入选机会（不会因"被预算挤掉"而永久丢失）。
+
+        Returns:
+            (增强后的系统提示词, 本轮实际注入的内容指纹列表)
         """
         if not system_prompt:
-            return system_prompt
-        hits = self.retrieve(namespace, query, top_k=top_k)
+            return system_prompt, []
+        hits = self.retrieve(namespace, query, top_k=top_k, exclude_hashes=exclude_hashes)
         if not hits:
-            return system_prompt
+            return system_prompt, []
         ns = self._normalize_ns(namespace)
         blocks = "\n\n".join(
             f"[{h['source']}·#{h['chunk_id']}｜命中:{'、'.join(h['matched_terms']) or '无'}]\n"
@@ -155,7 +170,23 @@ class KnowledgeStore:
             "以下内容来自本地知识库，仅供引用参考：据此回答可以，"
             "但严禁据此编造候选人的经历、项目细节或数据。\n\n"
             f"{blocks}"
+        ), [h["content_hash"] for h in hits]
+
+    def augment_prompt(self, system_prompt: str, namespace: str, query: str,
+                       top_k: int = 3, exclude_hashes: set[str] | None = None,
+                       header: str = "【参考知识库相关内容】") -> str:
+        """把检索到的知识块拼进 System Prompt；无命中时原样返回（零副作用）。
+
+        注入块附带"仅供参考、严禁编造"的使用约束，与简历证据包的
+        反幻觉硬规则保持同一口径。
+
+        exclude_hashes（v6.3）：排除指纹命中的块，用于跨轮注入去重。
+        需要拿到本轮注入指纹时改用 augment_prompt_tracked()。
+        """
+        prompt, _ = self.augment_prompt_tracked(
+            system_prompt, namespace, query, top_k, exclude_hashes, header
         )
+        return prompt
 
 
 # 模块级单例（对标 SimpleRagService 的依赖注入单例）

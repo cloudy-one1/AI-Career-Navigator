@@ -369,3 +369,14 @@ class CareerPlanResponse(BaseModel):
     stages: list[CareerStage] = []                   # 时间轴阶段（从近到远）
     summary: str = ""                                # 一句话路径总结
     risk_level: str = ""                             # 路径可行度风险（低/中/高）
+
+
+# ===== v6.3 长期记忆闭环 =====
+
+class WeaknessResolveRequest(BaseModel):
+    """标记薄弱点已解决 / 恢复未解决。
+
+    resolved=True 表示"这块短板已补掉"，该点随即退出面试回注入与复习建议，
+    形成"练 → 评 → 记 → 再练"的闭环收敛。
+    """
+    resolved: bool = Field(default=True, description="True=标记已解决，False=恢复未解决")

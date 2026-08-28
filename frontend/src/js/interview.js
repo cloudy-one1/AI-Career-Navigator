@@ -725,6 +725,13 @@ function showQuestion(area, data) {
   const qCard = el('div', { className: 'question-card' },
     el('div', { className: 'question-meta' },
       el('span', { className: 'round-badge', textContent: `第 ${data.round + 1} 轮 · 第 ${data.index}/${data.total} 题` }),
+      // v6.3: 压力题徽章（pressure_bank 注入的意外问题，与简历/JD 无关）
+      data.is_pressure
+        ? el('span', {
+            className: 'pressure-badge',
+            textContent: `⚡ 压力题${data.pressure_topic ? ` · ${data.pressure_topic}` : ''}`,
+          })
+        : '',
       data.focus_dimension_name
         ? el('span', { className: 'focus-badge', textContent: `🎯 补强：${data.focus_dimension_name}` })
         : '',

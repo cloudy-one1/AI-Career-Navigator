@@ -20,6 +20,11 @@ from typing import AsyncGenerator
 from .llm_client import safe_json_extract
 from .security import check_output
 from .output_sanitizer import OUTPUT_CONSTRAINTS, sanitize_spoken_text
+from .score_adjustments import (
+    adjustments_payload,
+    apply_adjustments,
+    detect_adjustments,
+)
 from .dimension_weights import (
     DEFAULT_WEIGHTS,
     DIM_KEYS,
@@ -34,6 +39,7 @@ logger = logging.getLogger(__name__)
 
 DIAGNOSTICIAN_SYSTEM_PROMPT = """你是一位严格的面试回答诊断师。
 你的唯一职责是诊断候选人的面试回答质量，给出客观评分。
+{interviewer_role}
 你从以下五个维度依次分析，每个维度给出 1-5 分及简短评语：
 
 1. STAR 完整度：是否包含 Situation/Task/Action/Result 四要素
@@ -187,10 +193,17 @@ EVIDENCE_USE_HARD_RULES = """【证据使用硬规则】
 COACHING_RECOVERY_INSTRUCTION = """【不会答恢复流程】（候选人表示不会/不懂/没思路时进入）
 请按以下顺序帮助候选人恢复：
 1. 先讲清概念核心（通俗、简短）；
-2. 给出该问题的项目表达骨架（一句话怎么组织）；
+2. 给出该问题的**表达骨架**（先说什么后说什么），而不是内容本身；
 3. 提醒：简历中未支撑的细节不要硬说；
 4. 只追问一个降阶问题（比原题简单，帮助找回思路）；
-5. 保留薄弱点记录，但不要继续高压追问。"""
+5. 保留薄弱点记录，但不要继续高压追问。
+
+【恢复态红线 · 绝不给答案】
+- 严禁出现"参考答案""正确答案""标准答案""你应该这样回答""答案是……"等表述；
+- 严禁把本题的完整回答写出来，包括改写成"优秀版本"后给候选人看；
+- 只给"怎么想"与"从哪说起"，不给"说什么"。
+理由：面试现场没人在你卡住时递答案，恢复的目的是让他学会自己找到思路。
+（系统的「回答改写」是另一条独立通道，由前端单独展示，不属于此处的面试官话术。）"""
 
 _MODE_INSTRUCTIONS = {
     "coach": "【教练模式】先补基础再追问：如果候选人回答暴露概念不牢，先讲清概念再追问，教学优先；评分照常进行。",
@@ -273,7 +286,8 @@ def _build_mode_instructions(mode: str, recovery_requested: bool) -> str:
     return "\n\n".join(parts) if parts else ""
 
 
-def _build_diagnostician_system(weights: dict | None, from_voice: bool = False) -> str:
+def _build_diagnostician_system(weights: dict | None, from_voice: bool = False,
+                                interviewer_role: str = "") -> str:
     """把动态权重注入 Diagnostician 系统提示词。
 
     诚实说明：权重仅用于后端 weighted_score() 的加权总分；
@@ -281,13 +295,24 @@ def _build_diagnostician_system(weights: dict | None, from_voice: bool = False) 
     因此 prompt 措辞已改为中性（不影响打分标准），避免制造"权重已影响评分"的假象。
 
     v6.1: from_voice=True 时注入语音转写容错话术（借鉴 offerMaster 的 ASR-aware 评分）。
+    v6.3: interviewer_role —— 面试官角色卡（视角/追问路径/不会问清单）。
+          由于追问主要由本 prompt 产出（follow_up_question），角色卡必须注入到这里，
+          否则 7 种面试官的追问只会"语气不同、结构同构"。
+          注入时显式声明"不影响五维评分标准"，避免角色设定污染评分。
     """
     w = weights or DEFAULT_WEIGHTS
     voice_note = VOICE_TRANSCRIPTION_NOTE if from_voice else ""
+    role_block = ""
+    if interviewer_role and interviewer_role.strip():
+        role_block = (
+            f"\n【本次面试官角色设定（仅影响你的追问方式，不影响下述五维评分标准）】\n"
+            f"{interviewer_role.strip()}\n"
+        )
     return DIAGNOSTICIAN_SYSTEM_PROMPT.format(
         weight_desc=describe_weights(w),
         voice_note=voice_note,
         output_constraints=OUTPUT_CONSTRAINTS,
+        interviewer_role=role_block,
     )
 
 
@@ -313,10 +338,13 @@ def _parse_diagnosis_fallback(raw_text: str) -> dict:
     }
 
 
-def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None) -> dict:
+def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None,
+                     question: str = "", answer: str = "") -> dict:
     """
     把 Diagnostician / Rewriter 的原始 JSON 规整为前端与状态机共用的标准结构。
     v2.6: overall_score 改为按权重加权，并附带 weakest_dimension / follow_up_question。
+    v6.3: question / answer 用于运行规则化加减分项（可解释、可复现的行为信号修正）。
+          两者为空时（兼容旧调用）跳过该层，行为与 v6.2 完全一致。
     """
     w = weights or DEFAULT_WEIGHTS
     diagnosis = diagnosis or {}
@@ -342,12 +370,24 @@ def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None) -> di
         dimensions[key] = score
         details[key] = {"score": score, "comment": comment}
 
-    overall = weighted_score(dimensions, w)
+    # v6.3: 规则化加减分项 —— 在模型分之上叠加确定性行为信号修正。
+    # 顺序：先修正维度分，再算加权总分，保证 overall 与最终 dimensions 口径一致。
+    adjustments = detect_adjustments(question, answer) if (question or answer) else []
+    adjusted_dimensions = apply_adjustments(dimensions, adjustments)
+    if adjusted_dimensions != dimensions:
+        for k, v in adjusted_dimensions.items():
+            if k in details:
+                details[k]["score"] = v
+        logger.debug("[diagnosis] 规则修正生效: %s",
+                     ", ".join(f"{a.label}{a.delta:+.0f}" for a in adjustments))
+
+    overall = weighted_score(adjusted_dimensions, w)
 
     # 弱项维度：代码按"低分 + 高权重"推导，与模型声明交叉校验。
     # 用代码结果兜底模型声明，消除"模型声明合法但与真实分数不符"的信任边界
     # （该边界会导致追问打偏、前端"最薄弱维度"标签与实际分数对不上）。
-    valid_dims = {k: v for k, v in dimensions.items() if v > 0}
+    # v6.3: 用修正后的分数定位薄弱维度，与最终展示给用户的分数保持一致。
+    valid_dims = {k: v for k, v in adjusted_dimensions.items() if v > 0}
     code_weakest = (
         min(valid_dims, key=lambda k: (valid_dims[k], -w.get(k, 0.25)))
         if valid_dims else ""
@@ -395,7 +435,11 @@ def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None) -> di
         risk_points = []
 
     return {
-        "dimensions": dimensions,
+        # v6.3: dimensions 为修正后的最终分（前端/报告一律用它）；
+        # raw_dimensions 保留模型原始分，供"为什么扣分"对照展示。
+        "dimensions": adjusted_dimensions,
+        "raw_dimensions": dict(dimensions),
+        "score_adjustments": adjustments_payload(adjustments),
         "dimension_details": details,
         "weights": dict(w),
         "weight_desc": describe_weights(w),
@@ -424,6 +468,7 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
                                   mode: str = "simulation",
                                   recovery_requested: bool = False,
                                   from_voice: bool = False,
+                                  interviewer_role: str = "",
                                   ) -> AsyncGenerator[dict, None]:
     """
     流式执行双 Agent 诊断，逐条 yield dict 消息（由调用方转发给 WebSocket）。
@@ -437,6 +482,7 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
 
     v2.7: question_type 用于注入题型差异化评估指引。
     v6.1: from_voice=True 时注入 ASR 容错评分话术。
+    v6.3: interviewer_role 注入面试官角色卡（影响追问方式，不影响评分标准）。
     注意：双 Agent 仍是两次独立调用，不合并（架构约束）。
     """
     w = weights or DEFAULT_WEIGHTS
@@ -459,7 +505,7 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
     diag_chunks: list[str] = []
     async for chunk in _astream(
         llm_client,
-        _build_diagnostician_system(w, from_voice),
+        _build_diagnostician_system(w, from_voice, interviewer_role),
         diag_prompt,
         temperature=0.3,
         max_tokens=1500,
@@ -510,7 +556,8 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
     }
 
     yield {"type": "diagnosis_done",
-           "data": normalize_result(diagnosis, rewrite, w)}
+           "data": normalize_result(diagnosis, rewrite, w,
+                                    question=question, answer=answer)}
 
 
 async def _astream(llm_client, system_prompt: str, user_prompt: str,
@@ -544,12 +591,14 @@ async def run_diagnosis(llm_client, question: str, answer: str,
                         mode: str = "simulation",
                         recovery_requested: bool = False,
                         question_type: str = "mixed",
-                        from_voice: bool = False) -> dict:
+                        from_voice: bool = False,
+                        interviewer_role: str = "") -> dict:
     """
     非流式双 Agent 诊断（v1 兼容 + 降级路径）。
     返回 {diagnosis: {...}, rewrite: {...}}
     v5.0: 支持证据包 / 模式指令 / 不会答恢复注入。
     v6.1: from_voice=True 时注入 ASR 容错评分话术。
+    v6.3: interviewer_role 注入面试官角色卡（影响追问方式，不影响评分标准）。
     """
     w = weights or DEFAULT_WEIGHTS
     evidence_block = _build_evidence_block(evidence_package)
@@ -565,7 +614,7 @@ async def run_diagnosis(llm_client, question: str, answer: str,
     )
     diag_raw = await asyncio.to_thread(
         llm_client.chat,
-        _build_diagnostician_system(w, from_voice),
+        _build_diagnostician_system(w, from_voice, interviewer_role),
         diag_prompt,
         0.3,
         1500,
@@ -615,8 +664,9 @@ class DiagnosisEngine:
                        mode: str = "simulation",
                        recovery_requested: bool = False,
                        question_type: str = "mixed",
-                       from_voice: bool = False) -> dict:
-        """非流式诊断，返回标准化结果。v5.0: 支持证据包/模式/恢复注入。v6.1: from_voice。"""
+                       from_voice: bool = False,
+                       interviewer_role: str = "") -> dict:
+        """非流式诊断，返回标准化结果。v5.0: 支持证据包/模式/恢复注入。v6.1: from_voice。v6.3: 角色卡。"""
         raw = await run_diagnosis(
             llm_client=self.llm,
             question=question,
@@ -629,8 +679,10 @@ class DiagnosisEngine:
             recovery_requested=recovery_requested,
             question_type=question_type,
             from_voice=from_voice,
+            interviewer_role=interviewer_role,
         )
-        return normalize_result(raw.get("diagnosis", {}), raw.get("rewrite", {}), weights)
+        return normalize_result(raw.get("diagnosis", {}), raw.get("rewrite", {}), weights,
+                                question=question, answer=answer)
 
     # 向后兼容旧调用名
     async def diagnose_stream(self, question: str, answer: str,
@@ -649,9 +701,10 @@ class DiagnosisEngine:
                evidence_package: str = "",
                mode: str = "simulation",
                recovery_requested: bool = False,
-               from_voice: bool = False) -> AsyncGenerator[dict, None]:
+               from_voice: bool = False,
+               interviewer_role: str = "") -> AsyncGenerator[dict, None]:
         """流式诊断，返回异步生成器（v2.6 WebSocket 主流程使用）。
-        v2.7: 支持题型差异化；v5.0: 支持证据包/模式/恢复注入；v6.1: from_voice。"""
+        v2.7: 支持题型差异化；v5.0: 支持证据包/模式/恢复注入；v6.1: from_voice；v6.3: 角色卡。"""
         return run_diagnosis_streaming(
             llm_client=self.llm,
             question=question,
@@ -664,4 +717,5 @@ class DiagnosisEngine:
             mode=mode,
             recovery_requested=recovery_requested,
             from_voice=from_voice,
+            interviewer_role=interviewer_role,
         )

@@ -10,6 +10,7 @@ import json
 import logging
 
 from .output_sanitizer import OUTPUT_CONSTRAINTS, sanitize_spoken_text
+from .resume_anchors import build_anchors_block, merge_anchor_sources
 
 logger = logging.getLogger(__name__)
 
@@ -25,12 +26,26 @@ def _fmt_points(items) -> str:
 
 
 def build_resume_points_block(resume_points: dict) -> str:
-    """把简历追问点格式化为出题 prompt 片段；无有效内容返回空串（不注入）。"""
+    """把简历追问点格式化为出题 prompt 片段；无有效内容返回空串（不注入）。
+
+    v6.3: 追加【锚点类型与追问方向】段。
+    原有 deep/vague 二分只能定位"哪里值得问"，五分类才回答"该往哪个方向问"——
+    同样是"写了但没展开"，技术选型该问"为什么选它"，量化数据该问"怎么测的"，
+    方向不同则追问的质量差异极大。
+    """
     if not isinstance(resume_points, dict):
         return ""
     deep = _fmt_points(resume_points.get("deep_dive_points") or [])
     vague = _fmt_points(resume_points.get("vague_points") or [])
-    if not deep and not vague:
+    # v6.3: anchors 缺失时按关键词规则对既有追问点兜底分类（向后兼容旧数据）
+    anchors_block = build_anchors_block(
+        merge_anchor_sources(
+            resume_points.get("anchors"),
+            (resume_points.get("deep_dive_points") or [])
+            + (resume_points.get("vague_points") or []),
+        )
+    )
+    if not deep and not vague and not anchors_block:
         return ""
     parts = ["\n\n【简历前置追问点】以下线索由简历解析阶段预先提取，请优先据此提问/追问，"]
     parts.append("而不是泛泛而问：")
@@ -38,6 +53,8 @@ def build_resume_points_block(resume_points: dict) -> str:
         parts.append(f"\n★ 值得深挖的点（候选人写了但细节不足，需要考其真伪与深度）：\n{deep}")
     if vague:
         parts.append(f"\n★ 可疑/模糊的点（表述含糊、缺时间或量化，需要核实）：\n{vague}")
+    if anchors_block:
+        parts.append(anchors_block)
     parts.append(
         "\n注意：发问要像真实面试官的自然追问，不要出现'简历提示'之类的元信息，"
         "也不要替候选人说出答案；仅在候选人确实谈及该内容时才追。"
@@ -271,7 +288,10 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
                                    weak_evidence: str = "",
                                    type_mix: dict | None = None,
                                    closing_instruction: str = "",
-                                   resume_points: dict | None = None) -> list[dict]:
+                                   resume_points: dict | None = None,
+                                   avoid_questions: list[str] | None = None,
+                                   memory_points: list[dict] | None = None,
+                                   jd_gaps: list[str] | None = None) -> list[dict]:
     """
     为指定轮次生成问题。
     不同轮次使用不同的聚焦角度（v2.2 扩展为 6 阶段，v2.4 支持双模式）。
@@ -291,6 +311,24 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
       工程强控：最后一轮的题目必须带收束性质，不依赖模型自决是否收尾）
       resume_points — 简历解析阶段产出的追问点 {deep_dive_points, vague_points}，
       让面试官的追问有数据支撑，而非临场泛泛而问
+
+    v6.3 新增：
+      avoid_questions — 本次会话已问过的题目文本（由会话层 L3 维护），
+      作为【已问题目清单·严禁重复】负向约束注入，服务于两个场景：
+        1) 换题（模型决定 next_question 后追加/新起一题）时给出真正的新题；
+        2) 兜底重试：模型不听约束又出了重复题时，会话层带上重复题再要一道。
+      memory_points — 历史未解决薄弱点（长期记忆闭环），来自 db.list_unresolved_weaknesses()。
+        以【历史薄弱点·优先考察】段注入，让每场新面试优先覆盖反复失分的维度，
+        对应"练 → 评 → 记 → 再练"闭环里的"记 → 再练"这一段。
+        由会话层控制只在首轮注入一次（后续轮次薄弱点不变，重复注入是纯浪费）。
+
+    v6.3 新增：
+      jd_gaps — JD 匹配缺口（岗位要求但简历未充分体现的点），由 gap_analyzer 产出。
+        注入【JD 匹配缺口 · 优先考察】段，显式声明出题优先级链：
+            JD gap 区域（必问）> JD 强匹配区域（验证深度）> 简历锚点（补充探测）
+        为什么必须显式声明：不声明时模型会顺着简历走——简历内容在上下文里更"显眼"、
+        更容易写出具体问题；而真实面试官手里拿的是 JD，最关心的恰恰是
+        "JD 上要求的你到底行不行"。这个偏差靠模型自觉纠不回来，只能工程层强控。
     """
 
     # v3.1: 市场数据注入（仅非补强题时注入，补强题本身已有定向上下文）
@@ -335,6 +373,28 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
             "也不要直接告诉候选人他哪里不好。"
         )
 
+    # v6.3: JD 匹配缺口优先考察（出题优先级链的第一环）
+    # 只取前 5 条：缺口清单过长会挤占 JD/简历正文的上下文预算，反而稀释重点。
+    jd_gap_block = ""
+    if jd_gaps:
+        listed_gaps = "\n".join(
+            f"{i + 1}. {str(g).strip()[:120]}"
+            for i, g in enumerate(jd_gaps[:5]) if str(g).strip()
+        )
+        if listed_gaps:
+            jd_gap_block = (
+                "\n\n【JD 匹配缺口 · 优先考察】\n"
+                "以下是目标岗位要求、但候选人简历未充分体现或明显偏弱的点。"
+                "真实面试官手里拿着 JD，最关心的就是这些缺口——\n"
+                f"{listed_gaps}\n\n"
+                "出题优先级（严格遵守，不要颠倒）：\n"
+                "1) 优先围绕上述缺口出题或变形出题；\n"
+                "2) 缺口已覆盖时，再回到 JD 强匹配区域验证深度；\n"
+                "3) 最后才是简历锚点与常规考察。\n"
+                "注意：缺口可能对应候选人没有的经历——此时用「假设场景 / 迁移能力」问法"
+                "（如「如果让你做 X，你会怎么切入」），不要问不存在的事实细节。"
+            )
+
     # v6.2: 收尾阶段内部指令注入（工程强控，替代"让模型自己决定何时收尾"）
     closing_block = f"\n\n{closing_instruction}" if closing_instruction else ""
 
@@ -342,6 +402,45 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
     resume_points_block = build_resume_points_block(resume_points) if (
         resume_points and not focus_dimension
     ) else ""
+
+    # v6.3: 已问题目负向约束（换题/备选题的底层保证）
+    # 只列最近若干条，避免清单过长挤占上下文预算；超长题截断到 120 字。
+    avoid_block = ""
+    if avoid_questions:
+        listed = "\n".join(
+            f"{i + 1}. {str(q).strip()[:120]}"
+            for i, q in enumerate(avoid_questions[-8:]) if str(q).strip()
+        )
+        if listed:
+            avoid_block = (
+                "\n\n【已问题目清单 · 严禁重复】\n"
+                "本次面试已经问过以下题目，你生成的题目**不得与其中任何一道重复或高度相似**：\n"
+                f"{listed}\n"
+                "请换一个考察角度、换一个具体场景或换一个技术点来出题。"
+            )
+
+    # v6.3: 历史薄弱点回注入（长期记忆闭环的"记 → 再练"）
+    # 只取前 8 条、每条最多带 2 个风险点：清单过长会挤占 JD/简历的上下文预算。
+    memory_block = ""
+    if memory_points:
+        lines = []
+        for p in memory_points[:8]:
+            dim = str(p.get("dimension", "") or "").strip()
+            if not dim:
+                continue
+            score = p.get("avg_score", 0)
+            risks = [str(r) for r in (p.get("risk_points") or [])][:2]
+            line = f"- {dim}（历史均分 {score}）"
+            if risks:
+                line += f"：{'；'.join(risks)}"
+            lines.append(line)
+        if lines:
+            memory_block = (
+                "\n\n【历史薄弱点 · 优先考察】\n"
+                "该候选人在以往面试中反复暴露以下短板，本场请优先覆盖这些维度；"
+                "必须自然融入本轮考察重点，不要生硬点名「这是你的薄弱项」。\n"
+                + "\n".join(lines)
+            )
 
     system_prompt = get_question_gen_system_prompt()
     user_prompt = f"""请根据以下信息，生成 {count} 道{round_name}问题。
@@ -354,7 +453,7 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
 {market_block}
 
 【本轮的考察重点】
-{focus}{type_mix_block}{extra_block}{resume_points_block}{closing_block}
+{focus}{type_mix_block}{jd_gap_block}{extra_block}{resume_points_block}{closing_block}{avoid_block}{memory_block}
 
 要求：
 1. 每个问题附上「考察意图」（1 句话即可）

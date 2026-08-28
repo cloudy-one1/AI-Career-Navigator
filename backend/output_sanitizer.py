@@ -127,6 +127,29 @@ def strip_leading_fillers(text: str, max_rounds: int = 3) -> str:
     return s
 
 
+# ===== v6.3: 恢复态答案泄漏检测 =====
+# 候选人说"不会"进入恢复流程时，面试官话术只能引导、不能报答案——
+# 直接给答案会让候选人失去这次练习机会（面试中没人在你卡住时递答案）。
+# 注意边界：系统确实会提供"参考答案"，但那走 Rewriter 独立通道（改写卡片），
+# 与面试官话术是两条路径；这里只管后者。
+_ANSWER_LEAK_PATTERNS = (
+    "参考答案", "正确答案", "标准答案", "完整答案",
+    "应该这样回答", "你应该回答", "你可以这样答", "答案是",
+    "这段话应该", "正确的说法是", "完整表述如下", "满分回答",
+)
+
+
+def contains_answer_leak(text: str) -> bool:
+    """检测文本是否出现"直接给出答案"的模式（恢复态话术的红线）。
+
+    只做模式匹配，不做语义判断：宁可漏判（交给 Prompt 约束），
+    也不要把正常引导误判为泄漏——误判会导致把合理的引导话术替换掉。
+    """
+    if not text or not isinstance(text, str):
+        return False
+    return any(p in text for p in _ANSWER_LEAK_PATTERNS)
+
+
 def sanitize_spoken_text(text: str, strip_fillers: bool = True) -> str:
     """
     净化面向候选人的自然语言文本（题目 / 追问 / 评语 / 改写回答）。

@@ -10,9 +10,9 @@
 
 ## 快速上手
 
-- **核心价值**：诊断候选人的回答质量（STAR 完整性 / 量化程度 / 逻辑连贯性 / 岗位相关性 / 专业深度）+ 职业规划路径（v3.2 补齐的时间轴多阶段路径）+ 市场数据采集与分析（v4.1 新增）+ 云端语音交互（v4.2 MiMo TTS/ASR 新增）+ 模型调用优雅降级（v4.3 fallback）+ 简历证据检索 / 不会答恢复 / 薄弱点跨轮累计 / 会话中多模式切换（v5.0）+ Prompt 硬约束 / next_action 三态推进决策 / JSON 四级容错 / Provider 自动探测（AI_PROVIDER=auto）/ 命名空间知识库（v6.0，对标 career-copilot）+ **面试收尾工程强控 / 简历前置追问点 / 输出净化 / 任务级模型绑定 / 报告逐题拆解 / VAD 节流（v6.2，对标 GrillMind）**。
+- **核心价值**：诊断候选人的回答质量（STAR 完整性 / 量化程度 / 逻辑连贯性 / 岗位相关性 / 专业深度）+ 职业规划路径（v3.2 补齐的时间轴多阶段路径）+ 市场数据采集与分析（v4.1 新增）+ 云端语音交互（v4.2 MiMo TTS/ASR 新增）+ 模型调用优雅降级（v4.3 fallback）+ 简历证据检索 / 不会答恢复 / 薄弱点跨轮累计 / 会话中多模式切换（v5.0）+ Prompt 硬约束 / next_action 三态推进决策 / JSON 四级容错 / Provider 自动探测（AI_PROVIDER=auto）/ 命名空间知识库（v6.0，对标 career-copilot）+ **面试收尾工程强控 / 简历前置追问点 / 输出净化 / 任务级模型绑定 / 报告逐题拆解 / VAD 节流（v6.2，对标 GrillMind）**，**面试官角色卡三件套 / 简历锚点五分类 / 评分加减分项 / JD gap 注入 / 压力题库 / 恢复红线 + 3 次阈值 / assisted 标记（v6.3，对标 mock-interviewer）**。
 - **技术栈**：Python 3.12 / FastAPI + WebSocket / SQLite (aiosqlite) / 多 AI 后端 / 原生 ES Module 前端 + Chart.js / Playwright（v4.1 采集）/ 小米 MiMo 云端语音（v4.2，TTS/ASR 按官方 chat/completions 协议，域名 api.xiaomimimo.com）
-- **当前版本**：v6.2（见 CHANGELOG.md）
+- **当前版本**：v6.3（见 CHANGELOG.md）
 
 ## 常用命令
 
@@ -39,6 +39,9 @@ AI模拟面试官/
 │   ├── market/crawler/     # [v4.1] B 档内嵌 Playwright 采集子包（L2，随 market 同层）
 │   ├── voice_service.py    # [v4.2] MiMo 云端语音服务（TTS/ASR 代理，L2/L3）
 │   ├── output_sanitizer.py # [v6.2] 面试话术输出净化（禁Markdown/舞台提示/垫词，L2）
+│   ├── resume_anchors.py    # [v6.3] 简历锚点五分类（技术选型/量化/架构/业务/团队，L2）
+│   ├── score_adjustments.py # [v6.3] 评分规则化加减分项（确定性正则 + evidence，L2）
+│   └── pressure_bank.py     # [v6.3] 压力题库（5 类 16 道，与简历/JD 解耦，L2）
 │   └── knowledge_store.py  # [v6.0] 命名空间知识库（rag:interview/career/resume，L2）
 ├── frontend/               # 原生 ES Module SPA（Vite）+ Chart.js
 │   └── src/js/marketData.js + src/css/pages/market.css   # [v4.1] 市场数据 Tab（纸墨印章双风格）
@@ -52,7 +55,7 @@ AI模拟面试官/
 | 层级 | 模块 | 强制检查 |
 |---|---|---|
 | L1 基础设施 | `config` `logger` `llm_client` `db` | `.importlinter` 契约 + `run.py lint` |
-| L2 领域模型/数据 | `schemas` `security` `resume_parser` `resume_retriever`（v5.0，禁止依赖 L3/L4） `dimension_weights` `gap_analyzer` `knowledge_store`（v6.0，禁止依赖 L3/L4） `market/*`（含 v4.1 `crawler/` 子包，采集代码禁止依赖 L3/L4） `voice_service`（v4.2，禁止依赖 L3/L4） `output_sanitizer`（v6.2，禁止依赖 L3/L4） | 同上 |
+| L2 领域模型/数据 | `schemas` `security` `resume_parser` `resume_retriever`（v5.0，禁止依赖 L3/L4） `dimension_weights` `gap_analyzer` `knowledge_store`（v6.0，禁止依赖 L3/L4） `market/*`（含 v4.1 `crawler/` 子包，采集代码禁止依赖 L3/L4） `voice_service`（v4.2，禁止依赖 L3/L4） `output_sanitizer`（v6.2，禁止依赖 L3/L4） `resume_anchors`（v6.3，禁止依赖 L3/L4） `score_adjustments`（v6.3，禁止依赖 L3/L4） `pressure_bank`（v6.3，禁止依赖 L3/L4） | 同上 |
 | L3 业务逻辑 | `question_gen` `diagnosis_engine` `interview_engine/*` `web_research` `question_bank` `data_support` `career_planner` | 同上 |
 | L4 应用入口 | `main` | 可依赖所有层 |
 

@@ -4,6 +4,69 @@
 
 ---
 
+## v6.3 竞品借鉴专项四期：mock-interviewer 七项能力落地（2026-08-28）
+
+> 对标 [crowscc/mock-interviewer](https://github.com/crowscc/mock-interviewer)（Agent Skills 开放标准的纯 Prompt 技能包，零代码，4 个 Markdown 文件）研读后，按《[mock-interviewer-深度研读.md](docs/mock-interviewer-深度研读.md)》第 10 节的 **P0 三项 + P1 四项**逐项落地。
+>
+> 与前三期最大的不同：前三期借鉴的是**工程模式**（状态机、收尾强控、输出净化、JSON 容错），本期的对象**没有一行代码**，借鉴的是**内容资产**——面试官角色卡、锚点分类、追问范式、压力题库、评分 rubric。因此本轮改动以「数据结构 + Prompt 注入 + 确定性规则」为主，引擎控制流基本未动。新增测试 50 例，受影响面 326 例全绿，分层 lint 通过。
+
+### P0：内容资产结构化（改动小、收益直接）
+
+1. **面试官角色卡三件套**（P0-1）
+   - `config.INTERVIEWER_STYLES` 7 种风格各新增三字段：`perspective`（视角独白：这个角色真正在评判什么）、`followup_chain`（追问链，3-4 环）、`never_ask`（**不会问**负向清单，≥3 条）。
+   - 为什么必须有 `never_ask`：正向描述只能引导、模型会创造性发挥，负向清单才能划硬边界——没有它，友好型面试官会去聊宏观战略，角色立刻失真。
+   - `session.current_interviewer()` 透出三字段；新增 `get_interviewer_role_prompt()` 拼装完整角色卡（语气 + 视角 + 追问路径 + 不问什么）。**刻意不改动 `get_interviewer_system_prompt()` 的返回语义**（既有契约，前端与测试按"原始语气指令"取用），两种语义分开。
+
+2. **追问范式绑定角色**（P0-2）
+   - 追问的两个自由度此前被混为一谈，导致 7 种风格"语气不同、结构同构"。现显式拆开：**问什么** ← 薄弱维度（来自诊断）；**怎么问** ← 角色追问链（来自角色卡）。
+   - 落点两处：`generate_follow_up()` 独立生成路径注入角色卡；`_build_diagnostician_system(..., interviewer_role=)` 注入诊断侧——**追问主要由诊断 prompt 产出**，只改前者覆盖不全。注入时显式声明"不影响五维评分标准"，避免角色设定污染评分。
+
+3. **简历锚点五分类**（P0-3）
+   - 新增 L2 模块 `backend/resume_anchors.py`：五类锚点（技术选型 / 量化数据 / 架构设计 / 业务决策 / 团队管理），每类绑定一条追问方向。原有 `deep/vague` 二分只能定位"哪里值得问"，五分类才回答"该往哪个方向问"。
+   - 采纳原书一条高性价比判断：**简历中出现的每个数字都是高价值追问点**（metric 类对数字加权）。
+   - 双路径互为兜底：① `resume_parser` prompt 新增 `anchors` 输出（LLM 分类，质量高）；② `classify()` 关键词规则兜底（确定性，零成本）。LLM 未产出或格式不符时自动回落 ②，功能不退化。
+   - 两条刻意的取舍：数字权重只 +1（+2 会让"带领 5 人团队"常与 team 打平）；**并列即弃权**（宁可不分类，也不注入错误的追问方向）。
+
+### P1：新增能力（工程量中等）
+
+4. **评分规则化加减分项**（P1-1）
+   - 新增 L2 模块 `backend/score_adjustments.py`：10 条确定性规则（6 扣 4 加），全部用正则判定，**每条修正都带 evidence（命中原文片段）**——解决纯 LLM 评分"不可解释、不可复现"两大缺陷，候选人问"为什么扣这分"时能给得出依据。
+   - 扣分：数据前后矛盾 -2（同动词 + 不同比例值）、成果未量化 -1、名词堆砌 -1、答非所问 -1、甩锅 -1、回答过短未展开 -1。加分：量化充分 +1、跨项目串联 +1、坦诚不足并给学习方向 +1、失败案例与反思 +1。
+   - 三重封顶：单条回答总扣分 ≤3、总加分 ≤2、单维度绝对值 ≤2；调整后夹紧 [1,5]，且**只作用于已评分（>0）的维度**（0 分表示未评分，规则无权抬升）。
+   - `normalize_result()` 新增 `raw_dimensions`（模型原始分）与 `score_adjustments`，与 `dimensions`（修正后）并存可对照。
+
+5. **JD gap 出题优先级显式注入**（P1-2）
+   - `main.create_session` 调 `gap_analyzer.analyze_gap()`（`use_market=False`，避免重复查库）取低于 `JD_GAP_SCORE_THRESHOLD=3.5` 的维度作为缺口，注入 `InterviewSession(jd_gaps=...)`；出题 prompt 新增【JD 匹配缺口 · 优先考察】段，显式声明优先级链：**JD gap 区域（必问）> JD 强匹配区域（验证深度）> 简历锚点（补充探测）**。
+   - 为什么不声明不行：模型会顺着简历走（简历内容在上下文里更"显眼"、更好写出具体问题），而真实面试官手里拿的是 JD。这个偏差靠模型自觉纠不回来。
+   - 缺口可能对应候选人没有的经历 —— prompt 已要求改用「假设场景 / 迁移能力」问法，不得追问不存在的事实细节。
+
+6. **压力题库随机注入**（P1-3）
+   - 新增 L2 模块 `backend/pressure_bank.py`：5 类（方案被否 / 故障场景 / 反转 / 竞品对比 / 自我认知）共 16 道。**刻意不绑定任何简历与 JD 内容**——绑定了就失去"不可预测"的意义。
+   - 补的是**内容层的压力**：此前压力只体现在语气（pressure 风格 / hardcore 模式），题目仍全部来自候选人准备过的范围；真实面试的压力很大一部分来自被问到没准备过的题。
+   - 三道闸门：① 全局开关 `PRESSURE_QUESTION_ENABLED` + 整场限量 `PRESSURE_MAX_PER_SESSION=1`；② 破冰轮与收尾轮不注入（前者要放松，后者由 CLOSING_INSTRUCTION 强控收束）；③ 按 `attack_level` 抽签（`PRESSURE_PROB_BY_ATTACK_LEVEL`，友好/鼓励型概率为 0——否则人设撕裂）。
+   - 按类别**轮转取题**（每类先取 1 道再取第 2 道），避免连着问两道同类题。注入即登记进 `asked_questions`，与既有换题去重机制共用。
+
+7. **恢复态红线 + 3 次阈值 + assisted 标记**（P1-4）
+   - **绝不给答案**：`COACHING_RECOVERY_INSTRUCTION` 新增红线（禁"参考答案/正确答案/应该这样回答"等，只给"怎么想"与"从哪说起"）；`output_sanitizer` 新增 `contains_answer_leak()` 做工程兜底，命中则确定性替换为引导话术。边界说明：系统的「回答改写」是另一条独立通道（前端单独展示），不属于面试官话术。
+   - **连续 3 次触发主动建议跳过**：`recovery_streak` 连续计数（正常回答归零），达阈值时由工程层用确定性话术覆盖模型追问，且**允许突破 `FOLLOW_UP_MAX_COUNT`**——否则这条保护恰好会被"第 3 次追问"拦掉，在最需要它的时刻失效。
+   - **assisted 标记**：原书做法是"教练对话不计入评分"，本项目**不做不计分**（评分是连续诊断链路的一部分，剔除会打断数据流），改为**标注**：分数照记，报告 `assistance_stats` 披露"全场有多少题是在提示下完成的"。占比过高本身就是诊断信号——说明当前难度/方向与该候选人不匹配。
+
+### 工程化
+- **测试**：新增 `tests/test_mock_interviewer_borrowings.py`（50 例，覆盖角色卡完整性/追问 prompt 双自由度/锚点分类与兜底/加减分项各规则与封顶夹紧/JD gap 注入/压力题三道闸门与去重/恢复红线与阈值/assisted 标记与报告统计）；受影响面 326 例全绿，`run.py lint` 分层契约通过。
+- **配置**：新增 `JD_GAP_SCORE_THRESHOLD`、`JD_GAP_MAX_ITEMS`、`PRESSURE_QUESTION_ENABLED`、`PRESSURE_MAX_PER_SESSION`、`PRESSURE_PROB_BY_ATTACK_LEVEL`。
+- **契约**：`.importlinter` L2 层补登 `output_sanitizer`（此前遗漏）、`resume_anchors`、`pressure_bank`、`score_adjustments`。
+
+### 修复
+- `tests/test_weakness_memory.py` 9 例失败修复：`weakness_profile.session_id` 有外键指向 `sessions(id)`，而测试的 `_seed()` 直接写子表未落父记录，导致 `FOREIGN KEY constraint failed`。新增 `_ensure_sessions()` 补齐父记录并开启 `PRAGMA foreign_keys`。属**既有缺陷**（v6.3 长期记忆闭环引入），与本轮改动无关，修复后 17 例全绿。
+
+### 范围与约束（诚实披露）
+- **维度映射是近似的**：原作四维度含「表达结构」「应变能力」，本项目五维度（宪章约束 3）无对应项，故「甩锅」「过度防御」等应变类信号只能就近映射到 STAR 完整度 / 逻辑连贯性，语义上并非严格等价。
+- **存在双重惩罚风险**：模型若已因"没有数据"把量化程度打到 3 分，规则再 -1 即构成"模型与规则各扣一次"。缓解手段是封顶机制（非消除），换取的是可解释性；若模型已打到 1 分则夹紧后无额外惩罚。
+- **压力题前端标识**：`question` 消息透传 `is_pressure` / `pressure_topic`，前端 `showQuestion` 渲染「⚡ 压力题 · 类别」徽章（红色系但克制——提示"这是一道意外的问题"，不是警告用户答错了）。
+- `jd_gaps` 使会话创建多一次 LLM 往返（仅当有 JD 时）。失败静默降级为无缺口模式，不阻断会话创建。
+
+---
+
 ## v6.2 竞品借鉴专项三期：GrillMind 六项工程模式落地（2026-08-28）
 
 > 对标 [GrillMind](https://github.com/1935417243/GrillMind)（React 19 + Electron + 阿里百炼 ASR/TTS 全双工语音）研读后，按《[GrillMind-深度研读.md](docs/GrillMind-深度研读.md)》第 9 节的 6 条建议逐项落地。原则延续前两期：**只借工程模式，不抄技术栈**——不引入 Electron 桌面壳（本项目定位 Web 服务平台），全双工语音不引入 WebSocket 音频流（MiMo 云端 ASR 为请求-响应协议，改造为流式需自研网关），改为在半双工链路上补齐 VAD 节流与"TTS 结束自动切回文字"这两个体验缺口。新增测试 50 例，全量 **559 例通过**、分层 lint 通过、前端 `vite build` 通过。
