@@ -152,7 +152,9 @@ async def analyze_gap(
     user_prompt = _build_gap_user_prompt(resume_text, jd_text, market_snapshot)
 
     try:
-        raw = await asyncio.to_thread(client.chat_json, _GAP_SYSTEM, user_prompt)
+        raw = await asyncio.to_thread(
+            client.chat_json, _GAP_SYSTEM, user_prompt, 0.3, 2048, "market",
+        )  # v6.2: 任务级模型绑定（岗位差距分析）
     except Exception as e:
         logger.error("Gap分析LLM调用失败: %s", e)
         return _fallback_gap_result(str(e))

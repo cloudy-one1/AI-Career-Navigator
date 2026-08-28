@@ -33,8 +33,13 @@ from .db import save_feedback as db_save_feedback, get_feedback_stats
 from .llm_client import LLMClient, _api_key_issue
 from .diagnosis_engine import DiagnosisEngine
 from .interview_engine import InterviewSession  # v2.5: 子包引用
+from .interview_engine.session import is_end_signal  # v6.1: 结束面试退出口令检测
 from .interview_engine.report import generate_review_markdown
-from .resume_parser import parse_resume
+from .resume_parser import (  # v6.2 简历追问点
+    MIN_RESUME_CHARS,
+    extract_interview_points,
+    parse_resume,
+)
 from .schemas import (
     SessionCreateRequest, SessionCreateResponse,
     ProviderSwitchRequest, ProviderListResponse, ProviderInfo,
@@ -265,11 +270,22 @@ async def create_session(req: SessionCreateRequest, request: Request = None):
     except Exception as e:
         logger.warning(f"市场快照获取跳过: {e}")
 
+    # v6.2: 简历前置追问点（deepDivePoints/vaguePoints）—— 解析阶段一次性产出，
+    # 后续各轮出题复用，让追问有数据支撑。失败降级为空，不阻断会话创建。
+    resume_points: dict = {}
+    if resume_text and len(resume_text.strip()) >= MIN_RESUME_CHARS:
+        try:
+            resume_points = await asyncio.to_thread(
+                extract_interview_points, resume_text, llm_client, jd_final
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning(f"简历追问点提取跳过: {e}")
+
     await save_session(session_id, style=req.style or "friendly",
                        resume_filename="inline", jd_text=jd_final,
                        resume_text=resume_text)
 
-    # 创建面试会话 (v2.4: 传递 mode; v5.0: 传递 stage)
+    # 创建面试会话 (v2.4: 传递 mode; v5.0: 传递 stage; v6.2: 传递简历追问点)
     session = InterviewSession(
         session_id=session_id,
         resume_text=resume_text,
@@ -281,6 +297,7 @@ async def create_session(req: SessionCreateRequest, request: Request = None):
         stage=req.stage.value if req.stage else "phone_screen",
         include_self_intro=req.include_self_intro or False,
         question_type_mix=req.question_type_mix or {},
+        resume_points=resume_points,
     )
     async with _session_lock:
         active_sessions[session_id] = session
@@ -532,6 +549,67 @@ async def export_review(session_id: str):
         raise
     except Exception as e:
         logger.error(f"生成复盘文件失败: {e}")
+        raise HTTPException(500, str(e))
+
+
+# ===== v6.1: 复盘报告 HTML 导出（借鉴 offerMaster report_pdf.py 的 MD→HTML 模板渲染） =====
+# 用浏览器打印（Ctrl+P → 另存为 PDF）替代 weasyprint 服务端出 PDF：
+# weasyprint 依赖 GTK/Pango，Windows 部署成本高；HTML 模板 + 打印样式零重量级依赖。
+
+_REPORT_HTML_TEMPLATE = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>{title}</title>
+<style>
+  body {{ font-family: "Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", sans-serif;
+         max-width: 820px; margin: 24px auto; padding: 0 16px; color: #1f2328;
+         line-height: 1.7; }}
+  h1 {{ border-bottom: 2px solid #2563eb; padding-bottom: 8px; }}
+  h2 {{ border-bottom: 1px solid #d0d7de; padding-bottom: 4px; margin-top: 28px; }}
+  table {{ border-collapse: collapse; width: 100%; margin: 12px 0; }}
+  th, td {{ border: 1px solid #d0d7de; padding: 6px 10px; text-align: left; }}
+  th {{ background: #f6f8fa; }}
+  blockquote {{ border-left: 4px solid #2563eb; margin: 8px 0; padding: 4px 14px;
+               color: #57606a; background: #f6f8fa; }}
+  code {{ background: #f6f8fa; padding: 1px 5px; border-radius: 4px; }}
+  pre {{ background: #f6f8fa; padding: 12px; border-radius: 6px; overflow-x: auto; }}
+  @media print {{
+    body {{ margin: 0; max-width: none; }}
+    .no-print {{ display: none; }}
+  }}
+</style>
+</head>
+<body>
+<button class="no-print" onclick="window.print()"
+        style="float:right;padding:8px 14px;cursor:pointer;">🖨 打印 / 另存为 PDF</button>
+{body}
+</body>
+</html>"""
+
+
+@app.get("/api/reports/{session_id}/export.html")
+async def export_report_html(session_id: str):
+    """导出复盘报告 HTML（Markdown 渲染 + 打印样式，浏览器打印即得 PDF）"""
+    try:
+        try:
+            import markdown as _md
+        except ImportError:
+            raise HTTPException(500, "缺少 markdown 依赖，请执行 pip install -r requirements.txt")
+        report = await get_report(session_id)
+        if not report:
+            raise HTTPException(404, "报告不存在")
+        report = json.loads(report["report_json"]) if isinstance(report.get("report_json"), str) else report
+        body = _md.markdown(
+            generate_review_markdown(report),
+            extensions=["tables", "fenced_code"],
+        )
+        html = _REPORT_HTML_TEMPLATE.format(title=f"面试复盘报告 · {session_id}", body=body)
+        return Response(content=html, media_type="text/html; charset=utf-8")
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"生成复盘 HTML 失败: {e}")
         raise HTTPException(500, str(e))
 
 
@@ -990,7 +1068,9 @@ async def ws_interview(websocket: WebSocket, session_id: str):
             })
 
         # 2. 面试主循环
-        while not session.is_finished:
+        # v6.1: user_ended = 候选人输入"结束面试"退出口令，主动收束面试（借鉴 offerMaster）
+        user_ended = False
+        while not session.is_finished and not user_ended:
             info = session.current_round_info()
 
             # 轮次开始
@@ -1020,7 +1100,7 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                 continue
 
             # 题目循环
-            while session.has_more_questions_in_round():
+            while session.has_more_questions_in_round() and not user_ended:
                 q = session.current_question
                 if not isinstance(q, dict):
                     break
@@ -1079,6 +1159,24 @@ async def ws_interview(websocket: WebSocket, session_id: str):
 
                     answer_text = data.get("text", "")
 
+                    # v6.1: 结束面试退出口令检测（借鉴 offerMaster is_end_signal）。
+                    # 放在安全检查之前：口令文本过短，会被质量校验拦截而永远无法命中。
+                    # 命中后不诊断、不计分，直接收束面试并照常生成部分报告。
+                    if is_end_signal(answer_text):
+                        user_ended = True
+                        await websocket.send_json({
+                            "type": "interview_end_signal",
+                            "data": {"message": "收到结束信号，面试到此结束，正在生成面评报告……"}
+                        })
+                        break
+
+                    # v6.1: 语音来源标记（前端 source=voice 时，诊断注入 ASR 容错评分话术）
+                    from_voice = (str(data.get("source", "")).lower() == "voice"
+                                  or bool(data.get("from_voice")))
+
+                    # v6.2: 思考时长（前端从题目展示到提交作答的秒数，进报告 qaBreakdown）
+                    thinking_seconds = data.get("thinking_seconds", 0) or 0
+
                     # v2.1: 4 层安全检查（full_check 返回 (pass_all, reason)）
                     passed, reason = full_check(answer_text, _answer_texts(session))
                     if not passed:
@@ -1090,7 +1188,11 @@ async def ws_interview(websocket: WebSocket, session_id: str):
 
                     # v2.6: 安全通过 → 流式双 Agent 诊断，逐块推送
                     diag = None
-                    async for stream_msg in session.stream_answer(answer_text):
+                    async for stream_msg in session.stream_answer(
+                        answer_text,
+                        from_voice=from_voice,
+                        thinking_seconds=thinking_seconds,
+                    ):
                         if stream_msg.get("type") == "diagnosis_done":
                             diag = stream_msg.get("data")
                             continue
@@ -1164,7 +1266,10 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                                 })
                                 continue
 
-                            session.handle_follow_up_answer(fu_text)
+                            session.handle_follow_up_answer(
+                                fu_text,
+                                (fu_msg.get("data", {}) or {}).get("thinking_seconds", 0) or 0,
+                            )
                             await websocket.send_json({
                                 "type": "follow_up_received",
                                 "data": {"message": "补充回答已记录"}
@@ -1197,6 +1302,16 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                         "focus_dimension": extra_q.get("focus_dimension", ""),
                         "focus_dimension_name": extra_q.get("focus_dimension_name", ""),
                         "reason": extra_q.get("reason", "本轮质量未达标，追加一道针对性问题"),
+                    }
+                })
+
+            # v6.2: 收尾阶段 —— 由工程层发收束语，确保最后一轮答完即收束不拖沓
+            if session.is_closing_round() and not user_ended:
+                await websocket.send_json({
+                    "type": "interview_closing",
+                    "data": {
+                        "round_name": info["name"],
+                        "message": config.CLOSING_MESSAGE,
                     }
                 })
 

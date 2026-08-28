@@ -116,27 +116,19 @@ class TestFeedbackRoutes:
 class TestSecurityMeasures:
     """v3.1 Web 安全加固测试"""
 
-    def test_security_headers_present(self, client: TestClient):
-        """所有响应应包含安全头"""
-        resp = client.get("/")
-        assert resp.status_code == 200
+    @pytest.mark.parametrize("path,expected_status", [
+        ("/", 200),
+        ("/api/sessions", 200),
+        ("/nonexistent-path", 404),
+    ])
+    def test_security_headers_present(self, client: TestClient, path, expected_status):
+        """安全头应出现在根路径、API 路由与 404 响应上"""
+        resp = client.get(path)
+        assert resp.status_code == expected_status
         assert resp.headers.get("x-content-type-options") == "nosniff"
         assert resp.headers.get("x-frame-options") == "DENY"
         assert resp.headers.get("x-xss-protection") == "1; mode=block"
         assert resp.headers.get("referrer-policy") == "strict-origin-when-cross-origin"
-
-    def test_security_headers_on_api(self, client: TestClient):
-        """API 端点也应包含安全头"""
-        resp = client.get("/api/sessions")
-        assert resp.status_code == 200
-        assert "x-content-type-options" in resp.headers
-        assert "x-frame-options" in resp.headers
-
-    def test_security_headers_on_404(self, client: TestClient):
-        """404 响应也应包含安全头"""
-        resp = client.get("/nonexistent-path")
-        assert resp.status_code == 404
-        assert resp.headers.get("x-content-type-options") == "nosniff"
 
     def test_request_size_limit_normal(self, client: TestClient):
         """正常大小请求不应被拦截"""
@@ -149,9 +141,3 @@ class TestSecurityMeasures:
         resp = client.post("/api/sessions/upload", data=huge_body,
                            headers={"content-type": "application/x-www-form-urlencoded"})
         assert resp.status_code == 413
-
-    def test_cors_header_present(self, client: TestClient):
-        """CORS 头应存在于正常响应中"""
-        resp = client.get("/")
-        # CORSMiddleware 在 OPTIONS 预检时返回，普通 GET 也会有 access-control-*
-        assert resp.status_code == 200

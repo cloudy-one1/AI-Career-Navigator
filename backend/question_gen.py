@@ -9,7 +9,41 @@ import asyncio
 import json
 import logging
 
+from .output_sanitizer import OUTPUT_CONSTRAINTS, sanitize_spoken_text
+
 logger = logging.getLogger(__name__)
+
+# ===== v6.2: 简历前置追问点（借鉴 GrillMind 的 deepDivePoints / vaguePoints） =====
+# 由 resume_parser 在解析阶段产出，出题时注入，让追问有据可依而不是临场泛问。
+_RESUME_POINTS_LIMIT = 5   # 每类最多注入的条数（防 prompt 膨胀）
+
+
+def _fmt_points(items) -> str:
+    if not items:
+        return ""
+    return "\n".join(f"- {str(x).strip()}" for x in items[:_RESUME_POINTS_LIMIT] if str(x).strip())
+
+
+def build_resume_points_block(resume_points: dict) -> str:
+    """把简历追问点格式化为出题 prompt 片段；无有效内容返回空串（不注入）。"""
+    if not isinstance(resume_points, dict):
+        return ""
+    deep = _fmt_points(resume_points.get("deep_dive_points") or [])
+    vague = _fmt_points(resume_points.get("vague_points") or [])
+    if not deep and not vague:
+        return ""
+    parts = ["\n\n【简历前置追问点】以下线索由简历解析阶段预先提取，请优先据此提问/追问，"]
+    parts.append("而不是泛泛而问：")
+    if deep:
+        parts.append(f"\n★ 值得深挖的点（候选人写了但细节不足，需要考其真伪与深度）：\n{deep}")
+    if vague:
+        parts.append(f"\n★ 可疑/模糊的点（表述含糊、缺时间或量化，需要核实）：\n{vague}")
+    parts.append(
+        "\n注意：发问要像真实面试官的自然追问，不要出现'简历提示'之类的元信息，"
+        "也不要替候选人说出答案；仅在候选人确实谈及该内容时才追。"
+    )
+    return "".join(parts)
+
 
 # ===== v2.6: 弱项维度 → 定向出题策略 =====
 
@@ -235,7 +269,9 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
                                    mode: str = "simulation",
                                    focus_dimension: str | None = None,
                                    weak_evidence: str = "",
-                                   type_mix: dict | None = None) -> list[dict]:
+                                   type_mix: dict | None = None,
+                                   closing_instruction: str = "",
+                                   resume_points: dict | None = None) -> list[dict]:
     """
     为指定轮次生成问题。
     不同轮次使用不同的聚焦角度（v2.2 扩展为 6 阶段，v2.4 支持双模式）。
@@ -249,6 +285,12 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
 
     v3.1 新增：
       市场数据注入 — 查询 market.db 同类岗位的技能/公司信息，让题目更贴近真实招聘市场
+
+    v6.2 新增：
+      closing_instruction — 收尾阶段的内部收尾指令（由会话层按轮次计数判定后注入，
+      工程强控：最后一轮的题目必须带收束性质，不依赖模型自决是否收尾）
+      resume_points — 简历解析阶段产出的追问点 {deep_dive_points, vague_points}，
+      让面试官的追问有数据支撑，而非临场泛泛而问
     """
 
     # v3.1: 市场数据注入（仅非补强题时注入，补强题本身已有定向上下文）
@@ -293,6 +335,14 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
             "也不要直接告诉候选人他哪里不好。"
         )
 
+    # v6.2: 收尾阶段内部指令注入（工程强控，替代"让模型自己决定何时收尾"）
+    closing_block = f"\n\n{closing_instruction}" if closing_instruction else ""
+
+    # v6.2: 简历前置追问点注入（仅在非补强题时注入，补强题已有定向上下文）
+    resume_points_block = build_resume_points_block(resume_points) if (
+        resume_points and not focus_dimension
+    ) else ""
+
     system_prompt = get_question_gen_system_prompt()
     user_prompt = f"""请根据以下信息，生成 {count} 道{round_name}问题。
 
@@ -304,7 +354,7 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
 {market_block}
 
 【本轮的考察重点】
-{focus}{type_mix_block}{extra_block}
+{focus}{type_mix_block}{extra_block}{resume_points_block}{closing_block}
 
 要求：
 1. 每个问题附上「考察意图」（1 句话即可）
@@ -322,12 +372,19 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
             user_prompt,
             0.8,
             2048,
+            "question",   # v6.2: 任务级模型绑定（出题）
         )
         questions = result.get("questions", []) if isinstance(result, dict) else []
-        if focus_dimension:
-            for q in questions:
+        for q in questions:
+            if not isinstance(q, dict):
+                continue
+            if focus_dimension:
                 q["focus_dimension"] = focus_dimension
                 q["focus_dimension_name"] = FOCUS_DIMENSION_NAMES.get(focus_dimension, "")
+            # v6.2: 输出净化 —— 题目要进 TTS 与前端渲染，Markdown/舞台提示/垫词在此兜底清除
+            for key in ("question", "intent"):
+                if isinstance(q.get(key), str):
+                    q[key] = sanitize_spoken_text(q[key])
         logger.info(f"生成 {round_name} {len(questions)} 道题目"
                     f"{f'（定向维度: {focus_dimension}）' if focus_dimension else ''}")
         return questions
@@ -366,6 +423,7 @@ async def generate_coach_tip(llm_client, resume_text: str, jd_text: str,
             user_prompt,
             0.7,
             1024,
+            "question",   # v6.2: 任务级模型绑定（教练引导同属出题）
         )
         if isinstance(result, dict) and result.get("question"):
             result["question_type"] = "coach_tip"
@@ -412,6 +470,7 @@ async def generate_questions(llm_client, resume_text: str, jd_text: str) -> dict
             user_prompt,
             0.8,
             3072,
+            "question",   # v6.2: 任务级模型绑定（出题）
         )
         return result if isinstance(result, dict) else {"jd_keywords": [], "questions": []}
     except Exception as e:
@@ -434,4 +493,6 @@ def get_question_gen_system_prompt() -> str:
 6. 你只负责出题，绝不替候选人回答，也不要在题目里暗示答案
 7. question_type 只能取枚举值：knowledge（知识概念）/ project（项目经验）/ behavior（行为软技能），不要自创其它取值
 8. 难度递进：一轮内第 1 题为基础热身（easy），中间逐题加深（mid），最后一题考察深度上限（hard）
-9. 整场面试共 5-8 轮（由后端轮次配置控制），单轮内各题相互独立，不要把一道大题拆成多道小题"""
+9. 整场面试共 5-8 轮（由后端轮次配置控制），单轮内各题相互独立，不要把一道大题拆成多道小题
+
+""" + OUTPUT_CONSTRAINTS

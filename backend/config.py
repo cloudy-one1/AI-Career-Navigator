@@ -7,6 +7,7 @@ v6.0: Provider 注册表增强 —— AI_PROVIDER=auto 自动探测 + Key 校验
       （对标 career-copilot 的 PROVIDER_REGISTRY + createProvider 自动探测）。
 """
 
+import json
 import os
 import logging
 from dotenv import load_dotenv
@@ -167,6 +168,81 @@ class Config:
         except ValueError:
             return 3
 
+    # ===== v6.2: 任务级模型绑定（借鉴 GrillMind 的「按任务独立绑定模型」）=====
+    # 不同任务对延迟/推理深度的要求不同：出题与追问要快，报告与职业规划可以慢而深。
+    # 单一 LLM_MODEL 会让"想用强模型写报告"和"想用快模型上面试对话"互相妥协。
+    #
+    # 环境变量 LLM_TASK_MODELS，JSON 对象，值为 "model" 或 "provider:model"：
+    #   LLM_TASK_MODELS={"diagnosis":"deepseek-chat","report":"qwen-max","parse":"glm-4-flash"}
+    # 未配置的任务沿用 LLM_MODEL（向后兼容，不配即无变化）。
+
+    # 任务枚举：key 为任务名，value 为中文说明（仅用于日志与前端展示）
+    LLM_TASKS = (
+        "parse",       # 简历解析 / 追问点提取
+        "question",    # 出题（轮次题目 / 追加题）
+        "interview",   # 面试追问 / 实时反馈
+        "diagnosis",   # 回答诊断（流式，实时链路）
+        "rewrite",     # 回答改写（流式，实时链路）
+        "report",      # 报告生成
+        "career",      # 职业规划路径推理
+        "market",      # 市场 / 岗位分析
+    )
+
+    # 实时面试链路：对话中同步等待，延迟敏感，永远关深度思考
+    REALTIME_TASKS = ("question", "interview", "diagnosis", "rewrite")
+
+    # 面试永远关深度思考（默认开启）。
+    # 推理类模型（deepseek-reasoner / o1 / qwen3-thinking / glm-z1）首 token 延迟数秒，
+    # 放在面试对话里会明显卡顿；报告/规划类离线任务不受此限制。
+    INTERVIEW_DISABLE_REASONING = os.getenv(
+        "INTERVIEW_DISABLE_REASONING", "true"
+    ).strip().lower() not in ("0", "false", "no", "off")
+
+    @property
+    def LLM_TASK_MODELS(self) -> dict:
+        """解析 LLM_TASK_MODELS 为 {task: {"provider":..., "model":..., "api_key":..., "base_url":...}}。
+
+        未配置 / 解析失败一律返回空 dict —— 所有任务沿用 LLM_MODEL，向后兼容。
+        未知任务名与无效 provider 会被跳过并告警，不影响其它任务绑定。
+        """
+        raw = os.getenv("LLM_TASK_MODELS", "").strip()
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"LLM_TASK_MODELS 不是合法 JSON，已忽略: {e}")
+            return {}
+        if not isinstance(data, dict):
+            logger.warning("LLM_TASK_MODELS 应为 JSON 对象，已忽略")
+            return {}
+
+        result: dict = {}
+        for task, spec in data.items():
+            task = str(task).strip()
+            spec = str(spec).strip()
+            if task not in self.LLM_TASKS:
+                logger.warning(f"LLM_TASK_MODELS 含未知任务 {task!r}，已跳过")
+                continue
+            if not spec:
+                continue
+            if ":" in spec:
+                provider, model = spec.split(":", 1)
+            else:
+                provider, model = self.AI_PROVIDER_RESOLVED, spec
+            provider, model = provider.strip(), model.strip()
+            if provider not in self.AI_PROVIDERS:
+                logger.warning(f"LLM_TASK_MODELS[{task}] 含未知 provider {provider!r}，已跳过")
+                continue
+            info = self.AI_PROVIDERS[provider]
+            result[task] = {
+                "provider": provider,
+                "model": model,
+                "api_key": os.getenv("LLM_API_KEY", os.getenv(info["api_key_env"], "")),
+                "base_url": os.getenv("LLM_BASE_URL", info["base_url"]),
+            }
+        return result
+
     # ===== 兼容旧版（通过 provider 统一读取）=====
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
     DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
@@ -210,6 +286,10 @@ class Config:
     # ===== v4.2: 小米 MiMo 云端语音（可选）=====
     # 未配置 MIMO_API_KEY 时，前端自动降级为浏览器原生语音（speechSynthesis / SpeechRecognition）
     # 协议：TTS/ASR 均走 OpenAI 兼容的 {base}/chat/completions，认证头用 api-key
+    # v6.1: Provider 注册表选择器（借鉴 offerMaster 的 STT_PROVIDER/TTS_PROVIDER 工厂），
+    #       当前注册表仅 mimo；未知值回退 mimo 并告警
+    VOICE_TTS_PROVIDER = os.getenv("VOICE_TTS_PROVIDER", "mimo")
+    VOICE_STT_PROVIDER = os.getenv("VOICE_STT_PROVIDER", "mimo")
     MIMO_API_KEY = os.getenv("MIMO_API_KEY", "")
     MIMO_BASE_URL = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1")
     MIMO_TTS_MODEL = os.getenv("MIMO_TTS_MODEL", "mimo-v2.5-tts")
@@ -280,8 +360,22 @@ class Config:
             "min_questions": 0,             # 反问环节不强制回答
             "advance_threshold": 0,         # 始终通过
             "max_extra_questions": 0,
+            "closing": True,                # v6.2: 收尾阶段（工程强控，禁止追问/追加题）
         },
     ]
+
+    # ===== v6.2: closing 阶段内部收尾指令（借鉴 GrillMind 的"工程强控"收尾手法） =====
+    # 轮次计数推进到 closing 轮时，由工程层注入出题 prompt，
+    # 使面试官在最后一轮自然收束，而不是无限追问（不依赖模型自决）。
+    CLOSING_INSTRUCTION = """【收尾阶段 · 工程强控指令】
+本轮是本次面试的最后一个阶段，请严格遵守：
+1. 不要再开启任何新的技术话题或追问线索；
+2. 提问方向限于：候选人向面试官的反问、对本次面试的收束确认、后续流程交代；
+3. 语气转暖，给候选人一个体面的收尾，不要在本轮制造新的压力点；
+4. 题目数量严格按照要求，不得多出。"""
+
+    # closing 收束语（工程层确定性输出，不额外消耗 LLM 调用，也不会生成失败）
+    CLOSING_MESSAGE = "本次面试到此结束，感谢你的参与。接下来我会基于你的回答生成一份面评报告，稍后可在报告页查看。"
 
     # ===== v2.4: 面试模式 =====
     INTERVIEW_MODES = {
@@ -345,6 +439,7 @@ class Config:
             "advance_threshold": 0,  # 始终通过
             "max_extra_questions": 0,
             "interviewer_style": "friendly",  # 友好型收尾
+            "closing": True,                # v6.2: 收尾阶段（工程强控）
         },
     ]
 

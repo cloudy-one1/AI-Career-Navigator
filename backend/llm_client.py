@@ -189,6 +189,23 @@ def safe_json_extract(raw) -> dict | list | None:
         return None
 
 
+# ===== v6.2: 推理（深度思考）类模型识别 =====
+# 面试是实时对话链路，推理类模型首 token 延迟数秒且输出冗长，
+# 会让"面试官"卡顿明显；报告/规划类离线任务不受此限制。
+_REASONING_MARKERS = ("reasoner", "reasoning", "thinking", "-think", "z1", "r1")
+_REASONING_PREFIX = re.compile(r"^o\d")   # o1 / o1-mini / o3-mini 等
+
+
+def is_reasoning_model(model: str) -> bool:
+    """判定模型是否为推理/深度思考类（面试链路需规避）。"""
+    m = (model or "").strip().lower()
+    if not m:
+        return False
+    if _REASONING_PREFIX.match(m):
+        return True
+    return any(k in m for k in _REASONING_MARKERS)
+
+
 class _Candidate:
     """fallback 候选：独立的 provider/model 及其专属 OpenAI 客户端。"""
 
@@ -250,6 +267,10 @@ class LLMClient:
         if max_retries > 0:
             candidates = candidates[:max_retries]
 
+        # v6.2: 任务级模型绑定的候选缓存 {(provider, model): _Candidate}
+        # 与 self.provider 解耦（任务绑定可能指向别的 provider），切换后端不必重建。
+        self._task_candidate_cache: dict = {}
+
         self._candidates = []
         for c in candidates:
             # v5.0 健壮性：fallback 候选若 key 缺失/占位，直接跳过——
@@ -279,6 +300,73 @@ class LLMClient:
             f"base_url={self.base_url}, fallback 候选数={len(self._candidates) - 1}"
         )
 
+    # ===== v6.2: 任务级模型绑定 + 面试禁思考（借鉴 GrillMind）=====
+
+    def _build_task_candidate(self, task: str, binding: dict) -> _Candidate | None:
+        """按任务绑定构造候选；Key 无效或实时链路命中推理模型时返回 None（沿用默认）。"""
+        provider, model = binding["provider"], binding["model"]
+        issue = validate_api_key(binding["api_key"])
+        if issue:
+            logger.warning(
+                f"任务 {task} 绑定 {provider}:{model} 的 Key 无效（{issue}），沿用默认模型"
+            )
+            return None
+        if (config.INTERVIEW_DISABLE_REASONING and task in config.REALTIME_TASKS
+                and is_reasoning_model(model)):
+            logger.warning(
+                f"任务 {task} 属实时面试链路，绑定的推理类模型 {model} 按『面试禁思考』策略跳过"
+            )
+            return None
+        # 与主候选同参数时直接复用，避免重复创建客户端
+        if self._candidates and provider == self._candidates[0].provider and model == self._candidates[0].model:
+            return self._candidates[0]
+        key = (provider, model)
+        cached = self._task_candidate_cache.get(key)
+        if cached is None:
+            cached = _Candidate(
+                provider, model,
+                OpenAI(api_key=binding["api_key"], base_url=binding["base_url"]),
+                AsyncOpenAI(api_key=binding["api_key"], base_url=binding["base_url"]),
+            )
+            self._task_candidate_cache[key] = cached
+        return cached
+
+    def task_candidates(self, task: str | None) -> list:
+        """按任务解析本次调用的候选池（纯函数式，不修改 self、无跨调用副作用）。
+
+        优先级：任务绑定模型（置顶）→ 全局候选池。
+        实时链路（question/interview/diagnosis/rewrite）在开启禁思考时剔除推理类模型；
+        若剔除后无候选可用，则保留原候选并告警 —— 宁可慢，也不能让面试因为没候选而直接失败。
+        """
+        if not task:
+            return self._candidates
+
+        cands = list(self._candidates)
+        binding = config.LLM_TASK_MODELS.get(task)
+        if binding:
+            bound = self._build_task_candidate(task, binding)
+            if bound is not None:
+                cands = [bound] + [
+                    c for c in cands
+                    if not (c.provider == bound.provider and c.model == bound.model)
+                ]
+
+        if config.INTERVIEW_DISABLE_REASONING and task in config.REALTIME_TASKS:
+            filtered = [c for c in cands if not is_reasoning_model(c.model)]
+            if filtered:
+                cands = filtered
+            else:
+                logger.warning(
+                    f"任务 {task} 属实时链路且已开启禁思考，但候选池仅含推理类模型，"
+                    f"本轮不禁用以避免无可用候选"
+                )
+        return cands
+
+    def resolve_task_model(self, task: str | None = None) -> str:
+        """返回指定任务实际生效的模型名（未绑定任务时返回主模型），供日志与诊断接口使用。"""
+        cands = self.task_candidates(task)
+        return cands[0].model if cands else self.model
+
     # ===== v4.3: fallback 内部机制 =====
     @staticmethod
     def _is_error_content(content: str | None) -> bool:
@@ -306,18 +394,22 @@ class LLMClient:
         return isinstance(data, dict) and "error" in data
 
     def _call_with_fallback(self, *, messages, temperature, max_tokens,
-                            response_format=None, success_pred=None) -> str:
+                            response_format=None, success_pred=None,
+                            candidates=None) -> str:
         """非流式调用，按候选池顺序尝试直至 success_pred 判定成功或穷尽。
 
         success_pred(content) -> bool: 返回 True 表示该候选结果可用（默认：非 error 软失败）。
         异常型失败一律降级；软失败（success_pred=False）也降级；候选数天然限制防无限循环。
+
+        v6.2: candidates 用于任务级模型绑定（None 表示沿用全局候选池）。
         """
         if success_pred is None:
             def success_pred(c):
                 return not self._is_error_content(c)
 
+        pool = candidates if candidates is not None else self._candidates
         last_err = None
-        for idx, cand in enumerate(self._candidates):
+        for idx, cand in enumerate(pool):
             try:
                 kwargs = {
                     "model": cand.model,
@@ -341,18 +433,22 @@ class LLMClient:
             except Exception as e:  # noqa: BLE001
                 logger.error(f"LLM 候选 {idx} ({cand.provider}:{cand.model}) 调用失败: {e},降级下一候选")
                 last_err = e
-        logger.error(f"所有 LLM 候选(共 {len(self._candidates)})均失败,最后错误: {last_err}")
+        logger.error(f"所有 LLM 候选(共 {len(pool)})均失败,最后错误: {last_err}")
         return json.dumps({"error": f"所有模型均调用失败: {last_err}"})
 
-    async def _stream_with_fallback(self, *, messages, temperature, max_tokens):
+    async def _stream_with_fallback(self, *, messages, temperature, max_tokens,
+                                    candidates=None):
         """异步流式调用，逐候选尝试（_call_with_fallback 的异步生成器版本）。
 
         - 候选在「尚未产出任何 chunk 即抛异常」时无缝切换下一候选。
         - 候选已产出部分内容后抛异常：无法撤回，停止并 yield 单个 error chunk（不拼接备用结果）。
         - 软失败（内容本身为 error JSON）在流式下无预知能力，按正常内容推送（与现有行为一致）。
+
+        v6.2: candidates 用于任务级模型绑定（None 表示沿用全局候选池）。
         """
+        pool = candidates if candidates is not None else self._candidates
         last_err = None
-        for idx, cand in enumerate(self._candidates):
+        for idx, cand in enumerate(pool):
             yielded = False
             try:
                 stream = await cand.async_client.chat.completions.create(
@@ -404,6 +500,12 @@ class LLMClient:
             "model": self.model,
             "available_models": info.get("models", []),
             "fallback_count": max(len(self._candidates) - 1, 0),
+            # v6.2: 任务级模型绑定 —— 仅展示已配置绑定的任务（未绑定即沿用主模型，不展示）
+            "task_models": {
+                t: self.resolve_task_model(t)
+                for t in config.LLM_TASKS if t in config.LLM_TASK_MODELS
+            },
+            "interview_disable_reasoning": config.INTERVIEW_DISABLE_REASONING,
         }
 
     @staticmethod
@@ -421,8 +523,11 @@ class LLMClient:
 
     def chat(self, system_prompt: str, user_prompt: str,
              temperature: float = 0.7, max_tokens: int = 2048,
-             response_format: dict | None = None) -> str:
-        """发送聊天请求，返回完整文本（内部自动 fallback 降级）。"""
+             response_format: dict | None = None, task: str | None = None) -> str:
+        """发送聊天请求，返回完整文本（内部自动 fallback 降级）。
+
+        v6.2: task 指定任务名时按 LLM_TASK_MODELS 绑定模型，并对实时链路禁推理模型。
+        """
         issue = _api_key_issue(self.api_key)
         if issue:
             logger.warning(f"LLM {issue}，请在 .env 中设置 {self._api_key_env}")
@@ -437,10 +542,12 @@ class LLMClient:
             temperature=temperature,
             max_tokens=max_tokens,
             response_format=response_format,
+            candidates=self.task_candidates(task),
         )
 
     def chat_json(self, system_prompt: str, user_prompt: str,
-                  temperature: float = 0.3, max_tokens: int = 2048) -> dict:
+                  temperature: float = 0.3, max_tokens: int = 2048,
+                  task: str | None = None) -> dict:
         """发送聊天请求，确保返回 JSON dict（解析失败自动 fallback 下一候选）。
 
         v6.0: 候选结果可用性判定与最终解析均改走 safe_json_extract 四级容错：
@@ -461,6 +568,7 @@ class LLMClient:
             max_tokens=max_tokens,
             response_format={"type": "json_object"},
             success_pred=_is_valid_json,
+            candidates=self.task_candidates(task),
         )
         data = safe_json_extract(raw)
         if isinstance(data, dict):
@@ -469,10 +577,12 @@ class LLMClient:
         return {"error": "JSON 解析失败", "raw": str(raw)[:1000]}
 
     def chat_stream(self, system_prompt: str, user_prompt: str,
-                    temperature: float = 0.7, max_tokens: int = 2048):
+                    temperature: float = 0.7, max_tokens: int = 2048,
+                    task: str | None = None):
         """
         同步流式聊天请求，返回一个生成器，逐 chunk yield 文本（内部自动 fallback 降级）。
         保留用于非异步上下文；WebSocket 主流程改用 chat_stream_async。
+        v6.2: task 指定任务名时按 LLM_TASK_MODELS 绑定模型，并对实时链路禁推理模型。
         """
         issue = _api_key_issue(self.api_key)
         if issue:
@@ -485,8 +595,9 @@ class LLMClient:
             {"role": "user", "content": user_prompt},
         ]
 
+        pool = self.task_candidates(task)
         last_err = None
-        for idx, cand in enumerate(self._candidates):
+        for idx, cand in enumerate(pool):
             yielded = False
             try:
                 stream = cand.client.chat.completions.create(
@@ -512,11 +623,13 @@ class LLMClient:
         yield json.dumps({"error": f"所有模型流式调用均失败: {last_err}"})
 
     async def chat_stream_async(self, system_prompt: str, user_prompt: str,
-                                temperature: float = 0.7, max_tokens: int = 2048):
+                                temperature: float = 0.7, max_tokens: int = 2048,
+                                task: str | None = None):
         """
         异步流式聊天请求，直接 async for 消费 AsyncOpenAI 的流式响应（内部自动 fallback 降级）。
         v3.2: 取代原"同步 chat_stream + 线程池 + asyncio.Queue 桥接"方案，
         无阻塞、无跨线程桥接，彻底消除 worker 线程 .result() 在队列满时的泄漏风险。
+        v6.2: task 指定任务名时按 LLM_TASK_MODELS 绑定模型，并对实时链路禁推理模型。
         """
         issue = _api_key_issue(self.api_key)
         if issue:
@@ -532,6 +645,7 @@ class LLMClient:
             messages=messages,
             temperature=temperature,
             max_tokens=max_tokens,
+            candidates=self.task_candidates(task),
         ):
             yield chunk
 

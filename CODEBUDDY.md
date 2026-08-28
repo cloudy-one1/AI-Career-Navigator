@@ -10,16 +10,16 @@
 
 ## 快速上手
 
-- **核心价值**：诊断候选人的回答质量（STAR 完整性 / 量化程度 / 逻辑连贯性 / 岗位相关性 / 专业深度）+ 职业规划路径（v3.2 补齐的时间轴多阶段路径）+ 市场数据采集与分析（v4.1 新增）+ 云端语音交互（v4.2 MiMo TTS/ASR 新增）+ 模型调用优雅降级（v4.3 fallback）+ 简历证据检索 / 不会答恢复 / 薄弱点跨轮累计 / 会话中多模式切换（v5.0）+ Prompt 硬约束 / next_action 三态推进决策 / JSON 四级容错 / Provider 自动探测（AI_PROVIDER=auto）/ 命名空间知识库（v6.0，对标 career-copilot）。
+- **核心价值**：诊断候选人的回答质量（STAR 完整性 / 量化程度 / 逻辑连贯性 / 岗位相关性 / 专业深度）+ 职业规划路径（v3.2 补齐的时间轴多阶段路径）+ 市场数据采集与分析（v4.1 新增）+ 云端语音交互（v4.2 MiMo TTS/ASR 新增）+ 模型调用优雅降级（v4.3 fallback）+ 简历证据检索 / 不会答恢复 / 薄弱点跨轮累计 / 会话中多模式切换（v5.0）+ Prompt 硬约束 / next_action 三态推进决策 / JSON 四级容错 / Provider 自动探测（AI_PROVIDER=auto）/ 命名空间知识库（v6.0，对标 career-copilot）+ **面试收尾工程强控 / 简历前置追问点 / 输出净化 / 任务级模型绑定 / 报告逐题拆解 / VAD 节流（v6.2，对标 GrillMind）**。
 - **技术栈**：Python 3.12 / FastAPI + WebSocket / SQLite (aiosqlite) / 多 AI 后端 / 原生 ES Module 前端 + Chart.js / Playwright（v4.1 采集）/ 小米 MiMo 云端语音（v4.2，TTS/ASR 按官方 chat/completions 协议，域名 api.xiaomimimo.com）
-- **当前版本**：v6.0（见 CHANGELOG.md）
+- **当前版本**：v6.2（见 CHANGELOG.md）
 
 ## 常用命令
 
 ```bash
 python run.py                    # 启动开发服务器（端口 8000，热重载）
 python run.py lint               # [v3.2] 运行 import-linter 分层契约检查
-python -m pytest tests/ -q       # 运行测试套件（当前 491 用例）
+python -m pytest tests/ -q       # 运行测试套件（当前 559 用例）
 pip install -r requirements.txt  # 安装依赖（含 dev 依赖）
 python -m playwright install chromium  # [v4.1] 市场数据实时采集所需（跳过则实时采集不可用）
 ```
@@ -38,10 +38,11 @@ AI模拟面试官/
 ├── backend/                # FastAPI 后端（分层 L1-L4，见 CHARTER.md）
 │   ├── market/crawler/     # [v4.1] B 档内嵌 Playwright 采集子包（L2，随 market 同层）
 │   ├── voice_service.py    # [v4.2] MiMo 云端语音服务（TTS/ASR 代理，L2/L3）
+│   ├── output_sanitizer.py # [v6.2] 面试话术输出净化（禁Markdown/舞台提示/垫词，L2）
 │   └── knowledge_store.py  # [v6.0] 命名空间知识库（rag:interview/career/resume，L2）
 ├── frontend/               # 原生 ES Module SPA（Vite）+ Chart.js
 │   └── src/js/marketData.js + src/css/pages/market.css   # [v4.1] 市场数据 Tab（纸墨印章双风格）
-├── tests/                  # pytest 测试套件（491 用例）
+├── tests/                  # pytest 测试套件（509 用例）
 ├── data/                   # SQLite 数据库（interview.db / market.db）
 └── docs/                   # 需求文档与周报
 ```
@@ -51,7 +52,7 @@ AI模拟面试官/
 | 层级 | 模块 | 强制检查 |
 |---|---|---|
 | L1 基础设施 | `config` `logger` `llm_client` `db` | `.importlinter` 契约 + `run.py lint` |
-| L2 领域模型/数据 | `schemas` `security` `resume_parser` `resume_retriever`（v5.0，禁止依赖 L3/L4） `dimension_weights` `gap_analyzer` `knowledge_store`（v6.0，禁止依赖 L3/L4） `market/*`（含 v4.1 `crawler/` 子包，采集代码禁止依赖 L3/L4） `voice_service`（v4.2，禁止依赖 L3/L4） | 同上 |
+| L2 领域模型/数据 | `schemas` `security` `resume_parser` `resume_retriever`（v5.0，禁止依赖 L3/L4） `dimension_weights` `gap_analyzer` `knowledge_store`（v6.0，禁止依赖 L3/L4） `market/*`（含 v4.1 `crawler/` 子包，采集代码禁止依赖 L3/L4） `voice_service`（v4.2，禁止依赖 L3/L4） `output_sanitizer`（v6.2，禁止依赖 L3/L4） | 同上 |
 | L3 业务逻辑 | `question_gen` `diagnosis_engine` `interview_engine/*` `web_research` `question_bank` `data_support` `career_planner` | 同上 |
 | L4 应用入口 | `main` | 可依赖所有层 |
 

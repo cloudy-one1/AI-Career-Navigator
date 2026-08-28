@@ -6,7 +6,7 @@ import { $, $$, el, toast, DIM_NAMES, scoreClass } from './utils.js';
 import { createInterviewWS, request } from './api.js';
 import {
   voiceSupport, speak, stopSpeaking, isSpeaking,
-  voiceFillWithASR, autoReadQuestion, getMimoStatus,
+  voiceFillWithASR, autoReadQuestion, getMimoStatus, prefetchTTS,
 } from './voice.js';
 import { mountLiveRadar, updateLiveRadar, resetLiveRadar } from './liveRadar.js';
 
@@ -16,9 +16,22 @@ let currentMode = 'simulation';  // v2.4: 面试模式
 let pendingFollowUp = false;
 let voiceStopFn = null;       // 当前录音停止函数
 let voiceState = 'idle';     // 'idle' | 'listening' | 'speaking'
+// v6.1: 最近一次输入来源（'text' | 'voice'），随 answer 上报；
+// 后端据此对语音回答启用 ASR 转写容错评分（借鉴 offerMaster）
+let lastInputSource = 'text';
 let autoReadEnabled = true;   // 是否自动朗读题目
 let currentInterviewerName = ''; // v2.4: 当前面试官名称
 let dimWeights = null;        // v2.6: 本场各维度权重
+// v6.2: 思考时长采集 —— 题目/追问展示时刻，提交时算出秒数随 answer 上报，
+// 最终进入报告的 qaBreakdown（借鉴 GrillMind 的 thinkingSeconds）
+let questionShownAt = 0;
+let followUpShownAt = 0;
+
+/** 计算从 shownAt 到现在的秒数（非法/未计时返回 0） */
+function elapsedSeconds(shownAt) {
+  if (!shownAt) return 0;
+  return Math.max(0, Math.round((Date.now() - shownAt) / 100) / 10);
+}
 
 let setupStep = 1; // v4.0: 三步引导当前步骤
 
@@ -556,7 +569,19 @@ function handleWSMessage(type, data) {
 
     case 'follow_up':
       pendingFollowUp = true;
+      prefetchTTS(data.question);  // v6.1: 追问同样预取 TTS
       showFollowUp($('#chat-flow'), data.question);
+      break;
+
+    // v6.1: 候选人输入"结束面试"退出口令（后端 is_end_signal 命中）
+    case 'interview_end_signal':
+      toast(data.message || '收到结束信号，正在生成面评报告……', 'info');
+      stopSpeaking();
+      break;
+
+    // v6.2: 收尾阶段（最后一轮答完，工程层发出收束语）
+    case 'interview_closing':
+      showClosingMessage($('#chat-flow'), data);
       break;
 
     case 'round_summary':
@@ -742,13 +767,23 @@ function showQuestion(area, data) {
   area.appendChild(answerArea);
   $('#answer-input')?.focus();
   pendingFollowUp = false;
+  questionShownAt = Date.now();   // v6.2: 开始计本题思考时长
+  followUpShownAt = 0;
+
+  // v6.1: 收到新题先预取 TTS（后端 LRU 缓存，用户点朗读时零等待）
+  prefetchTTS(data.question);
+  const answerInput = $('#answer-input');
+  if (answerInput) {
+    // 手动键入 → 输入来源重置为 text；ASR 程序化填充不触发 input 事件，不会误重置
+    answerInput.addEventListener('input', () => { lastInputSource = 'text'; });
+  }
 
   // 自动朗读题目
   if (autoReadEnabled && voiceSupport.tts) {
     autoReadQuestion(data.question, (state) => {
       voiceState = state === 'speaking' ? 'speaking' : 'idle';
       updateVoiceButtonStates();
-    });
+    }, () => refocusAnswerInput());   // v6.2: 朗读结束自动切回文字输入
     voiceState = 'speaking';
     updateVoiceButtonStates();
   }
@@ -781,12 +816,16 @@ function toggleVoiceInput() {
 
   const textarea = $('#answer-input');
   if (!textarea) return;
+  lastInputSource = 'voice';  // v6.1: 标记本次回答来自语音输入
 
   // v4.2: MiMo ASR 优先，浏览器 STT 降级
   voiceFillWithASR(textarea, (state) => {
     voiceState = state;
     updateVoiceButtonStates();
-    if (state === 'idle') voiceStopFn = null;
+    if (state === 'idle') {
+      voiceStopFn = null;
+      refocusAnswerInput(textarea);   // v6.2: 转写结束自动切回文字输入
+    }
   }).then((stop) => {
     voiceStopFn = stop;
     if (voiceStopFn) {
@@ -821,6 +860,22 @@ function updateVoiceButtonStates() {
   if (textarea) {
     textarea.classList.toggle('listening', voiceState === 'listening');
   }
+}
+
+/**
+ * v6.2: 语音环节结束后的"切回文字"动作（借鉴 GrillMind 的 TTS 结束自动切回）。
+ * 朗读结束 / 转写结束后把焦点还给输入框并恢复占位提示，
+ * 避免用户停在语音态、不知道可以直接打字。
+ * @param {HTMLTextAreaElement|null} textarea
+ */
+function refocusAnswerInput(textarea) {
+  const target = textarea || $('#answer-input') || $('#fu-answer-input');
+  if (!target || target.disabled) return;
+  if (typeof target.placeholder === 'string' && target.placeholder.startsWith('🎤')) {
+    target.placeholder = '在此输入你的回答...';
+  }
+  target.focus();
+  try { target.setSelectionRange(target.value.length, target.value.length); } catch (_) { /* 部分浏览器不支持 */ }
 }
 
 /**
@@ -883,6 +938,17 @@ function showFollowUp(area, question) {
   if (answerArea) answerArea.after(fuDiv);
   else area.appendChild(fuDiv);
   $('#fu-answer-input')?.focus();
+  followUpShownAt = Date.now();   // v6.2: 开始计追问思考时长
+
+  // v6.2: 自动朗读追问（与题目一致），朗读结束自动切回文字输入
+  if (autoReadEnabled && voiceSupport.tts) {
+    autoReadQuestion(question, (state) => {
+      voiceState = state === 'speaking' ? 'speaking' : 'idle';
+      updateVoiceButtonStates();
+    }, () => refocusAnswerInput($('#fu-answer-input')));
+    voiceState = 'speaking';
+    updateVoiceButtonStates();
+  }
 }
 
 function toggleFuVoiceInput() {
@@ -895,12 +961,16 @@ function toggleFuVoiceInput() {
 
   const textarea = $('#fu-answer-input');
   if (!textarea) return;
+  lastInputSource = 'voice';  // v6.1: 标记本次回答来自语音输入
 
   // v4.2: MiMo ASR 优先，浏览器 STT 降级
   voiceFillWithASR(textarea, (state) => {
     voiceState = state;
     updateFuVoiceUI();
-    if (state === 'idle') voiceStopFn = null;
+    if (state === 'idle') {
+      voiceStopFn = null;
+      refocusAnswerInput(textarea);   // v6.2: 转写结束自动切回文字输入
+    }
   }).then((stop) => {
     voiceStopFn = stop;
     if (voiceStopFn) {
@@ -939,8 +1009,16 @@ function submitAnswer() {
   btn.textContent = '诊断中...';
 
   input.disabled = true;
-  // 后端读取 msg.data.text
-  ws.send('answer', { text: answer, is_follow_up: false });
+  // 后端读取 msg.data.text；v6.1: 上报输入来源（voice → ASR 容错评分），随后重置
+  // v6.2: 附加本题思考时长（秒），进入报告 qaBreakdown
+  ws.send('answer', {
+    text: answer,
+    is_follow_up: false,
+    source: lastInputSource,
+    thinking_seconds: elapsedSeconds(questionShownAt),
+  });
+  lastInputSource = 'text';
+  questionShownAt = 0;
 
   // v3.1: 超时恢复 — 35秒无响应则重新激活输入
   _answerTimeout = setTimeout(() => {
@@ -969,7 +1047,14 @@ function submitFollowUp() {
   const buttons = $('#follow-up-block')?.querySelectorAll('button');
   buttons?.forEach(b => b.disabled = true);
 
-  ws.send('answer', { text: answer, is_follow_up: true });
+  ws.send('answer', {
+    text: answer,
+    is_follow_up: true,
+    source: lastInputSource,
+    thinking_seconds: elapsedSeconds(followUpShownAt),
+  });
+  lastInputSource = 'text';  // v6.1: 上报后重置输入来源
+  followUpShownAt = 0;
 
   // v3.1: 超时恢复 — 35秒无响应则重新激活
   _answerTimeout = setTimeout(() => {
@@ -1183,6 +1268,19 @@ function showDiagnosis(area, data) {
   if (!data.follow_up_question) {
     reactivateAnswerInput();
   }
+}
+
+/**
+ * v6.2: 收尾阶段消息（工程层发出，最后一轮答完即收束）。
+ * 与"候选人主动喊结束"区分开：这是正常流程走到结尾，语气上给一个明确的收束信号。
+ */
+function showClosingMessage(area, data) {
+  area.appendChild(el('div', { className: 'card', style: 'border-left:4px solid var(--primary);' },
+    el('div', { style: 'font-size:.9rem;color:var(--text-secondary);', textContent: '🏁 面试收尾' }),
+    el('div', { style: 'margin-top:6px;font-weight:600;', textContent: data.round_name || '' }),
+    el('div', { style: 'margin-top:6px;line-height:1.6;',
+      textContent: data.message || '本次面试到此结束，正在生成面评报告……' }),
+  ));
 }
 
 function showRoundSummary(area, data) {

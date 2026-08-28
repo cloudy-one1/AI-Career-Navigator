@@ -22,8 +22,10 @@ v4.2: 前端语音交互升级为"MiMo 云端优先 + 浏览器原生降级"双�
 
 import base64
 import logging
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
-from typing import Optional
+from typing import Optional, Protocol, runtime_checkable
 
 import httpx
 
@@ -51,6 +53,9 @@ class ASRResult:
 
 class VoiceService:
     """MiMo 语音能力封装（chat/completions 协议，httpx 同步调用在独立线程池执行）。"""
+
+    # v6.1: TTS LRU 缓存条目上限（音频 Base64 较大，防止常驻内存膨胀）
+    TTS_CACHE_MAX = 32
 
     # 官方预置音色（VALUE 大小写敏感）；mimo_default 在中国集群等同 冰糖
     PRESET_VOICES = frozenset({
@@ -82,6 +87,10 @@ class VoiceService:
         self.default_voice = (config.MIMO_TTS_VOICE or "冰糖").strip()
         self.asr_language = (config.MIMO_ASR_LANGUAGE or "auto").strip()
         self.tts_style = (config.MIMO_TTS_STYLE or "").strip()
+        # v6.1: TTS 结果 LRU 缓存（借鉴 offerMaster 的"预合成 + 失败回退"延迟优化思路）。
+        # 同一段文本（重听题目/追问、探测包、前端预取）不再重复付费合成。
+        self._tts_cache: OrderedDict[str, TTSUsage] = OrderedDict()
+        self._cache_lock = threading.Lock()
 
     @property
     def enabled(self) -> bool:
@@ -113,12 +122,22 @@ class VoiceService:
 
     # ── TTS：文本 -> 音频 ──
     def synthesize(self, text: str, voice: Optional[str] = None) -> TTSUsage:
-        """调用 mimo-v2.5-tts 合成语音，返回 Base64 编码的 WAV 音频。"""
+        """调用 mimo-v2.5-tts 合成语音，返回 Base64 编码的 WAV 音频。
+
+        v6.1: 命中 LRU 缓存直接返回（仅缓存成功结果），未命中才发起云端请求。
+        """
         text = (text or "").strip()
         if not text:
             return TTSUsage(used=True, message="文本为空，跳过合成")
         if not self.enabled:
             return TTSUsage(used=False, message="未配置 MIMO_API_KEY")
+
+        cache_key = f"{text}|{self._resolve_voice(voice)}"
+        with self._cache_lock:
+            cached = self._tts_cache.get(cache_key)
+            if cached is not None:
+                self._tts_cache.move_to_end(cache_key)
+                return cached
 
         url = f"{self.base_url}/chat/completions"
         payload = {
@@ -138,7 +157,12 @@ class VoiceService:
             audio_b64 = self._extract_tts_audio(resp)
             if not audio_b64:
                 return TTSUsage(used=False, message="MiMo TTS 响应缺少音频数据")
-            return TTSUsage(used=True, audio_b64=audio_b64)
+            usage = TTSUsage(used=True, audio_b64=audio_b64)
+            with self._cache_lock:
+                self._tts_cache[cache_key] = usage
+                while len(self._tts_cache) > self.TTS_CACHE_MAX:
+                    self._tts_cache.popitem(last=False)
+            return usage
         except httpx.TimeoutException:
             logger.warning("MiMo TTS 超时")
             return TTSUsage(used=False, message="MiMo TTS 请求超时")
@@ -222,3 +246,48 @@ class VoiceService:
 
 # 单例实例，供 main.py 路由与测试复用
 voice_service = VoiceService()
+
+
+# ===== v6.1: Provider 协议抽象（借鉴 offerMaster services/voice.py） =====
+# 面向协议编程：业务层（main 路由）只依赖下面两个最小接口，
+# 未来接入其他云厂商（如火山/豆包/Azure）时只需新增实现类并在 _PROVIDER_REGISTRY 登记，
+# 调用方零改动。当前注册表仅有 MiMo 云端实现，前端侧另有浏览器原生引擎兜底。
+
+@runtime_checkable
+class TTSProvider(Protocol):
+    """语音合成 Provider 最小接口：文本 -> TTSUsage（含 Base64 音频）。"""
+
+    def synthesize(self, text: str, voice: Optional[str] = None) -> TTSUsage: ...
+
+
+@runtime_checkable
+class STTProvider(Protocol):
+    """语音识别 Provider 最小接口：音频字节 -> ASRResult（含转写文本）。"""
+
+    def transcribe(self, audio_bytes: bytes, filename: str = "audio.webm",
+                   mime: str = "audio/webm") -> ASRResult: ...
+
+
+_PROVIDER_REGISTRY = {
+    "mimo": voice_service,  # 小米 MiMo 云端（chat/completions 协议）
+}
+
+
+def get_tts_provider(name: str = "") -> TTSProvider:
+    """按配置取语音合成 Provider；未知值回退 MiMo 并告警（对齐 offerMaster 容错语义）。"""
+    pid = (name or config.VOICE_TTS_PROVIDER or "mimo").strip().lower()
+    provider = _PROVIDER_REGISTRY.get(pid)
+    if provider is None:
+        logger.warning("未知 TTS provider=%r，回退 mimo", pid)
+        provider = _PROVIDER_REGISTRY["mimo"]
+    return provider
+
+
+def get_stt_provider(name: str = "") -> STTProvider:
+    """按配置取语音识别 Provider；未知值回退 MiMo 并告警。"""
+    pid = (name or config.VOICE_STT_PROVIDER or "mimo").strip().lower()
+    provider = _PROVIDER_REGISTRY.get(pid)
+    if provider is None:
+        logger.warning("未知 STT provider=%r，回退 mimo", pid)
+        provider = _PROVIDER_REGISTRY["mimo"]
+    return provider

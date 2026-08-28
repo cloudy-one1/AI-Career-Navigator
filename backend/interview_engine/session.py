@@ -15,7 +15,12 @@ import copy
 import logging
 
 from ..config import config
-from ..question_gen import generate_round_questions, FOCUS_DIMENSION_NAMES, generate_coach_tip
+from ..question_gen import (
+    build_resume_points_block,
+    generate_round_questions,
+    FOCUS_DIMENSION_NAMES,
+    generate_coach_tip,
+)
 from ..dimension_weights import (
     DEFAULT_WEIGHTS,
     DIM_KEYS,
@@ -25,6 +30,7 @@ from ..dimension_weights import (
     weighted_score,
 )
 from ..resume_retriever import build_evidence_package, ResumeRetriever
+from ..output_sanitizer import OUTPUT_CONSTRAINTS, sanitize_spoken_text
 from .report import build_report
 
 logger = logging.getLogger(__name__)
@@ -34,6 +40,40 @@ UNCERTAIN_ANSWER_MARKERS = (
     "不会", "不懂", "没思路", "答不上来", "不知道", "不清楚",
     "没做过", "不太了解", "不了解", "没接触过", "忘了",
 )
+
+# ===== v6.1: 结束面试信号检测（借鉴 offerMaster rules.py 的退出词机制） =====
+# 候选人在回答位输入/说出退出口令时，面试官应自然收束面试（而不是把口令当成回答去诊断）。
+# 确定性关键词匹配，不依赖 LLM：低成本、可测试、无幻觉。
+END_INTERVIEW_KEYWORDS = (
+    "结束面试", "结束这次面试", "面试结束", "面试到此结束", "到此为止",
+    "我想结束", "不想继续了", "停止面试", "end interview", "stop interview",
+)
+
+
+# v6.2: 思考时长合理区间（秒）。超出即视为异常上报/前端计时错误，按 0 处理（不污染统计）。
+MAX_THINKING_SECONDS = 600
+MIN_THINKING_SECONDS = 0
+
+
+def _normalize_thinking_seconds(value) -> float:
+    """把前端上报的思考时长规整为合法秒数（非法值一律 0，不抛异常）。"""
+    try:
+        sec = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if sec != sec or sec < MIN_THINKING_SECONDS or sec > MAX_THINKING_SECONDS:  # NaN 自不等
+        return 0.0
+    return round(sec, 1)
+
+
+def is_end_signal(text: str) -> bool:
+    """检测回答文本是否为"结束面试"退出口令（大小写不敏感的子串匹配）。"""
+    if not text:
+        return False
+    low = text.strip().lower()
+    if not low:
+        return False
+    return any(kw in low for kw in END_INTERVIEW_KEYWORDS)
 
 
 class InterviewSession:
@@ -46,7 +86,8 @@ class InterviewSession:
                  db=None, mode: str = "simulation",
                  stage: str = "phone_screen",
                  include_self_intro: bool = False,
-                 question_type_mix: dict = None):
+                 question_type_mix: dict = None,
+                 resume_points: dict | None = None):
         self.session_id = session_id
         self.resume_text = resume_text
         self.jd_text = jd_text
@@ -61,6 +102,10 @@ class InterviewSession:
         self.include_self_intro = include_self_intro
         self.self_intro_done = False
         self.question_type_mix = question_type_mix or {}
+
+        # v6.2: 简历解析前置追问点（借鉴 GrillMind 的 deepDivePoints / vaguePoints）
+        # 结构：{"deep_dive_points": [...], "vague_points": [...]}，解析失败时为空 dict。
+        self.resume_points: dict = resume_points or {}
 
         self.rounds = (config.TRADITIONAL_ROUNDS if mode == "traditional"
                        else config.INTERVIEW_ROUNDS)
@@ -149,6 +194,24 @@ class InterviewSession:
     def current_round_info(self) -> dict:
         idx = min(self.current_round, len(self.rounds) - 1)
         return self.rounds[idx]
+
+    # ===== v6.2: closing 收尾阶段（借鉴 GrillMind 的工程强控收尾） =====
+
+    def is_closing_round(self) -> bool:
+        """当前轮是否为收尾阶段。
+
+        判定：轮次配置显式标记 closing=True，或已推进到最后一轮。
+        这是工程层的确定性判定，不依赖 LLM 自决，用于强控：
+        收尾阶段禁止追问、禁止追加题，并在出题时注入内部收尾指令。
+        """
+        if self.is_finished:
+            return True
+        info = self.current_round_info()
+        return bool(info.get("closing")) or self.current_round >= len(self.rounds) - 1
+
+    def closing_instruction(self) -> str:
+        """返回注入出题 prompt 的内部收尾指令（非收尾阶段返回空串）。"""
+        return config.CLOSING_INSTRUCTION if self.is_closing_round() else ""
 
     def current_interviewer(self) -> dict:
         cfg = self.current_round_info()
@@ -357,8 +420,15 @@ class InterviewSession:
 
     # ===== 回答处理（main.py 契约） =====
 
-    def record_answer(self, answer_text: str, diagnosis: dict | None = None):
-        """记录一次回答与其诊断结果，并前移题目指针。"""
+    def record_answer(self, answer_text: str, diagnosis: dict | None = None,
+                      thinking_seconds: float = 0):
+        """
+        记录一次回答与其诊断结果，并前移题目指针。
+
+        v6.2: thinking_seconds —— 从题目展示到提交回答的思考时长（前端上报）。
+        用于报告的 qaBreakdown，把"答得好不好"和"想了多久"放在一起看：
+        想很久才答好 vs 张口就来却答偏，是两种完全不同的真实面试风险。
+        """
         self.round_answers.append(answer_text)
         self.last_answer_text = answer_text
         self.follow_up_count = 0  # 新题目，重置追问计数
@@ -366,11 +436,14 @@ class InterviewSession:
         q = self.current_question
         question_text = q.get("question", "") if isinstance(q, dict) else str(q or "")
 
+        thinking = _normalize_thinking_seconds(thinking_seconds)
+
         self.answer_history.append({
             "round": self.current_round,
             "question_idx": self.current_question_idx,
             "question": question_text,
             "answer": answer_text,
+            "thinking_seconds": thinking,
         })
 
         if diagnosis:
@@ -379,6 +452,7 @@ class InterviewSession:
             diag_with_round["round_name"] = self.current_round_info()["name"]
             diag_with_round["question_idx"] = self.current_question_idx
             diag_with_round["question"] = question_text
+            diag_with_round["thinking_seconds"] = thinking
             self.round_diagnoses.append(diag_with_round)
             self.all_diagnoses.append(diag_with_round)
             self.pending_follow_up = str(diagnosis.get("follow_up_question", "") or "").strip()
@@ -394,12 +468,19 @@ class InterviewSession:
     # ===== v5.0: 简历证据 / 不会答恢复 / 多模式 =====
 
     def _evidence_for(self, answer_text: str) -> str:
-        """按候选人当前回答检索简历，生成【本轮证据包】。"""
+        """按候选人当前回答检索简历，生成【本轮证据包】。
+
+        v6.2: 追加简历解析阶段产出的前置追问点（deepDivePoints/vaguePoints），
+        使诊断侧的 follow_up_question 也有数据支撑，而不是模型临场泛问。
+        """
         if self._retriever is None:
             self._retriever = ResumeRetriever()
             if self.resume_text and self.resume_text.strip():
                 self._retriever.add_document("简历", self.resume_text)
-        return self._retriever.select_context(answer_text)
+        evidence = self._retriever.select_context(answer_text)
+        if self.resume_points:
+            evidence = f"{evidence}\n{build_resume_points_block(self.resume_points)}"
+        return evidence
 
     def needs_recovery(self, answer_text: str) -> bool:
         """检测候选人是否表示"不会/不懂/没思路"，触发不会答恢复。"""
@@ -477,11 +558,13 @@ class InterviewSession:
             "applied_next_round": False,
         }
 
-    async def handle_answer(self, answer_text: str) -> dict:
+    async def handle_answer(self, answer_text: str, from_voice: bool = False,
+                            thinking_seconds: float = 0) -> dict:
         """
         非流式处理一次回答（降级路径 / 兼容 main.py 契约）。
         流式主流程请使用 stream_answer()。
         v5.0: 注入简历证据包 + 不会答恢复信号。
+        v6.1: from_voice=True 时诊断注入 ASR 容错评分话术。
         """
         q = self.current_question
         question_text = q.get("question", "") if isinstance(q, dict) else str(q or "")
@@ -496,18 +579,21 @@ class InterviewSession:
             evidence_package=self._evidence_for(answer_text),
             mode=self.mode,
             recovery_requested=recovery_requested,
+            from_voice=from_voice,
         )
-        self.record_answer(answer_text, diagnosis)
+        self.record_answer(answer_text, diagnosis, thinking_seconds)
         if recovery_requested:
             self.recovery_active = True
         return diagnosis
 
-    async def stream_answer(self, answer_text: str):
+    async def stream_answer(self, answer_text: str, from_voice: bool = False,
+                            thinking_seconds: float = 0):
         """
         v2.6 主流程：流式诊断一次回答。
         逐条 yield 诊断消息；结束时自动 record_answer，
         并把 Diagnostician 产出的 follow_up_question 暂存到 pending_follow_up。
         v5.0: 注入简历证据包 + 不会答恢复信号。
+        v6.1: from_voice=True 时诊断注入 ASR 容错评分话术。
         """
         q = self.current_question
         question_text = q.get("question", "") if isinstance(q, dict) else str(q or "")
@@ -525,24 +611,36 @@ class InterviewSession:
             evidence_package=self._evidence_for(answer_text),
             mode=self.mode,
             recovery_requested=recovery_requested,
+            from_voice=from_voice,
         ):
             if msg.get("type") == "diagnosis_done":
                 final_result = msg.get("data")
             yield msg
 
-        self.record_answer(answer_text, final_result)
+        self.record_answer(answer_text, final_result, thinking_seconds)
         if recovery_requested:
             self.recovery_active = True
 
-    def handle_follow_up_answer(self, answer_text: str):
+    def handle_follow_up_answer(self, answer_text: str, thinking_seconds: float = 0):
         """
         记录追问的补充回答（main.py 契约）。
         追问补充不单独计为一道题，而是并入上一题的回答语境，
         避免"一次追问 = 一道题"扭曲轮次进度与均分。
+        v6.2: 追问思考时长累加到本题（真实面试里"被追问后卡住多久"同样是有价值信号）。
         """
         self.last_answer_text = answer_text
+        thinking = _normalize_thinking_seconds(thinking_seconds)
         if self.answer_history:
             self.answer_history[-1].setdefault("follow_ups", []).append(answer_text)
+            if thinking > 0:
+                h = self.answer_history[-1]
+                fu_key = "follow_up_thinking_seconds"
+                h[fu_key] = round(float(h.get(fu_key, 0)) + thinking, 1)
+                h["thinking_seconds"] = round(float(h.get("thinking_seconds", 0)) + thinking, 1)
+            # 同步到诊断记录，保证报告 qaBreakdown 与 answer_history 一致
+            if self.all_diagnoses and thinking > 0:
+                d = self.all_diagnoses[-1]
+                d["thinking_seconds"] = round(float(d.get("thinking_seconds", 0)) + thinking, 1)
         if self.round_answers:
             self.round_answers[-1] = f"{self.round_answers[-1]}\n[追问补充] {answer_text}"
         self.pending_follow_up = ""
@@ -560,6 +658,11 @@ class InterviewSession:
           - 未声明 → 走原有阈值规则兜底（向后兼容）。
         """
         if self.follow_up_count >= config.FOLLOW_UP_MAX_COUNT:
+            return False
+
+        # v6.2: 收尾阶段工程强控 —— 一律不再追问（含"回答过短强制追问"）。
+        # 收尾轮（反问收尾/自定义环节）答完即收束，避免最后一题被无限追问拖住。
+        if self.is_closing_round():
             return False
 
         diag = diagnosis if diagnosis is not None else (
@@ -587,6 +690,7 @@ class InterviewSession:
         """
         获取追问文本。
         v2.6: 若流式诊断已带出追问，直接复用（零额外调用）；否则回退单独生成。
+        v6.2: 输出净化 + 输出约束注入 —— 追问直接进 TTS，必须无 Markdown/舞台提示/垫词。
         """
         self.follow_up_count += 1
 
@@ -598,7 +702,7 @@ class InterviewSession:
         )
         if preset:
             self.pending_follow_up = ""
-            return preset
+            return sanitize_spoken_text(preset)
 
         weak_name = ""
         if diag:
@@ -611,6 +715,9 @@ class InterviewSession:
                     f"{self.get_interviewer_system_prompt()}\n"
                     "你需要对候选人刚才的回答进行追问。"
                     "追问应当像真实面试官的追问，自然、简短、直击要害，不超过 50 字。"
+                    "追问必须显式引用候选人回答里的具体词汇、数字或项目名（如\"你刚才提到 XX\"），"
+                    "严禁空泛的套路式追问。\n"
+                    + OUTPUT_CONSTRAINTS
                     + (f"\n请重点针对候选人的薄弱环节【{weak_name}】发问。" if weak_name else "")
                 ),
                 (
@@ -619,12 +726,14 @@ class InterviewSession:
                 ),
                 0.8,
                 200,
+                None,
+                "interview",   # v6.2: 任务级模型绑定（实时链路，禁推理模型）
             )
         except Exception as e:  # noqa: BLE001
             logger.error(f"追问生成失败: {e}")
             return "能否再详细说说？"
 
-        return follow_up.strip() if follow_up else "能否再详细说说？"
+        return sanitize_spoken_text(follow_up) or "能否再详细说说？"
 
     # ===== 题目生成 =====
 
@@ -639,6 +748,8 @@ class InterviewSession:
             count=info["question_count"],
             mode=self.mode,
             type_mix=self.question_type_mix,
+            closing_instruction=self.closing_instruction(),   # v6.2 收尾阶段强控
+            resume_points=self.resume_points,                 # v6.2 简历前置追问点
         )
         # v2.7: 教练模式——每轮开头插入知识点讲解
         if self.mode == "coach":
@@ -669,7 +780,12 @@ class InterviewSession:
     async def generate_extra_question(self) -> dict | None:
         """
         v2.6: 追加题按本轮薄弱维度定向生成，而不是再来一道同质题。
+        v6.2: 收尾阶段强控不追加题（收尾轮的 max_extra_questions 本就是 0，
+              此处为双保险，防止模式中途切换导致按错误配置追加）。
         """
+        if self.is_closing_round():
+            return None
+
         info = self.current_round_info()
         weak_key, weak_evidence = self.round_weak_dimension()
 
@@ -684,6 +800,7 @@ class InterviewSession:
             focus_dimension=weak_key or None,
             weak_evidence=weak_evidence,
             type_mix=self.question_type_mix,
+            closing_instruction=self.closing_instruction(),
         )
         if questions:
             q = questions[0]

@@ -198,6 +198,7 @@ async def plan_career(
                 user_prompt,
                 0.4,
                 4096,
+                "career",   # v6.2: 任务级模型绑定（离线重推理，允许用强模型）
             )
             if raw and not raw.get("error"):
                 stages = _parse_stages(raw)

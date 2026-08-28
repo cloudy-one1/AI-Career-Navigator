@@ -21,6 +21,43 @@ from ..dimension_weights import (
 
 logger = logging.getLogger(__name__)
 
+# ===== v6.2: 逐题拆解辅助 =====
+
+# 思考时长参考线（秒）：低于"不假思索"线说明没想就答，高于"明显卡顿"线说明现场组织吃力。
+# 二者都不是必然扣分，但都值得在复盘里被看见。
+THINKING_TOO_FAST = 10
+THINKING_TOO_SLOW = 90
+
+
+def _norm_thinking(value) -> float:
+    """规整思考时长（秒），非法值返回 0，不抛异常。"""
+    try:
+        sec = float(value)
+    except (TypeError, ValueError):
+        return 0.0
+    if sec != sec or sec < 0 or sec > 600:  # NaN 自不等
+        return 0.0
+    return round(sec, 1)
+
+
+def _fallback_impact(score: float, thinking_seconds: float) -> str:
+    """模型未产出 real_interview_impact 时的确定性兜底文案。
+
+    诚实说明：这是按分数与思考时长推导的**规则结论**，不是模型对本题的具体判断，
+    措辞上避免伪装成"面试官原话"。宁可笼统，也不编造。
+    """
+    if score >= 4.0 and 0 < thinking_seconds < THINKING_TOO_SLOW:
+        return "回答质量到位且组织流畅，真实面试中这类回答能稳住面试官，不太会被追问。"
+    if score >= 4.0:
+        return "回答质量到位，但耗时偏长，真实面试中可能被质疑熟练度，建议多练到脱口而出。"
+    if score >= 3.0:
+        if thinking_seconds and thinking_seconds < THINKING_TOO_FAST:
+            return "基本答到点上但缺少展开，真实面试中大概率被追问细节，建议补充具体数据与过程。"
+        return "达到及格线但不突出，真实面试中属于「不扣分也不加分」的回答，需要更具体的案例支撑。"
+    if score > 0:
+        return "显著低于通过线，真实面试中这一问基本会被判定为答不上来，建议按改写版本重练该题。"
+    return "未取得有效评分（诊断未完成或解析失败），无法判断对真实面试的影响。"
+
 
 def build_report(session) -> dict:
     """
@@ -101,6 +138,8 @@ def build_report(session) -> dict:
         rewritten = d.get("rewritten_answer", "") or ""
         if not rewritten:
             continue
+        score_d = d.get("overall_score") or 0
+        thinking_d = _norm_thinking(d.get("thinking_seconds", 0))
         detailed_qa.append({
             "round": d.get("round", 0),
             "round_name": d.get("round_name", ""),
@@ -108,8 +147,60 @@ def build_report(session) -> dict:
             "rewritten_answer": rewritten,
             "key_changes": d.get("key_changes", []) or [],
             "weakness_tags": d.get("weakness_tags", []) or [],
-            "overall_score": d.get("overall_score", 0),
+            "overall_score": score_d,
+            # v6.2: 与 qa_breakdown 对齐，前端同一套渲染逻辑即可复用
+            "thinking_seconds": thinking_d,
+            "real_interview_impact": (
+                d.get("real_interview_impact", "") or _fallback_impact(float(score_d or 0), thinking_d)
+            ),
         })
+
+    # v6.2: qaBreakdown —— 逐题拆解（借鉴 GrillMind）。
+    # 与 detailed_qa 的分工：detailed_qa 只沉淀"有改写答案"的题（学习向），
+    # qa_breakdown 覆盖全部已答题（复盘向），并带上真实面试影响与思考时长。
+    qa_breakdown = []
+    thinking_values: list[float] = []
+    for idx, d in enumerate(session.all_diagnoses, start=1):
+        q_text = d.get("question", "") or ""
+        if not q_text:
+            continue
+        dims = d.get("dimensions", {}) or {}
+        score = d.get("overall_score") or 0
+        if not score and dims:
+            score = weighted_score(dims, weights)
+        thinking = _norm_thinking(d.get("thinking_seconds", 0))
+        if thinking > 0:
+            thinking_values.append(thinking)
+        qa_breakdown.append({
+            "index": idx,
+            "round": d.get("round", 0),
+            "round_name": d.get("round_name", ""),
+            "question": q_text,
+            "overall_score": round(float(score or 0), 2),
+            "dimensions": {k: dims.get(k, 0) for k in DIM_KEYS},
+            "weakest_dimension": d.get("weakest_dimension", ""),
+            "weakest_dimension_name": d.get("weakest_dimension_name", ""),
+            "overall_comment": d.get("overall_comment", ""),
+            # v6.2: 对真实面试的影响 —— 模型未产出时按分数兜底生成，保证字段不空
+            "real_interview_impact": (
+                d.get("real_interview_impact", "")
+                or _fallback_impact(float(score or 0), thinking)
+            ),
+            "thinking_seconds": thinking,
+            "risk_points": d.get("risk_points", []) or [],
+            "weakness_tags": d.get("weakness_tags", []) or [],
+            "has_rewrite": bool(d.get("rewritten_answer", "")),
+        })
+
+    # v6.2: 思考时长统计（真实面试里"想太久"和"不假思索"都是风险信号）
+    thinking_stats = {
+        "answered_count": len(qa_breakdown),
+        "tracked_count": len(thinking_values),
+        "avg_seconds": round(sum(thinking_values) / len(thinking_values), 1) if thinking_values else 0,
+        "max_seconds": round(max(thinking_values), 1) if thinking_values else 0,
+        "min_seconds": round(min(thinking_values), 1) if thinking_values else 0,
+        "total_seconds": round(sum(thinking_values), 1),
+    }
 
     # v5.0: 薄弱点跨轮累计标签（供前端薄弱点面板 + 复盘）
     weakness_tag_summary = []
@@ -140,6 +231,11 @@ def build_report(session) -> dict:
         "weaknesses": weaknesses,
         "suggestions": suggestions,
         "detailed_qa": detailed_qa,
+        # v6.2: 逐题拆解 + 真实面试影响 + 思考时长（借鉴 GrillMind 报告结构）
+        "qa_breakdown": qa_breakdown,
+        "thinking_stats": thinking_stats,
+        # v6.2: 简历解析阶段产出的前置追问点（本场面试的提问依据）
+        "resume_points": getattr(session, "resume_points", {}) or {},
         "weakness_tag_summary": weakness_tag_summary,
     }
 

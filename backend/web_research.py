@@ -224,6 +224,7 @@ async def enrich_jd_with_research(llm_client, jd_text: str, position: str = "",
             user_prompt=user_prompt,
             temperature=0.3,
             max_tokens=1024,
+            task="market",   # v6.2: 任务级模型绑定（岗位画像丰富）
         )
         enriched_jd = result.get("enriched_jd", jd_text)
         key_skills = result.get("key_skills", [])

@@ -2,7 +2,7 @@
 <h1 align="center">🤖 AI 模拟面试官与职业规划</h1>
 
 <p align="center">
-  <strong>v6.0 — 竞品借鉴专项：Prompt 硬约束 + 三态推进决策 + JSON 四级容错 + Provider 自动探测（课程项目级，非生产级）</strong>
+  <strong>v6.2 — 竞品借鉴专项三期：面试收尾工程强控 + 简历前置追问点 + 输出净化 + 任务级模型绑定 + 报告逐题拆解 + VAD 节流（课程项目级，非生产级）</strong>
 </p>
 
 <p align="center">
@@ -54,9 +54,18 @@ AI 模拟面试官是一个面向求职者的智能面试练习平台。上传�
 - **JSON 四级容错（v6.0）**：LLM 输出解析走 直接解析→提取{}块→字符级修复→宽松解析 四级降级，轻微畸形输出（围栏/截断/尾逗号/单引号）就地修复，不再浪费 fallback 候选
 - **Provider 注册表自动探测（v6.0）**：`AI_PROVIDER=auto` 按注册顺序自动选用第一个配置了有效 Key 的后端；Key 校验下沉配置层，切换后端时无效 Key 即时告警
 - **命名空间知识库（v6.0）**：`rag:interview/career/resume` 命名空间隔离的本地关键词检索 + `augment_prompt` 注入（零托管依赖，前向储备）
+- **ASR 转写容错评分 + TTS 预取（v6.1，对标 offerMaster）**：语音回答自动注入转写容错评分（"SaaS→SARS" 类同音误写不计失分、口语停顿不视为混乱）；新题/追问到达即后台预合成预热缓存（TTS LRU 缓存 + Provider Protocol 工厂抽象）
+- **追问引用原话 + 结束面试口令（v6.1，对标 offerMaster）**：追问 Prompt 硬约束"必须显式引用候选人回答原话"，杜绝套路式追问；回答位输入"结束面试"等口令即优雅收束并生成部分报告（确定性关键词检测，不依赖 LLM）
+- **报告 HTML 导出（v6.1）**：复盘报告一键导出打印友好 HTML（`/api/reports/{id}/export.html`），浏览器 Ctrl+P 即得 PDF（零重量级依赖）
+- **面试收尾工程强控（v6.2，对标 GrillMind）**：末轮按轮次计数判定为 closing 阶段，工程层强制禁止追问与追加题、注入内部收尾指令并推送收束语，面试收尾不再依赖模型自决
+- **简历前置追问点（v6.2，对标 GrillMind）**：简历解析阶段即产出「值得深挖的点」与「可疑/模糊的点」，注入出题 prompt 与诊断证据包，让追问有据可依而非临场泛问（LLM 异常/正文过短一律降级为空，不阻断流程）
+- **面试话术输出净化（v6.2，对标 GrillMind）**：Prompt 侧注入「禁 Markdown / 禁括号动作 / 禁垫词开头」硬约束，工程侧 `sanitize_spoken_text` 确定性兜底——先去舞台提示再去 Markdown，`Redis（缓存）` 这类术语括号不被误删
+- **任务级模型绑定 + 面试禁思考（v6.2，对标 GrillMind）**：`LLM_TASK_MODELS` 按任务（parse/question/interview/diagnosis/rewrite/report/career/market）独立绑定模型；实时面试链路自动剔除推理类模型（首 token 延迟高），离线任务不受限
+- **报告逐题拆解（v6.2，对标 GrillMind）**：`qaBreakdown` 逐题呈现分数/五维/最薄弱维度/风险点，附 `realInterviewImpact`（对真实面试的影响，模型未产出时按规则兜底）与 `thinkingSeconds`（每题思考时长，前端计时上报、追问累加入本题）
+- **语音 VAD 节流 + 朗读结束切回文字（v6.2，对标 GrillMind）**：录音期间采样音量，连续静音 2.5s 且已采集到语音即自动停录并转写（2 分钟硬上限兜底）；题目/追问朗读结束自动聚焦输入框，用户始终落回可打字状态
 - **题库管理**：CRUD + 收藏 + 从面试会话导入
 - **Docker 部署**：Dockerfile + docker-compose.yml 一键部署
-- **自动化测试**：491 个测试用例覆盖核心路径（含依赖 API Key 的 LLM 类测试）
+- **自动化测试**：559 个测试用例覆盖核心路径（含依赖 API Key 的 LLM 类测试）
 
 ---
 
@@ -429,7 +438,7 @@ pytest tests/ -v
 pytest tests/ --cov=backend --cov-report=term-missing
 ```
 
-测试覆盖：Schema 验证 / API 路由 / Gap 分析器 / 维度权重 / 简历解析 / 报告生成 / 安全防护 / Web 研究 / 技能匹配 / 市场数据 / 职业规划
+测试覆盖：Schema 验证 / API 路由 / Gap 分析器 / 维度权重 / 简历解析 / 报告生成 / 安全防护 / Web 研究 / 技能匹配 / 市场数据 / 职业规划 / 收尾强控 / 追问点提取 / 输出净化 / 任务级模型绑定 / 逐题拆解
 
 ### 分层依赖检查
 

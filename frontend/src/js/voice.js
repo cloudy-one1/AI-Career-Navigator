@@ -305,6 +305,79 @@ let mediaStream = null;
 let recordedChunks = [];
 let recording = false;
 
+// ===== v6.2: VAD 静音节流（借鉴 GrillMind 的语音链路设计）=====
+// 半双工录音的固有缺陷：停止完全靠用户手动点，忘记点就会上传几十秒空白音频 ——
+// ASR 慢、按量计费、还容易从噪声里"幻听"出文字。
+// 做法：录音期间用 AnalyserNode 采样音量（RMS），连续静音达到阈值即自动停录。
+// 只做"何时停"的节流判断，不做端点检测（不裁剪已录音频），语义上仍是半双工。
+
+const VAD_DEFAULTS = {
+  silenceMs: 2500,        // 连续静音多久判定"说完了"
+  minSpeechMs: 800,       // 至少采集到这么久的语音才允许自动停（防刚开口就误停）
+  maxDurationMs: 120000,  // 单次录音硬上限，防忘记停止
+  threshold: 0.02,        // 音量阈值（RMS，0-1）
+  tickMs: 100,            // 采样间隔
+};
+
+let vadTimer = null;
+let vadAudioCtx = null;
+
+/** 启动 VAD 采样；reason 为 'silence'（静音）或 'max_duration'（超时） */
+function _startVad(stream, onAutoStop, opts = {}) {
+  _stopVad();
+  const cfg = { ...VAD_DEFAULTS, ...opts };
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    const ctx = new AudioCtx();
+    const source = ctx.createMediaStreamSource(stream);
+    const analyser = ctx.createAnalyser();
+    analyser.fftSize = 1024;
+    source.connect(analyser);
+    vadAudioCtx = ctx;
+    if (ctx.state === 'suspended' && typeof ctx.resume === 'function') ctx.resume();
+
+    const buf = new Float32Array(analyser.fftSize);
+    const startedAt = Date.now();
+    let speechMs = 0;
+    let silenceMs = 0;
+
+    vadTimer = setInterval(() => {
+      if (!recording) { _stopVad(); return; }
+      analyser.getFloatTimeDomainData(buf);
+      let sum = 0;
+      for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+      const rms = Math.sqrt(sum / buf.length);
+      if (rms > cfg.threshold) { speechMs += cfg.tickMs; silenceMs = 0; }
+      else { silenceMs += cfg.tickMs; }
+
+      const elapsed = Date.now() - startedAt;
+      if (elapsed >= cfg.maxDurationMs) {
+        _stopVad();
+        if (onAutoStop) onAutoStop('max_duration');
+        return;
+      }
+      // 已经说过话 + 静音够久 → 认为本段回答结束
+      if (speechMs >= cfg.minSpeechMs && silenceMs >= cfg.silenceMs) {
+        _stopVad();
+        if (onAutoStop) onAutoStop('silence');
+      }
+    }, cfg.tickMs);
+  } catch (e) {
+    // VAD 是增强项，失败不应阻断录音本身
+    console.warn('[Voice] VAD 初始化失败，回退为手动停止:', e);
+    vadTimer = null;
+  }
+}
+
+function _stopVad() {
+  if (vadTimer) { clearInterval(vadTimer); vadTimer = null; }
+  if (vadAudioCtx) {
+    try { vadAudioCtx.close(); } catch (_) { /* 关闭失败不影响流程 */ }
+    vadAudioCtx = null;
+  }
+}
+
 /** 是否正在录音 */
 export function isRecording() {
   return recording;
@@ -312,9 +385,14 @@ export function isRecording() {
 
 /**
  * 开始录音（MediaRecorder 采集，识别交给后端 MiMo-ASR）
+ *
+ * v6.2: 支持 VAD 静音节流 —— 传入 onAutoStop 后，检测到说完（连续静音）或超时
+ * 会自动回调，由调用方执行停止与转写；vad:false 可显式关闭（保留手动停止语义）。
+ *
+ * @param {object} [opts] - { vad, silenceMs, minSpeechMs, maxDurationMs, threshold, onAutoStop }
  * @returns {Promise<MediaRecorder|null>}
  */
-export async function startRecording() {
+export async function startRecording(opts = {}) {
   if (recording) return mediaRecorder;
   if (!voiceSupport.mimo) {
     toast('当前环境不支持录音', 'warning');
@@ -342,6 +420,13 @@ export async function startRecording() {
   mediaRecorder.start();
   recording = true;
   emit('stt:start');
+
+  // v6.2: VAD 节流（默认开启；opts.vad === false 时保留纯手动停止）
+  if (opts.vad !== false) {
+    _startVad(mediaStream, (reason) => {
+      if (typeof opts.onAutoStop === 'function') opts.onAutoStop(reason);
+    }, opts);
+  }
   return mediaRecorder;
 }
 
@@ -351,6 +436,7 @@ export async function startRecording() {
  */
 export function stopRecording() {
   return new Promise((resolve) => {
+    _stopVad();   // v6.2: 手动停止时同步清掉 VAD 采样器
     if (!mediaRecorder || mediaRecorder.state === 'inactive') {
       recording = false;
       resolve(null);
@@ -446,19 +532,29 @@ export function voiceFillTextarea(textarea, onStateChange) {
  * 未配 Key / 录音失败时自动降级为浏览器 STT。
  * @returns {Function} 停止/取消函数
  */
-export async function voiceFillWithASR(textarea, onStateChange) {
+export async function voiceFillWithASR(textarea, onStateChange, opts = {}) {
   if (!voiceSupport.mimo) {
     return voiceFillTextarea(textarea, onStateChange);
   }
   const setState = (s) => { if (onStateChange) onStateChange(s); };
 
   setState('listening');
-  const recorder = await startRecording();
+  // v6.2: 开启 VAD 静音节流 —— 说完后自动停录并转写，无需手动再点一次停止。
+  // 自动停止与手动点停止共用同一个 stop()，cancelled 标志保证只执行一次。
+  const recorder = await startRecording({
+    ...opts,
+    onAutoStop: (reason) => {
+      if (reason === 'max_duration') toast('录音已达上限，已自动结束并识别', 'info');
+      autoStop();
+    },
+  });
   if (!recorder) {
     // 录音不可用，降级浏览器 STT
     return voiceFillTextarea(textarea, onStateChange);
   }
   let cancelled = false;
+  let stopFn = null;
+  const autoStop = () => { if (stopFn) stopFn(); };
 
   const stop = async () => {
     if (cancelled) return;
@@ -476,6 +572,7 @@ export async function voiceFillWithASR(textarea, onStateChange) {
     setState('idle');
   };
 
+  stopFn = stop;   // v6.2: 供 VAD 自动停止回调使用
   return stop;
 }
 
@@ -491,23 +588,43 @@ function findOverlap(a, b) {
 
 // ===== 自动朗读问题（面试场景）=====
 
+/** 清理文本用于 TTS（去 Markdown 符号、换行转逗号） */
+function cleanForTTS(text) {
+  return (text || '')
+    .replace(/[*_~`#]/g, '')
+    .replace(/\n{2,}/g, '，')
+    .replace(/\n/g, '，')
+    .trim();
+}
+
+/**
+ * v6.1: 预取 TTS（借鉴 offerMaster"后台预合成"延迟优化）。
+ * 收到新题/追问时后台请求一次合成，后端 LRU 缓存生效；
+ * 用户随后点朗读/开自动朗读时直接命中缓存，零等待。
+ * 静默失败：预取只是优化，不影响主流程。
+ * @param {string} questionText
+ */
+export function prefetchTTS(questionText) {
+  if (mimoStatus !== 'ready') return;
+  const clean = cleanForTTS(questionText);
+  if (!clean) return;
+  requestVoiceTTS(clean, 'default').catch(() => {});
+}
+
 /**
  * 收到新问题时自动朗读（MiMo 优先，降级浏览器）
  * @param {string} questionText
  * @param {Function} [onStateChange]
  */
-export async function autoReadQuestion(questionText, onStateChange) {
-  if (!voiceSupport.tts) return;
-  const clean = questionText
-    .replace(/[*_~`#]/g, '')
-    .replace(/\n{2,}/g, '，')
-    .replace(/\n/g, '，')
-    .trim();
+export async function autoReadQuestion(questionText, onStateChange, onEnd) {
+  if (!voiceSupport.tts) { if (onEnd) onEnd(); return; }
+  const clean = cleanForTTS(questionText);
   const setState = (s) => { if (onStateChange) onStateChange(s); };
   setState('speaking');
   await speak(clean, {
     rate: 0.9,
-    onEnd: () => setState('idle'),
+    // v6.2: 朗读结束回调 —— 供调用方切回文字输入（聚焦输入框、收起语音态）
+    onEnd: () => { setState('idle'); if (onEnd) onEnd(); },
   });
 }
 

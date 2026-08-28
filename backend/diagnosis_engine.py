@@ -19,6 +19,7 @@ from typing import AsyncGenerator
 
 from .llm_client import safe_json_extract
 from .security import check_output
+from .output_sanitizer import OUTPUT_CONSTRAINTS, sanitize_spoken_text
 from .dimension_weights import (
     DEFAULT_WEIGHTS,
     DIM_KEYS,
@@ -48,10 +49,14 @@ DIAGNOSTICIAN_SYSTEM_PROMPT = """你是一位严格的面试回答诊断师。
 （诚实说明：权重是否通过本 prompt 影响你的打分分布，未经 A/B 实验验证；
 唯一确定生效的地方是后端的加权平均分公式，prompt 中的权重描述只是透明告知，不应偏置你的判断。）
 
+{voice_note}
+
 【追问要求】
 如果回答存在明显短板（任一维度 ≤ 2 分，或回答明显空泛缺少细节），
 请在 follow_up_question 中给出一句真实面试官会问的追问，
 追问要针对最薄弱的那个维度，自然、简短、直击要害，不超过 50 字。
+追问必须显式引用候选人回答里的具体词汇、数字或项目名（如"你刚才提到 XX，那……"），
+严禁"能再展开讲讲吗"这类不落地的套路式追问。
 如果回答质量已经足够（各维度均 ≥ 3 分且内容具体），follow_up_question 输出空字符串。
 连续追问不得超过 2 次（后端会硬性拦截第 3 次）：若上一轮已针对同一维度追问过，
 请换一个角度，或判定回答已充分、直接进入下一题。
@@ -73,8 +78,11 @@ DIAGNOSTICIAN_SYSTEM_PROMPT = """你是一位严格的面试回答诊断师。
   "follow_up_question": "针对薄弱点的追问，无需追问时为空字符串",
   "next_action": "follow_up / next_question / complete 三选一",
   "overall_comment": "一句话综合评语",
+  "real_interview_impact": "这段回答放到真实面试里会发生什么：会被追问哪一点、会不会被判定为包装、对通过本轮的影响（一句话，聚焦后果不评分）",
   "risk_points": ["风险点1：如名词堆砌/方案空洞/逻辑矛盾等", "风险点2"]
 }}
+
+{output_constraints}
 
 评分标准：
 - 5分：优秀，结构完整、数据充分、逻辑严密、高度匹配
@@ -145,7 +153,9 @@ REWRITER_SYSTEM_PROMPT = """你是一位面试回答改写专家。
 {
   "rewritten_answer": "改写后的回答",
   "key_changes": ["改动点1", "改动点2"]
-}"""
+}
+
+""" + OUTPUT_CONSTRAINTS
 
 REWRITER_USER_PROMPT = """请改写以下面试回答：
 
@@ -193,6 +203,17 @@ _MODE_INSTRUCTIONS = {
     "traditional": "",
     "simulation": "",
 }
+
+# ===== v6.1: 语音转写容错（借鉴 offerMaster 的 ASR-aware 评分） =====
+# 回答来自语音输入时注入：ASR 转写文本常带同音错别字/标点缺失/口语冗余，
+# 若按书面标准评分会系统性压低语音面试得分。注入后要求按语义意图评分。
+
+VOICE_TRANSCRIPTION_NOTE = """【语音转写容错】
+本次回答来自语音识别（ASR）转写，文本可能存在同音错别字、专有名词误写与标点缺失
+（如 "SaaS" 被转成 "SARS"、"Redis" 被转成 "瑞迪斯"）。请按语义意图理解并评分：
+1. 明显的转写错误不要计入专业深度 / 逻辑连贯性的失分；
+2. 口语化重复与停顿词（"嗯""就是""然后"）不代表表达混乱，按内容实质评分；
+3. 仅当语义本身空洞、错误时才扣分，如涉及转写误差请在评语中注明"疑似转写误差"。"""
 
 # 薄弱点标签：诊断结束后从评分/评语/风险点中提取，供跨轮累计与复盘使用
 WEAKNESS_KEYWORDS = (
@@ -252,15 +273,22 @@ def _build_mode_instructions(mode: str, recovery_requested: bool) -> str:
     return "\n\n".join(parts) if parts else ""
 
 
-def _build_diagnostician_system(weights: dict | None) -> str:
+def _build_diagnostician_system(weights: dict | None, from_voice: bool = False) -> str:
     """把动态权重注入 Diagnostician 系统提示词。
 
     诚实说明：权重仅用于后端 weighted_score() 的加权总分；
     prompt 中的权重描述是否真正改变模型打分分布，未经 A/B 实验验证，
     因此 prompt 措辞已改为中性（不影响打分标准），避免制造"权重已影响评分"的假象。
+
+    v6.1: from_voice=True 时注入语音转写容错话术（借鉴 offerMaster 的 ASR-aware 评分）。
     """
     w = weights or DEFAULT_WEIGHTS
-    return DIAGNOSTICIAN_SYSTEM_PROMPT.format(weight_desc=describe_weights(w))
+    voice_note = VOICE_TRANSCRIPTION_NOTE if from_voice else ""
+    return DIAGNOSTICIAN_SYSTEM_PROMPT.format(
+        weight_desc=describe_weights(w),
+        voice_note=voice_note,
+        output_constraints=OUTPUT_CONSTRAINTS,
+    )
 
 
 def _extract_json(raw: str) -> dict | None:
@@ -281,6 +309,7 @@ def _parse_diagnosis_fallback(raw_text: str) -> dict:
         "follow_up_question": "",
         "overall_score": 0,
         "overall_comment": "诊断结果解析失败，请稍后重试",
+        "real_interview_impact": "",
     }
 
 
@@ -335,7 +364,15 @@ def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None) -> di
             )
         weakest = code_weakest
 
-    follow_up = str(diagnosis.get("follow_up_question", "") or "").strip()
+    # v6.2: 输出净化 —— 追问/评语/改写会进 TTS 与前端渲染，
+    # Prompt 已约束，这里是工程兜底（禁 Markdown / 舞台提示 / 垫词开头）。
+    follow_up = sanitize_spoken_text(
+        str(diagnosis.get("follow_up_question", "") or "")
+    )
+    overall_comment = sanitize_spoken_text(str(diagnosis.get("overall_comment", "") or ""))
+    # v6.2: real_interview_impact —— 这段回答放在真实面试里的后果（借鉴 GrillMind）
+    real_impact = sanitize_spoken_text(str(diagnosis.get("real_interview_impact", "") or ""))
+    rewritten_answer = sanitize_spoken_text(str(rewrite.get("rewritten_answer", "") or ""))
 
     # v6.0: next_action 三态规整（对标 career-copilot 的 normalizeNextAction）：
     # 模型声明合法值 → 采信；未声明/非法 → 由追问文本推导（有追问即 follow_up），
@@ -363,14 +400,16 @@ def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None) -> di
         "weights": dict(w),
         "weight_desc": describe_weights(w),
         "overall_score": overall,
-        "overall_comment": diagnosis.get("overall_comment", ""),
+        "overall_comment": overall_comment,
         "weakest_dimension": weakest,
         "weakest_dimension_name": DIM_NAMES.get(weakest, ""),
         "follow_up_question": follow_up,
         "next_action": next_action,
+        # v6.2: 真实面试影响（模型产出；未产出时由 report 层按分数兜底生成）
+        "real_interview_impact": real_impact,
         "risk_points": risk_points,
         "weakness_tags": _extract_weakness_tags(diagnosis, dimensions),
-        "rewritten_answer": rewrite.get("rewritten_answer", ""),
+        "rewritten_answer": rewritten_answer,
         "key_changes": rewrite.get("key_changes", []) or [],
     }
 
@@ -384,6 +423,7 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
                                   evidence_package: str = "",
                                   mode: str = "simulation",
                                   recovery_requested: bool = False,
+                                  from_voice: bool = False,
                                   ) -> AsyncGenerator[dict, None]:
     """
     流式执行双 Agent 诊断，逐条 yield dict 消息（由调用方转发给 WebSocket）。
@@ -396,6 +436,7 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
       {"type": "diagnosis_done",   "data": {标准化结果}}
 
     v2.7: question_type 用于注入题型差异化评估指引。
+    v6.1: from_voice=True 时注入 ASR 容错评分话术。
     注意：双 Agent 仍是两次独立调用，不合并（架构约束）。
     """
     w = weights or DEFAULT_WEIGHTS
@@ -418,10 +459,11 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
     diag_chunks: list[str] = []
     async for chunk in _astream(
         llm_client,
-        _build_diagnostician_system(w),
+        _build_diagnostician_system(w, from_voice),
         diag_prompt,
         temperature=0.3,
         max_tokens=1500,
+        task="diagnosis",   # v6.2: 实时链路，禁推理模型
     ):
         diag_chunks.append(chunk)
         yield {"type": "diagnosis_chunk", "data": {"text": chunk}}
@@ -451,6 +493,7 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
         rewrite_prompt,
         temperature=0.6,
         max_tokens=1500,
+        task="rewrite",   # v6.2: 实时链路，禁推理模型
     ):
         rewrite_chunks.append(chunk)
         yield {"type": "rewrite_chunk", "data": {"text": chunk}}
@@ -471,7 +514,8 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
 
 
 async def _astream(llm_client, system_prompt: str, user_prompt: str,
-                   temperature: float, max_tokens: int) -> AsyncGenerator[str, None]:
+                   temperature: float, max_tokens: int,
+                   task: str | None = None) -> AsyncGenerator[str, None]:
     """
     异步流式诊断：直接 await 底层 AsyncOpenAI 流式客户端逐块产出。
     v3.2: 移除原线程池 + asyncio.Queue + run_coroutine_threadsafe().result() 桥接
@@ -484,6 +528,7 @@ async def _astream(llm_client, system_prompt: str, user_prompt: str,
             user_prompt=user_prompt,
             temperature=temperature,
             max_tokens=max_tokens,
+            task=task,      # v6.2: 任务级模型绑定
         ):
             yield chunk
     except Exception as e:  # noqa: BLE001
@@ -498,11 +543,13 @@ async def run_diagnosis(llm_client, question: str, answer: str,
                         evidence_package: str = "",
                         mode: str = "simulation",
                         recovery_requested: bool = False,
-                        question_type: str = "mixed") -> dict:
+                        question_type: str = "mixed",
+                        from_voice: bool = False) -> dict:
     """
     非流式双 Agent 诊断（v1 兼容 + 降级路径）。
     返回 {diagnosis: {...}, rewrite: {...}}
     v5.0: 支持证据包 / 模式指令 / 不会答恢复注入。
+    v6.1: from_voice=True 时注入 ASR 容错评分话术。
     """
     w = weights or DEFAULT_WEIGHTS
     evidence_block = _build_evidence_block(evidence_package)
@@ -518,11 +565,12 @@ async def run_diagnosis(llm_client, question: str, answer: str,
     )
     diag_raw = await asyncio.to_thread(
         llm_client.chat,
-        _build_diagnostician_system(w),
+        _build_diagnostician_system(w, from_voice),
         diag_prompt,
         0.3,
         1500,
         {"type": "json_object"},
+        "diagnosis",   # v6.2: 任务级模型绑定
     )
     diagnosis = _extract_json(diag_raw) or _parse_diagnosis_fallback(diag_raw)
 
@@ -539,6 +587,7 @@ async def run_diagnosis(llm_client, question: str, answer: str,
         0.5,
         1500,
         {"type": "json_object"},
+        "rewrite",   # v6.2: 任务级模型绑定
     )
     rewrite = _extract_json(rewrite_raw) or {
         "rewritten_answer": (rewrite_raw or "").strip(),
@@ -565,8 +614,9 @@ class DiagnosisEngine:
                        evidence_package: str = "",
                        mode: str = "simulation",
                        recovery_requested: bool = False,
-                       question_type: str = "mixed") -> dict:
-        """非流式诊断，返回标准化结果。v5.0: 支持证据包/模式/恢复注入。"""
+                       question_type: str = "mixed",
+                       from_voice: bool = False) -> dict:
+        """非流式诊断，返回标准化结果。v5.0: 支持证据包/模式/恢复注入。v6.1: from_voice。"""
         raw = await run_diagnosis(
             llm_client=self.llm,
             question=question,
@@ -578,6 +628,7 @@ class DiagnosisEngine:
             mode=mode,
             recovery_requested=recovery_requested,
             question_type=question_type,
+            from_voice=from_voice,
         )
         return normalize_result(raw.get("diagnosis", {}), raw.get("rewrite", {}), weights)
 
@@ -597,9 +648,10 @@ class DiagnosisEngine:
                question_type: str = "mixed",
                evidence_package: str = "",
                mode: str = "simulation",
-               recovery_requested: bool = False) -> AsyncGenerator[dict, None]:
+               recovery_requested: bool = False,
+               from_voice: bool = False) -> AsyncGenerator[dict, None]:
         """流式诊断，返回异步生成器（v2.6 WebSocket 主流程使用）。
-        v2.7: 支持题型差异化；v5.0: 支持证据包/模式/恢复注入。"""
+        v2.7: 支持题型差异化；v5.0: 支持证据包/模式/恢复注入；v6.1: from_voice。"""
         return run_diagnosis_streaming(
             llm_client=self.llm,
             question=question,
@@ -611,4 +663,5 @@ class DiagnosisEngine:
             evidence_package=evidence_package,
             mode=mode,
             recovery_requested=recovery_requested,
+            from_voice=from_voice,
         )

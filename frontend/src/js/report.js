@@ -106,6 +106,15 @@ function renderReport(report) {
           exportReview(sessionId).catch(e => toast(e.message, 'error'));
         },
       }) : '',
+      // v6.1: HTML 导出（借鉴 offerMaster 的 MD→HTML 渲染，浏览器打印即得 PDF）
+      sessionId ? el('button', {
+        className: 'btn btn-secondary btn-sm',
+        style: 'margin-top:8px;width:fit-content;',
+        textContent: '🖨 打印 / 存为 PDF',
+        onClick: () => {
+          window.open(`${location.origin}/api/reports/${sessionId}/export.html`, '_blank');
+        },
+      }) : '',
     ),
   ));
 
@@ -217,12 +226,92 @@ function renderReport(report) {
     ));
   }
 
+  // v6.2: 简历前置追问点（解析阶段产出，本场面试的提问依据）
+  const rp = report.resume_points;
+  if (rp && (rp.deep_dive_points?.length || rp.vague_points?.length)) {
+    content.appendChild(el('div', { className: 'card', style: 'margin-top:12px;' },
+      el('div', { className: 'card-title', textContent: '🔎 简历追问线索（解析阶段提取）' }),
+      el('div', { style: 'display:flex;flex-wrap:wrap;gap:16px;' },
+        renderPointList('★ 值得深挖的点', rp.deep_dive_points),
+        renderPointList('★ 可疑 / 模糊的点', rp.vague_points),
+      ),
+    ));
+  }
+
+  // v6.2: 逐题拆解 —— 真实面试影响 + 思考时长（借鉴 GrillMind 的 qaBreakdown）
+  if (report.qa_breakdown?.length) {
+    const st = report.thinking_stats || {};
+    const statLine = st.tracked_count
+      ? `⏱ 平均思考 ${st.avg_seconds}s（最长 ${st.max_seconds}s / 最短 ${st.min_seconds}s），共 ${st.answered_count} 题`
+      : `共 ${st.answered_count || 0} 题（未采集到思考时长）`;
+    content.appendChild(el('div', { className: 'card', style: 'margin-top:12px;' },
+      el('div', { className: 'card-title', textContent: '📊 逐题拆解' }),
+      el('div', {
+        style: 'font-size:.8rem;color:var(--text-secondary);margin-bottom:8px;',
+        textContent: statLine,
+      }),
+      ...report.qa_breakdown.map(renderQaItem),
+    ));
+  }
+
   // v3.1: Gap 分析容器（异步加载）
   const gapContainer = el('div', { id: 'gap-analysis-container' });
   content.appendChild(gapContainer);
 
   // 自动触发 Gap 分析
   loadGapAnalysis(sessionId);
+}
+
+// ——— v6.2: 逐题拆解渲染 ———
+
+/** 简历追问点列表（深挖点 / 模糊点共用） */
+function renderPointList(title, items) {
+  if (!items?.length) return '';
+  return el('div', { style: 'flex:1;min-width:240px;' },
+    el('div', { style: 'font-weight:600;font-size:.85rem;margin-bottom:6px;', textContent: title }),
+    el('ul', {
+      style: 'margin:0;padding-left:18px;font-size:.82rem;line-height:1.75;color:var(--text-secondary);',
+    }, ...items.map(t => el('li', { textContent: t }))),
+  );
+}
+
+/** 单题拆解卡片：分数 + 薄弱维度 + 思考时长 + 真实面试影响 */
+function renderQaItem(qa) {
+  const score = Number(qa.overall_score) || 0;
+  const scoreColor = score >= 4 ? '#16A34A' : (score >= 3 ? '#F59E0B' : '#DC2626');
+  const children = [
+    el('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:8px;' },
+      el('div', {
+        style: 'font-weight:600;font-size:.9rem;flex:1;line-height:1.5;',
+        textContent: `Q${qa.index}. ${qa.question}`,
+      }),
+      el('div', {
+        style: `font-weight:700;color:${scoreColor};white-space:nowrap;`,
+        textContent: score.toFixed(1),
+      }),
+    ),
+    el('div', {
+      style: 'font-size:.78rem;color:var(--text-secondary);margin-top:4px;display:flex;gap:12px;flex-wrap:wrap;',
+    },
+      qa.round_name ? el('span', { textContent: qa.round_name }) : '',
+      qa.weakest_dimension_name ? el('span', { textContent: `最薄弱：${qa.weakest_dimension_name}` }) : '',
+      qa.thinking_seconds > 0 ? el('span', { textContent: `⏱ 思考 ${qa.thinking_seconds}s` }) : '',
+      qa.has_rewrite ? el('span', { textContent: '✍️ 含改写示范' }) : '',
+    ),
+  ];
+  if (qa.real_interview_impact) {
+    children.push(el('div', {
+      style: 'margin-top:6px;font-size:.84rem;line-height:1.6;padding:8px 10px;background:#FFF7ED;border-radius:8px;',
+      textContent: `🎯 对真实面试的影响：${qa.real_interview_impact}`,
+    }));
+  }
+  if (qa.risk_points?.length) {
+    children.push(el('div', {
+      style: 'margin-top:6px;font-size:.8rem;color:#DC2626;line-height:1.6;',
+      textContent: `⚠️ ${qa.risk_points.join('；')}`,
+    }));
+  }
+  return el('div', { style: 'border-top:1px solid var(--border,#eee);padding:10px 0;' }, ...children);
 }
 
 // ——— v3.1: Gap 分析 ———

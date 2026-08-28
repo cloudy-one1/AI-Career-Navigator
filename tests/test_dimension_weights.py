@@ -95,18 +95,6 @@ class TestNormalizeWeights:
             assert v > 0
         assert abs(sum(result.values()) - 1.0) < 0.001
 
-    def test_sum_to_one(self):
-        """归一化结果的和应为 1.0（四位精度）"""
-        raw = {
-            "star_completeness": 0.30,
-            "quantification": 0.30,
-            "logic_coherence": 0.30,
-            "job_relevance": 0.30,
-            "professional_depth": 0.30,
-        }
-        result = normalize_weights(raw)
-        assert abs(sum(result.values()) - 1.0) < 0.001
-
     def test_all_zero_returns_default(self):
         raw = {k: 0 for k in DIM_KEYS}
         result = normalize_weights(raw)
@@ -153,36 +141,29 @@ class TestWeightedScore:
         score = weighted_score(dims, None)
         assert score == 5.0
 
-    def test_zero_scores_excluded(self):
-        """0 分维度不参与加权计算"""
-        dims = {
+    def test_excluded_dimensions_skipped(self):
+        """0 分 / 非数值 / 仅部分维度 三种情况都按权重正确加权，无效维度不计入。"""
+        # 0 分维度不参与加权计算
+        dims_zero = {
             "star_completeness": 0, "quantification": 5.0,
             "logic_coherence": 0, "job_relevance": 5.0,
             "professional_depth": 0,
         }
-        score = weighted_score(dims, DEFAULT_WEIGHTS)
-        # 仅 quantification + job_relevance 有效，各自 0.20 权重
-        # (5*0.20 + 5*0.20) / 0.40 = 2.00/0.40 = 5.0
-        assert score == 5.0
-
-    def test_non_numeric_scores_skipped(self):
-        dims = {
+        assert weighted_score(dims_zero, DEFAULT_WEIGHTS) == 5.0
+        # 非数值维度跳过
+        dims_bad = {
             "star_completeness": "N/A",
             "quantification": 3.0,
             "logic_coherence": 4.0,
             "job_relevance": 2.0,
             "professional_depth": 5.0,
         }
-        score = weighted_score(dims, DEFAULT_WEIGHTS)
-        # star_completeness 非数值，跳过；其余 4 个有效
-        assert 1.0 < score < 5.0
-
-    def test_partial_dimensions(self):
-        """只提供部分维度"""
-        dims = {"star_completeness": 3.0, "quantification": 4.0}
-        score = weighted_score(dims, DEFAULT_WEIGHTS)
-        # (3*0.20 + 4*0.20) / 0.40 = 1.40/0.40 = 3.5
-        assert score == 3.5
+        score_bad = weighted_score(dims_bad, DEFAULT_WEIGHTS)
+        assert 1.0 < score_bad < 5.0
+        # 只提供部分维度
+        assert weighted_score(
+            {"star_completeness": 3.0, "quantification": 4.0}, DEFAULT_WEIGHTS
+        ) == 3.5
 
 
 class TestDescribeWeights:

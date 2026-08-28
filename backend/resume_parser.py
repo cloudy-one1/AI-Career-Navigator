@@ -1,11 +1,112 @@
 """
 简历解析器：支持 PDF、DOCX、TXT 三种格式。
+
+v6.2 新增：简历解析阶段前置产出追问点（deepDivePoints / vaguePoints），
+借鉴 GrillMind —— 让面试官的追问在开问之前就有数据支撑，而非临场泛泛而问。
+追问点提取是**可选增强**：LLM 不可用/解析失败时返回空结构，不影响简历解析主流程。
 """
 
 import io
 import logging
 
 logger = logging.getLogger(__name__)
+
+# ===== v6.2: 简历前置追问点提取 =====
+
+RESUME_POINTS_SYSTEM_PROMPT = """你是一位资深技术面试官，擅长从简历中预判"该问什么"。
+请阅读候选人简历，输出两类追问线索，供后续面试提问使用。
+
+【deep_dive_points｜值得深挖的点】
+候选人**写了但细节不足**的内容：能体现真实水平、需要当面试探真伪与深度的点。
+例如："提到将接口 P99 从 800ms 降到 200ms，但未说明优化手段"、"写了'负责架构设计'，需核实设计边界与决策权"。
+要点：必须锚定简历里的具体名词/数字/项目名，越具体越好。
+
+【vague_points｜可疑或模糊的点】
+表述含糊、存在包装嫌疑、或缺少关键约束的内容。
+例如："项目时间跨度与成果量级不匹配"、"堆砌技术名词但无落地场景"、"职责描述只有'参与'而无个人贡献"。
+要点：指出模糊之处，不要凭常识编造简历中不存在的信息。
+
+输出严格 JSON：
+{"deep_dive_points": ["深挖点1", "深挖点2"], "vague_points": ["模糊点1", "模糊点2"]}
+
+约束：
+1. 两类合计不超过 8 条，每类不超过 5 条；
+2. 每条控制在 40 字以内，只写"该问什么 + 为什么可疑"，不要写完整问题；
+3. **严禁编造简历中不存在的项目、公司或数字** —— 只依据简历原文，信息不足就少输出；
+4. 若简历内容过少无法提取，返回空数组，不要凑数。"""
+
+RESUME_POINTS_USER_PROMPT = """请提取以下简历的追问线索。
+
+【候选人简历】
+{resume}
+{jd}
+只输出 JSON，不要任何额外文字。"""
+
+_MAX_POINTS_PER_TYPE = 5
+_MAX_POINT_LEN = 80
+# 简历正文过短时没有可提取的线索，直接跳过（省一次 LLM 调用，也避免模型凑数编造）
+MIN_RESUME_CHARS = 50
+
+
+def _clean_points(items, limit: int = _MAX_POINTS_PER_TYPE) -> list[str]:
+    """清洗 LLM 产出的追问点列表：去空、去重、截断保序。"""
+    out: list[str] = []
+    if not isinstance(items, list):
+        return out
+    for x in items:
+        s = str(x).strip().lstrip("-•·").strip()
+        if not s or len(s) > _MAX_POINT_LEN:
+            continue
+        if s not in out:
+            out.append(s)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def extract_interview_points(resume_text: str, llm_client=None, jd_text: str = "") -> dict:
+    """
+    v6.2: 简历解析阶段前置产出追问点（借鉴 GrillMind 的 deepDivePoints/vaguePoints）。
+
+    返回 {"deep_dive_points": [...], "vague_points": [...]}。
+    设计要点：
+      - 纯离线解析（PDF/DOCX 文本提取）之外的一次轻量 LLM 调用，与 resume_text 解耦；
+      - 失败一律降级为空结构（{}），不阻断简历上传与面试创建；
+      - 由调用方（main.py）决定何时调用，模块本身不 import L3/L4。
+    """
+    if not resume_text or not resume_text.strip() or llm_client is None:
+        return {}
+    if len(resume_text.strip()) < MIN_RESUME_CHARS:
+        logger.debug("简历正文过短，跳过追问点提取")
+        return {}
+
+    jd_block = f"\n【岗位描述】\n{jd_text[:1000]}" if jd_text and jd_text.strip() else ""
+    try:
+        raw = llm_client.chat_json(
+            RESUME_POINTS_SYSTEM_PROMPT,
+            RESUME_POINTS_USER_PROMPT.format(resume=resume_text[:4000], jd=jd_block),
+            0.3,
+            800,
+            "parse",   # v6.2: 任务级模型绑定（简历解析）
+        )
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"简历追问点提取失败，降级为空: {e}")
+        return {}
+
+    if not isinstance(raw, dict):
+        return {}
+
+    points = {
+        "deep_dive_points": _clean_points(raw.get("deep_dive_points")),
+        "vague_points": _clean_points(raw.get("vague_points")),
+    }
+    if not points["deep_dive_points"] and not points["vague_points"]:
+        return {}
+    logger.info(
+        f"简历追问点提取完成: 深挖 {len(points['deep_dive_points'])} 条 / "
+        f"模糊 {len(points['vague_points'])} 条"
+    )
+    return points
 
 
 def parse_pdf(file_bytes: bytes) -> str:

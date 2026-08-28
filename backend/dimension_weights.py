@@ -181,6 +181,7 @@ async def analyze_jd_weights(llm_client, jd_text: str) -> dict:
             WEIGHT_USER_PROMPT.format(jd=jd_normalized),
             0.2,
             600,
+            "parse",   # v6.2: 任务级模型绑定（会话初始化链路）
         )
     except Exception as e:
         logger.warning(f"JD 权重分析调用失败，退化等权: {e}")

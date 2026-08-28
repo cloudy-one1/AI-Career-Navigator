@@ -4,6 +4,78 @@
 
 ---
 
+## v6.2 竞品借鉴专项三期：GrillMind 六项工程模式落地（2026-08-28）
+
+> 对标 [GrillMind](https://github.com/1935417243/GrillMind)（React 19 + Electron + 阿里百炼 ASR/TTS 全双工语音）研读后，按《[GrillMind-深度研读.md](docs/GrillMind-深度研读.md)》第 9 节的 6 条建议逐项落地。原则延续前两期：**只借工程模式，不抄技术栈**——不引入 Electron 桌面壳（本项目定位 Web 服务平台），全双工语音不引入 WebSocket 音频流（MiMo 云端 ASR 为请求-响应协议，改造为流式需自研网关），改为在半双工链路上补齐 VAD 节流与"TTS 结束自动切回文字"这两个体验缺口。新增测试 50 例，全量 **559 例通过**、分层 lint 通过、前端 `vite build` 通过。
+
+### 新增（功能线）
+
+1. **面试状态机 closing 收尾强控**（借鉴点 1）
+   - `config`：`INTERVIEW_ROUNDS` 末轮「反问收尾」与 `TRADITIONAL_ROUNDS` 末轮「自定义环节」新增 `closing: True`；新增 `CLOSING_INSTRUCTION`（内部收尾指令）与 `CLOSING_MESSAGE`（收束语文案，工程层确定性输出，不额外消耗 LLM 调用）。
+   - `session`：`is_closing_round()`（轮次计数判定：显式 closing 标记或已推进到末轮）+ `closing_instruction()`；**工程强控** —— 收尾阶段 `should_follow_up()` 恒为 False（连"回答过短强制追问"一并强控）、`generate_extra_question()` 恒为 None。
+   - `question_gen.generate_round_questions()` 新增 `closing_instruction` 参数并注入出题 prompt；`main.py` 末轮答完推送 `interview_closing` 事件，前端 `showClosingMessage()` 渲染收尾卡片。
+   - 价值：收尾不再依赖模型自决，杜绝最后一题被无限追问拖住。
+
+2. **简历解析前置追问点 deepDivePoints / vaguePoints**（借鉴点 2）
+   - `resume_parser` 新增 `extract_interview_points(resume_text, llm_client, jd_text)`：简历解析阶段一次性产出「值得深挖的点」（写了但细节不足，需考真伪与深度）与「可疑/模糊的点」（表述含糊、缺时间或量化）；输出经清洗（去空/去重/去列表符/丢弃超长项/每类上限 5 条）；**全流程降级** —— LLM 异常、正文过短（< `MIN_RESUME_CHARS=50`）、无可用线索一律返回 `{}`，不阻断会话创建。
+   - 复用链路：`main.create_session` 提取 → `InterviewSession(resume_points=...)` → ① 出题时经 `build_resume_points_block()` 注入 prompt（补强题不注入，避免上下文冲突）；② 经 `_evidence_for()` 并入诊断证据包，使 `follow_up_question` 也有据可依。
+
+3. **Prompt 输出约束 + 工程净化兜底**（借鉴点 3）
+   - 新增 L2 模块 `backend/output_sanitizer.py`：
+     - `OUTPUT_CONSTRAINTS`（禁 Markdown / 禁括号动作 / 禁垫词开头 / 纯文本平铺 / 术语保留原样），已注入出题、诊断、改写、追问四处 prompt。
+     - `sanitize_spoken_text()` 确定性净化：**先去舞台提示再去 Markdown**（关键顺序——若先剥斜体标记，`*停顿*` 只剩"停顿"二字留在正文）；舞台提示支持括号形式 `（微笑）` 与强调形式 `*停顿*`，用动作词表命中，**不误删 `Redis（缓存）` 这类术语括号**；垫词剥离要求后随标点才生效，避免误伤"好问题，值得展开"。
+   - 落点：题目 `question/intent`、诊断 `follow_up_question/overall_comment/real_interview_impact`、`rewritten_answer` 全部净化后再进 TTS 与前端渲染。
+
+4. **任务级模型绑定 + 面试禁思考**（借鉴点 4）
+   - `config`：新增 `LLM_TASK_MODELS`（`JSON` 环境变量，值支持 `"model"` 或 `"provider:model"`）、任务枚举 `LLM_TASKS`（parse/question/interview/diagnosis/rewrite/report/career/market）、实时链路集合 `REALTIME_TASKS`、`INTERVIEW_DISABLE_REASONING`（默认开）。解析失败/未知任务/未知 provider 一律跳过并告警，向后兼容（不配即无变化）。
+   - `llm_client`：新增 `is_reasoning_model()`、`task_candidates(task)`、`resolve_task_model(task)`；`chat/chat_json/chat_stream/chat_stream_async` 新增可选 `task` 参数，内部候选池按任务解析（绑定模型置顶 → 全局池）。实时链路剔除推理类模型；**若剔除后无候选则保留原池并告警**（宁可慢，也不能无候选导致调用直接失败）。
+   - 已接入：question / diagnosis / rewrite / interview（追问）/ parse（简历追问点、JD 权重）/ market（Gap、岗位画像）/ career（职业规划）。
+
+5. **报告结构：qaBreakdown + realInterviewImpact + thinkingSeconds**（借鉴点 5）
+   - 诊断 prompt 新增 `real_interview_impact` 字段（"这段回答放到真实面试里会发生什么"），`normalize_result()` 透出；模型未产出时由 `report._fallback_impact()` 按"分数 × 思考时长"确定性兜底（措辞明确为规则结论，不伪装成面试官原话）。
+   - `thinking_seconds`：前端记录题目/追问展示到提交的秒数（`elapsedSeconds()`），随 `answer` 上报；后端 `_normalize_thinking_seconds()` 规整（非法值/超 600s 归零），写入 `answer_history` 与诊断记录；追问补充**累加**到本题。
+   - `report.build_report()` 新增 `qa_breakdown`（逐题：分数/五维/最薄弱维度/评语/真实面试影响/思考时长/风险点/是否含改写）、`thinking_stats`（均值/最大/最小/总时长/采集题数）、`resume_points`；`detailed_qa` 同步补齐同名字段，前端可复用一套渲染。
+   - 前端 `report.js` 新增「📊 逐题拆解」与「🔎 简历追问线索」两张卡片。
+
+6. **语音链路：VAD 节流 + TTS 结束自动切回文字**（借鉴点 6）
+   - `voice.js` 新增 VAD：`AnalyserNode` 按 100ms 采样 RMS，连续静音 `silenceMs=2500` 且已采集到 ≥ `minSpeechMs=800` 语音 → 自动停录并转写；`maxDurationMs=120000` 硬上限兜底；Key 缺失/浏览器不支持时静默回退为手动停止。自动停止与手动停止共用同一 `stop()`，`cancelled` 标志保证只执行一次。
+   - `autoReadQuestion()` 新增 `onEnd` 回调；题目与追问朗读结束后 `refocusAnswerInput()` 聚焦输入框、恢复占位提示，用户始终落回可打字状态（追问此前无自动朗读，本轮补齐）。
+   - 说明：二进制音频直透已天然满足（TTS 返回音频 Blob → ObjectURL 直放，ASR 直传音频 Blob，均不经文本中转）；真正的全双工（边说边识别）受限于 MiMo 的请求-响应协议，未改造。
+
+### 工程化
+- **测试**：新增 `tests/test_grillmind_borrowings.py`（50 例，覆盖 closing 强控/追问点提取与清洗/净化规则（含术语括号保护与垫词误伤）/任务绑定解析与推理模型剔除/思考时长规整与累加/报告 qaBreakdown 与兜底文案）；全量 **559 例通过**（原 509 + 新增 50），`run.py lint` 分层契约通过，前端 `vite build` 通过。
+- **配置**：新增 `LLM_TASK_MODELS`、`INTERVIEW_DISABLE_REASONING` 两个可选环境变量（均默认关闭/向后兼容）。
+
+### 范围与约束
+- closing 强控使收尾轮**完全不追问**：反问收尾轮本就不需要追问；传统模式「自定义环节」若用户期望继续深挖，需将该轮 `closing` 置为 False。
+- `LLM_TASK_MODELS` 为 opt-in：不配置时所有任务沿用 `LLM_MODEL`，行为与 v6.1 完全一致。绑定模型的 Key 无效时自动回退默认池（不构造必然失败的候选）。
+- 思考时长由前端计时上报，可篡改、可因切后台而失真；统计仅用于自我复盘，不参与评分计算。未采集到时长时 `thinking_stats.tracked_count=0`，相关展示自动隐藏。
+- VAD 只做"何时停止录音"的节流判断，**不做端点检测**（不裁剪已录音频），因此语义上仍是半双工——这是 MiMo ASR 请求-响应协议下的现实边界。
+
+---
+
+## v6.1 竞品借鉴专项二期：ASR 容错评分 + 追问引用原话 + 结束面试口令 + 语音 Provider 抽象/缓存预取 + 报告 HTML 导出（2026-08-28）
+
+> 对标 [offerMaster](https://github.com/heatnan/offerMaster)（Next.js 14 + FastAPI + LangGraph 功能节点 + MySQL + 本地 Whisper/Edge TTS）逐文件研读后落地的 5 项可借鉴设计。原则延续 v6.0：**只借工程模式，不抄技术栈**——对方"LangGraph 编排 + REST 状态机驱动"的取舍其核心价值在于"人类语音输入门控下不做全自动 Agent"（本项目 WebSocket 状态机已满足，不再引入 LangGraph）；PDF 报告不引入 weasyprint（GTK/Pango 在 Windows 部署成本高），降级为"HTML 打印模板 + 浏览器 Ctrl+P 即 PDF"。新增测试 18 例、受影响面 127 例全绿、分层 lint 通过。
+
+### 新增（功能线）
+- **ASR 转写容错评分（对标 offerMaster 的 ASR-aware 评分 prompt）**：`diagnosis_engine` 新增 `VOICE_TRANSCRIPTION_NOTE`——回答来自语音输入时注入评分 prompt，要求按语义意图理解（"SaaS"→"SARS" 类同音误写不计入专业深度失分、口语停顿词不视为表达混乱、涉及转写误差在评语中注明）。全链路贯通：前端 `answer` 消息新增 `source`（voice/text，`interview.js` 跟踪最近一次输入来源，手动键入自动重置）→ `main.py` WS 解析 `from_voice` → `session.stream_answer()/handle_answer()` 透传 → `_build_diagnostician_system(weights, from_voice)` 注入。
+- **追问"引用原话"硬约束（对标 offerMaster FOLLOWUP_DECIDE 的 anti-套路约束）**：`DIAGNOSTICIAN_SYSTEM_PROMPT` 追问要求新增"必须显式引用候选人回答里的具体词汇/数字/项目名，严禁套路式追问"；`session.generate_follow_up()` 的独立生成路径同步加约束。
+- **结束面试退出口令（对标 offerMaster rules.py 的 END_KEYWORDS）**：`session.py` 新增 `END_INTERVIEW_KEYWORDS + is_end_signal()`（中英文、大小写不敏感子串匹配，确定性规则不依赖 LLM）；`main.py` WS 在安全检查**之前**检测（口令文本过短会被质量校验拦截），命中后不诊断、不计分，推送 `interview_end_signal` 事件并优雅收束，照常生成部分报告（`user_ended` 标志贯穿三层循环）；前端监听该事件 toast 提示。
+- **语音 Provider 协议抽象 + TTS 缓存（对标 offerMaster services/voice.py 的 Protocol 工厂）**：`voice_service` 新增 `TTSProvider/STTProvider`（`runtime_checkable Protocol`）+ `get_tts_provider()/get_stt_provider()` 工厂（`VOICE_TTS_PROVIDER/VOICE_STT_PROVIDER` 配置选择，未知值回退 mimo 并告警）；`VoiceService.synthesize` 新增 **LRU 缓存**（`TTS_CACHE_MAX=32`，仅缓存成功结果，线程安全）——重听题目、追问预取、探测包不再重复付费合成。
+- **TTS 预取（对标 offerMaster 的后台预合成延迟优化）**：`voice.js` 新增 `prefetchTTS()`（静默失败，不播放），新题/追问到达即后台合成预热缓存，用户点朗读/开自动朗读时零等待；`report.js` 新增「🖨 打印 / 存为 PDF」按钮。
+- **复盘报告 HTML 导出（对标 offerMaster report_pdf.py 的 MD→HTML 模板渲染）**：`main.py` 新增 `GET /api/reports/{session_id}/export.html`——`markdown` 库渲染（tables/fenced_code 扩展）+ 内置打印样式模板（中文字体栈、表格/引用样式、`@media print`），浏览器打开后 Ctrl+P 即得 PDF；依赖新增 `markdown>=3.5`。
+
+### 工程化
+- **测试**：新增 `tests/test_offer_master_borrowings.py`（18 例：退出口令/prompt 注入与约束/TTS 缓存命中·音色隔离·LRU 淘汰·失败不缓存/Provider 协议与回退/HTML 导出 404 与渲染）；`test_voice_service` 等既有用例零破坏。
+
+### 范围与约束
+- 结束口令仅检测**主回答位**（追问补充位不检测）；命中即收束，当前轮未答题不计入报告。
+- 语音 Provider 注册表当前仅 `mimo` 一个实现，工厂为前向接缝（接入火山/豆包等只需登记实现类）。
+- TTS 缓存按"文本+音色"为键，命中依赖文本完全一致；`MIMO_TTS_STYLE` 变更不会使缓存失效（风格仅影响首条 user 消息，实际可忽略）。
+
+---
+
 ## v6.0 竞品借鉴专项：Prompt 硬约束 + 评分同轮三态决策 + JSON 四级容错 + Provider 自动探测 + 命名空间知识库 + 音色映射表（2026-08-28）
 
 > 对标 [career-copilot](https://github.com/peeker-tao/career-copilot)（React + NestJS + Prisma/PostgreSQL + Redis）逐项深度学习后落地的 6 项可借鉴设计。原则：**只借工程模式，不抄技术栈**（对方用 Redis+向量 RAG，本项目按"零托管依赖"宪章降为本地关键词实现）；市场数据实时性、真实流式、语音实时性三项本项目本就领先，不在借鉴范围。全量测试 491 例全绿、分层 lint 通过。

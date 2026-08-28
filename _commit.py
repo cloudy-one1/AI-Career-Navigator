@@ -1,0 +1,37 @@
+"""临时提交脚本：避免中文 commit message 经 PowerShell 传参时乱码。执行后自删。"""
+import os
+import subprocess
+
+MSG = """feat: v6.1/v6.2 竞品借鉴专项二、三期（offerMaster / GrillMind 共 11 项落地）
+
+改了什么:
+- v6.1（对标 offerMaster）：ASR 转写容错评分、TTS 预取与 Provider 抽象、
+  追问引用候选人原话、"结束面试"口令收束、报告 HTML 导出
+- v6.2（对标 GrillMind）：面试 closing 收尾工程强控、简历前置追问点
+  (deepDive/vague)、面试话术输出净化、任务级模型绑定 + 面试禁思考、
+  报告 qaBreakdown 逐题拆解(realInterviewImpact + thinkingSeconds)、
+  语音 VAD 节流 + 朗读结束自动切回文字
+- 新增 backend/output_sanitizer.py、tests/test_grillmind_borrowings.py(50 例)、
+  tests/test_offer_master_borrowings.py、docs/GrillMind-深度研读.md
+- 同步 CHANGELOG / README / CODEBUDDY / .env.example
+
+为什么改:
+- v6.1 修复语音输入受 ASR 误写拖累评分、TTS 首播延迟、追问套路化、
+  面试无法中途退出四类体验缺口
+- v6.2 修复"收尾依赖模型自决导致末轮被无限追问"、"追问缺乏简历依据"、
+  "模型输出 Markdown/舞台提示污染 TTS 与前端渲染"、"单一模型无法同时满足
+  面试低延迟与报告深推理"、"报告只有维度均分、缺乏逐题指导"、"录音忘记
+  停止产生长空白音频"六类问题
+- 两期均遵循"只借工程模式、不抄技术栈"：不引入 LangGraph / Electron /
+  weasyprint；全双工语音受 MiMo 请求-响应协议限制，改为半双工 + VAD 节流
+
+验证: 559 用例全通过(原 509 + 新增 50)、run.py lint 分层契约通过、vite build 通过
+"""
+
+with open("_commit_msg.txt", "w", encoding="utf-8") as f:
+    f.write(MSG)
+
+subprocess.run(["git", "add", "-A"], check=True)
+r = subprocess.run(["git", "commit", "-F", "_commit_msg.txt"], check=True)
+os.remove("_commit_msg.txt")
+print("commit done:", r.returncode)
