@@ -6,7 +6,10 @@ v2.4: 双模式面试（拟真/传统）+ 7种面试官角色 + 自动切换。
 """
 
 import os
+import logging
 from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
@@ -69,6 +72,52 @@ class Config:
         provider = self.AI_PROVIDERS.get(self.AI_PROVIDER, self.AI_PROVIDERS["deepseek"])
         env_key = provider.get("model_env", "DEEPSEEK_MODEL")
         return os.getenv("LLM_MODEL", os.getenv(env_key, provider["default_model"]))
+
+    # ===== v4.3: 模型调用优雅降级（fallback）链 =====
+    @property
+    def LLM_FALLBACK_CHAIN(self) -> list[dict]:
+        """解析 LLM_FALLBACK_CHAIN 为有序候选列表，供 LLMClient 兜底重试。
+
+        格式: "provider:model,provider:model,..." 或仅 "model"（沿用当前 provider）。
+        每项独立解析 api_key / base_url（不同 provider 的 Key 通常不同）。
+        空配置返回空列表 —— 此时退化为单模型（无 fallback），向后兼容。
+        候选按出现顺序尝试，主模型（当前 provider/model）始终在首位（见 llm_client）。
+        """
+        raw = os.getenv("LLM_FALLBACK_CHAIN", "").strip()
+        if not raw:
+            return []
+        candidates = []
+        for part in raw.split(","):
+            part = part.strip()
+            if not part:
+                continue
+            if ":" in part:
+                provider, model = part.split(":", 1)
+            else:
+                provider, model = self.AI_PROVIDER, part
+            provider = provider.strip()
+            model = model.strip()
+            if provider not in self.AI_PROVIDERS:
+                logger.warning(f"LLM_FALLBACK_CHAIN 含未知 provider: {provider}，已跳过")
+                continue
+            info = self.AI_PROVIDERS[provider]
+            api_key = os.getenv("LLM_API_KEY", os.getenv(info["api_key_env"], ""))
+            base_url = os.getenv("LLM_BASE_URL", info["base_url"])
+            candidates.append({
+                "provider": provider,
+                "model": model,
+                "api_key": api_key,
+                "base_url": base_url,
+            })
+        return candidates
+
+    @property
+    def LLM_FALLBACK_MAX_RETRIES(self) -> int:
+        """fallback 最大尝试候选数（默认 3；超出候选数时实际取候选数）。"""
+        try:
+            return int(os.getenv("LLM_FALLBACK_MAX_RETRIES", "3"))
+        except ValueError:
+            return 3
 
     # ===== 兼容旧版（通过 provider 统一读取）=====
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")

@@ -74,10 +74,13 @@ DIAGNOSTICIAN_USER_PROMPT = """请诊断以下面试回答：
 
 【候选人回答】{answer}
 
+{evidence}
+
 【候选人简历（供参考）】{resume}
 
 【岗位描述（供参考）】{jd}
 {type_guidance}
+{mode_instructions}
 请按五个维度逐一分析，输出 JSON。"""
 
 # ===== v2.7: 题型差异化评估指引 =====
@@ -144,6 +147,94 @@ REWRITER_USER_PROMPT = """请改写以下面试回答：
 【岗位描述（供参考）】{jd}
 
 请输出改写后的回答和关键改动点。"""
+
+# ===== v5.0: 证据硬规则 / 模式指令 / 不会答恢复 =====
+# 对标 agent-interview-coach：追问与诊断必须"只能依据证据包或候选人亲述"，
+# 杜绝凭常识硬编候选人经历。
+
+EVIDENCE_USE_HARD_RULES = """【证据使用硬规则】
+1. 你只能依据【本轮证据包】中的简历证据片段，或候选人本轮亲述，来评价/追问其项目与经历；
+2. 大模型常识仅用于解释概念，严禁编造候选人的经历、项目细节或技术指标；
+3. 证据包不足以支撑某个追问点时，应输出澄清式追问（"你刚才提到……能具体讲讲吗"），
+   不要顺着候选人口述编造细节；
+4. 若证据包与本轮亲述存在矛盾，务必指出矛盾点，这是真实面试官会抓的漏洞。"""
+
+COACHING_RECOVERY_INSTRUCTION = """【不会答恢复流程】（候选人表示不会/不懂/没思路时进入）
+请按以下顺序帮助候选人恢复：
+1. 先讲清概念核心（通俗、简短）；
+2. 给出该问题的项目表达骨架（一句话怎么组织）；
+3. 提醒：简历中未支撑的细节不要硬说；
+4. 只追问一个降阶问题（比原题简单，帮助找回思路）；
+5. 保留薄弱点记录，但不要继续高压追问。"""
+
+_MODE_INSTRUCTIONS = {
+    "coach": "【教练模式】先补基础再追问：如果候选人回答暴露概念不牢，先讲清概念再追问，教学优先；评分照常进行。",
+    "hardcore": """【拷打模式】你是高压面试官：
+- 优先抓名词堆砌、过度包装、项目真实性漏洞；
+- 对每个关键术语都追问"你怎么做的/踩过什么坑/数据从哪来"；
+- 评语更锐利，明确指出包装与实力的差距；
+- risk_points 必须写明被抓到的具体漏洞。""",
+    "interview_only": "【只面试模式】只问不解析：overall_comment 用一句话简短反馈（≤40字），维度评语保持简短；重点放在 follow_up_question 上。",
+    "traditional": "",
+    "simulation": "",
+}
+
+# 薄弱点标签：诊断结束后从评分/评语/风险点中提取，供跨轮累计与复盘使用
+WEAKNESS_KEYWORDS = (
+    "MCP", "LangGraph", "RAG", "向量数据库", "系统设计", "架构设计", "高并发",
+    "分布式", "项目真实性", "名词堆砌", "过度包装", "逻辑矛盾", "量化不足",
+    "STAR不完整", "岗位匹配度", "专业深度", "简历与回答不符",
+)
+
+
+def _extract_weakness_tags(diagnosis: dict, dimensions: dict) -> list[str]:
+    """从诊断结果提取薄弱点标签（低分维度 + 评语/风险点关键词命中）。"""
+    tags: list[str] = []
+    # 1) 低分维度（≤2 分）直接映射为维度标签
+    low_dim_tags = {
+        "star_completeness": "STAR不完整",
+        "quantification": "量化不足",
+        "logic_coherence": "逻辑矛盾",
+        "job_relevance": "岗位匹配度",
+        "professional_depth": "专业深度不足",
+    }
+    for key, score in dimensions.items():
+        if 0 < score <= 2 and key in low_dim_tags:
+            tags.append(low_dim_tags[key])
+    # 2) 评语 / 风险点 / 追问中的关键词命中
+    text = " ".join([
+        str(diagnosis.get("overall_comment", "") or ""),
+        *[str(x) for x in (diagnosis.get("risk_points", []) or [])],
+        str(diagnosis.get("follow_up_question", "") or ""),
+    ])
+    for kw in WEAKNESS_KEYWORDS:
+        if kw in text:
+            tags.append(kw)
+    # 去重保序
+    seen: set[str] = set()
+    out: list[str] = []
+    for t in tags:
+        if t not in seen:
+            seen.add(t)
+            out.append(t)
+    return out[:6]
+
+
+def _build_evidence_block(evidence_package: str) -> str:
+    """把证据包文本转为诊断提示片段（空证据包则输出提示语）。"""
+    if not evidence_package or not evidence_package.strip():
+        return "【本轮证据包】本轮未注入简历证据。如候选人谈及经历，请用澄清式追问核实，不要编造。"
+    return f"{evidence_package}\n\n{EVIDENCE_USE_HARD_RULES}"
+
+
+def _build_mode_instructions(mode: str, recovery_requested: bool) -> str:
+    """按模式组装诊断指令；recovery_requested 时追加不会答恢复流程。"""
+    parts: list[str] = []
+    if mode in _MODE_INSTRUCTIONS:
+        parts.append(_MODE_INSTRUCTIONS[mode])
+    if recovery_requested:
+        parts.append(COACHING_RECOVERY_INSTRUCTION)
+    return "\n\n".join(parts) if parts else ""
 
 
 def _build_diagnostician_system(weights: dict | None) -> str:
@@ -264,6 +355,7 @@ def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None) -> di
         "weakest_dimension_name": DIM_NAMES.get(weakest, ""),
         "follow_up_question": follow_up,
         "risk_points": risk_points,
+        "weakness_tags": _extract_weakness_tags(diagnosis, dimensions),
         "rewritten_answer": rewrite.get("rewritten_answer", ""),
         "key_changes": rewrite.get("key_changes", []) or [],
     }
@@ -274,7 +366,10 @@ def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None) -> di
 async def run_diagnosis_streaming(llm_client, question: str, answer: str,
                                   resume_text: str, jd_text: str,
                                   weights: dict | None = None,
-                                  question_type: str = "mixed"
+                                  question_type: str = "mixed",
+                                  evidence_package: str = "",
+                                  mode: str = "simulation",
+                                  recovery_requested: bool = False,
                                   ) -> AsyncGenerator[dict, None]:
     """
     流式执行双 Agent 诊断，逐条 yield dict 消息（由调用方转发给 WebSocket）。
@@ -291,6 +386,8 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
     """
     w = weights or DEFAULT_WEIGHTS
     type_guidance = _QUESTION_TYPE_GUIDANCE.get(question_type, "")
+    evidence_block = _build_evidence_block(evidence_package)
+    mode_instructions = _build_mode_instructions(mode, recovery_requested)
 
     # ---- Phase 1: Diagnostician ----
     yield {"type": "diagnosis_status",
@@ -298,8 +395,10 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
 
     diag_prompt = DIAGNOSTICIAN_USER_PROMPT.format(
         question=question, answer=answer,
+        evidence=evidence_block,
         resume=(resume_text or "")[:2000], jd=(jd_text or "")[:1000],
         type_guidance=type_guidance,
+        mode_instructions=mode_instructions,
     )
 
     diag_chunks: list[str] = []
@@ -381,16 +480,27 @@ async def _astream(llm_client, system_prompt: str, user_prompt: str,
 
 async def run_diagnosis(llm_client, question: str, answer: str,
                         resume_text: str, jd_text: str,
-                        weights: dict | None = None) -> dict:
+                        weights: dict | None = None,
+                        evidence_package: str = "",
+                        mode: str = "simulation",
+                        recovery_requested: bool = False,
+                        question_type: str = "mixed") -> dict:
     """
     非流式双 Agent 诊断（v1 兼容 + 降级路径）。
     返回 {diagnosis: {...}, rewrite: {...}}
+    v5.0: 支持证据包 / 模式指令 / 不会答恢复注入。
     """
     w = weights or DEFAULT_WEIGHTS
+    evidence_block = _build_evidence_block(evidence_package)
+    mode_instructions = _build_mode_instructions(mode, recovery_requested)
+    type_guidance = _QUESTION_TYPE_GUIDANCE.get(question_type, "")
 
     diag_prompt = DIAGNOSTICIAN_USER_PROMPT.format(
         question=question, answer=answer,
+        evidence=evidence_block,
         resume=(resume_text or "")[:2000], jd=(jd_text or "")[:1000],
+        type_guidance=type_guidance,
+        mode_instructions=mode_instructions,
     )
     diag_raw = await asyncio.to_thread(
         llm_client.chat,
@@ -437,8 +547,12 @@ class DiagnosisEngine:
 
     async def diagnose(self, question: str, answer: str,
                        resume_text: str = "", jd_text: str = "",
-                       weights: dict | None = None) -> dict:
-        """非流式诊断，返回标准化结果。"""
+                       weights: dict | None = None,
+                       evidence_package: str = "",
+                       mode: str = "simulation",
+                       recovery_requested: bool = False,
+                       question_type: str = "mixed") -> dict:
+        """非流式诊断，返回标准化结果。v5.0: 支持证据包/模式/恢复注入。"""
         raw = await run_diagnosis(
             llm_client=self.llm,
             question=question,
@@ -446,20 +560,32 @@ class DiagnosisEngine:
             resume_text=resume_text or "",
             jd_text=jd_text or "",
             weights=weights,
+            evidence_package=evidence_package,
+            mode=mode,
+            recovery_requested=recovery_requested,
+            question_type=question_type,
         )
         return normalize_result(raw.get("diagnosis", {}), raw.get("rewrite", {}), weights)
 
     # 向后兼容旧调用名
     async def diagnose_stream(self, question: str, answer: str,
                               resume_text: str = "", jd_text: str = "",
-                              weights: dict | None = None) -> dict:
-        return await self.diagnose(question, answer, resume_text, jd_text, weights)
+                              weights: dict | None = None,
+                              evidence_package: str = "",
+                              mode: str = "simulation",
+                              recovery_requested: bool = False) -> dict:
+        return await self.diagnose(question, answer, resume_text, jd_text, weights,
+                                   evidence_package, mode, recovery_requested)
 
     def stream(self, question: str, answer: str,
                resume_text: str = "", jd_text: str = "",
                weights: dict | None = None,
-               question_type: str = "mixed") -> AsyncGenerator[dict, None]:
-        """流式诊断，返回异步生成器（v2.6 WebSocket 主流程使用）。v2.7: 支持题型差异化。"""
+               question_type: str = "mixed",
+               evidence_package: str = "",
+               mode: str = "simulation",
+               recovery_requested: bool = False) -> AsyncGenerator[dict, None]:
+        """流式诊断，返回异步生成器（v2.6 WebSocket 主流程使用）。
+        v2.7: 支持题型差异化；v5.0: 支持证据包/模式/恢复注入。"""
         return run_diagnosis_streaming(
             llm_client=self.llm,
             question=question,
@@ -468,4 +594,7 @@ class DiagnosisEngine:
             jd_text=jd_text or "",
             weights=weights,
             question_type=question_type,
+            evidence_package=evidence_package,
+            mode=mode,
+            recovery_requested=recovery_requested,
         )

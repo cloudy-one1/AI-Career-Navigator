@@ -24,19 +24,27 @@ from ..dimension_weights import (
     describe_weights,
     weighted_score,
 )
+from ..resume_retriever import build_evidence_package, ResumeRetriever
 from .report import build_report
 
 logger = logging.getLogger(__name__)
 
+# v5.0: 不会答/示弱信号检测（对标 agent-interview-coach 的 coaching recovery）
+UNCERTAIN_ANSWER_MARKERS = (
+    "不会", "不懂", "没思路", "答不上来", "不知道", "不清楚",
+    "没做过", "不太了解", "不了解", "没接触过", "忘了",
+)
+
 
 class InterviewSession:
-    """单次面试会话的状态机 (v2.6)"""
+    """单次面试会话的状态机 (v2.6 / v5.0)"""
 
     # ===== 生命周期 =====
 
     def __init__(self, session_id: str, resume_text: str, jd_text: str,
                  llm_client, diagnosis_engine, interview_style: str = "friendly",
                  db=None, mode: str = "simulation",
+                 stage: str = "phone_screen",
                  include_self_intro: bool = False,
                  question_type_mix: dict = None):
         self.session_id = session_id
@@ -47,6 +55,7 @@ class InterviewSession:
         self.style = interview_style
         self.db = db
         self.mode = mode
+        self.stage = stage  # v5.0: 面试阶段（phone_screen/tech_round_1/tech_round_2/hr）
 
         # v2.7: 自我介绍 + 题型占比
         self.include_self_intro = include_self_intro
@@ -79,6 +88,13 @@ class InterviewSession:
         self.weight_reason = "尚未分析岗位，暂用五维等权"
         self.weight_source = "default"
         self._weights_ready = False
+
+        # v5.0: 薄弱点跨轮累计 + 不会答恢复 + 简历证据检索
+        self.weakness_tags: list[str] = []            # 去重累计（保序）
+        self._weakness_counts: dict[str, int] = {}    # 标签 → 出现次数
+        self.recovery_active = False                  # 当前是否处于"不会答恢复"状态
+        self._retriever: ResumeRetriever | None = None
+        self.mode_changed = False                     # 最近一次是否切换过模式（前端可提示）
 
     # ===== v2.6: JD 动态权重 =====
 
@@ -310,6 +326,7 @@ class InterviewSession:
     def advance_round(self) -> bool:
         """
         推进到下一轮。返回 True 表示还有下一轮，False 表示面试结束（main.py 契约）。
+        v5.0: 若中途切换过模式（如切到 traditional），按新模式重建轮次结构。
         """
         self.current_round += 1
         self.current_question_idx = 0
@@ -318,6 +335,11 @@ class InterviewSession:
         self.round_diagnoses = []
         self.extra_questions_added = 0
         self.follow_up_count = 0
+        if self.mode_changed:
+            self.rounds = (config.TRADITIONAL_ROUNDS if self.mode == "traditional"
+                           else config.INTERVIEW_ROUNDS)
+            self.current_round = min(self.current_round, len(self.rounds))
+            self.mode_changed = False
         return not self.is_finished
 
     def round_summary(self) -> dict:
@@ -360,18 +382,110 @@ class InterviewSession:
             self.round_diagnoses.append(diag_with_round)
             self.all_diagnoses.append(diag_with_round)
             self.pending_follow_up = str(diagnosis.get("follow_up_question", "") or "").strip()
+            # v5.0: 薄弱点跨轮累计
+            tags = diagnosis.get("weakness_tags") or []
+            if tags:
+                self.accumulate_weaknesses(tags)
         else:
             self.pending_follow_up = ""
 
         self.current_question_idx += 1
 
+    # ===== v5.0: 简历证据 / 不会答恢复 / 多模式 =====
+
+    def _evidence_for(self, answer_text: str) -> str:
+        """按候选人当前回答检索简历，生成【本轮证据包】。"""
+        if self._retriever is None:
+            self._retriever = ResumeRetriever()
+            if self.resume_text and self.resume_text.strip():
+                self._retriever.add_document("简历", self.resume_text)
+        return self._retriever.select_context(answer_text)
+
+    def needs_recovery(self, answer_text: str) -> bool:
+        """检测候选人是否表示"不会/不懂/没思路"，触发不会答恢复。"""
+        if not answer_text:
+            return False
+        low = answer_text.strip().lower()
+        return any(m in low for m in UNCERTAIN_ANSWER_MARKERS)
+
+    def accumulate_weaknesses(self, tags: list[str]) -> None:
+        """跨轮累计薄弱点标签（保序去重 + 计数）。"""
+        for t in tags:
+            t = str(t).strip()
+            if not t:
+                continue
+            self._weakness_counts[t] = self._weakness_counts.get(t, 0) + 1
+            if t not in self.weakness_tags:
+                self.weakness_tags.append(t)
+
+    def weakness_payload(self) -> dict:
+        """薄弱点面板数据（供前端实时刷新）。"""
+        return {
+            "tags": list(self.weakness_tags),
+            "counts": dict(self._weakness_counts),
+            "recovery_active": self.recovery_active,
+        }
+
+    def switch_mode(self, mode: str, stage: str | None = None) -> dict:
+        """
+        v5.0: 会话进行中切换面试模式/阶段。
+        返回前端可用的模式切换事件；traditional <-> simulation 会改变轮次结构，
+        因此会话中途仅允许在 simulation/coach/hardcore/interview_only 之间切换，
+        切换 traditional 需要重建轮次（返回提示，由 main.py 决定是否强制）。
+        """
+        old_mode = self.mode
+        new_mode = mode if mode in ("simulation", "traditional", "coach", "hardcore", "interview_only") else old_mode
+
+        if new_mode == "traditional" and old_mode != "traditional":
+            # 传统模式轮次结构与拟真模式不同，中途切换需在下一轮生效
+            self.mode = new_mode
+            self.mode_changed = True
+            self.recovery_active = False
+            return {
+                "type": "mode_change",
+                "session_id": self.session_id,
+                "previous": {"mode": old_mode, "stage": self.stage},
+                "current": {"mode": new_mode, "stage": self.stage},
+                "message": f"模式已切换为「{new_mode}」，下一轮将使用传统 5 轮制结构",
+                "applied_next_round": True,
+            }
+
+        if new_mode != old_mode:
+            self.mode = new_mode
+            self.mode_changed = True
+            self.recovery_active = False
+
+        if stage is not None and stage in ("phone_screen", "tech_round_1", "tech_round_2", "hr"):
+            self.stage = stage
+
+        if new_mode == old_mode and (stage is None or stage == self.stage):
+            return {
+                "type": "mode_change",
+                "session_id": self.session_id,
+                "previous": {"mode": old_mode, "stage": self.stage},
+                "current": {"mode": new_mode, "stage": self.stage},
+                "message": "模式未变化",
+                "applied_next_round": False,
+            }
+
+        return {
+            "type": "mode_change",
+            "session_id": self.session_id,
+            "previous": {"mode": old_mode, "stage": self.stage},
+            "current": {"mode": new_mode, "stage": self.stage},
+            "message": f"面试模式已切换为「{new_mode}」，接下来我将按新模式进行",
+            "applied_next_round": False,
+        }
+
     async def handle_answer(self, answer_text: str) -> dict:
         """
         非流式处理一次回答（降级路径 / 兼容 main.py 契约）。
         流式主流程请使用 stream_answer()。
+        v5.0: 注入简历证据包 + 不会答恢复信号。
         """
         q = self.current_question
         question_text = q.get("question", "") if isinstance(q, dict) else str(q or "")
+        recovery_requested = self.needs_recovery(answer_text)
 
         diagnosis = await self.diagnosis.diagnose(
             question=question_text,
@@ -379,8 +493,13 @@ class InterviewSession:
             resume_text=self.resume_text,
             jd_text=self.jd_text,
             weights=self.dim_weights,
+            evidence_package=self._evidence_for(answer_text),
+            mode=self.mode,
+            recovery_requested=recovery_requested,
         )
         self.record_answer(answer_text, diagnosis)
+        if recovery_requested:
+            self.recovery_active = True
         return diagnosis
 
     async def stream_answer(self, answer_text: str):
@@ -388,10 +507,12 @@ class InterviewSession:
         v2.6 主流程：流式诊断一次回答。
         逐条 yield 诊断消息；结束时自动 record_answer，
         并把 Diagnostician 产出的 follow_up_question 暂存到 pending_follow_up。
+        v5.0: 注入简历证据包 + 不会答恢复信号。
         """
         q = self.current_question
         question_text = q.get("question", "") if isinstance(q, dict) else str(q or "")
         question_type = self._get_question_type()
+        recovery_requested = self.needs_recovery(answer_text)
 
         final_result = None
         async for msg in self.diagnosis.stream(
@@ -401,12 +522,17 @@ class InterviewSession:
             jd_text=self.jd_text,
             weights=self.dim_weights,
             question_type=question_type,
+            evidence_package=self._evidence_for(answer_text),
+            mode=self.mode,
+            recovery_requested=recovery_requested,
         ):
             if msg.get("type") == "diagnosis_done":
                 final_result = msg.get("data")
             yield msg
 
         self.record_answer(answer_text, final_result)
+        if recovery_requested:
+            self.recovery_active = True
 
     def handle_follow_up_answer(self, answer_text: str):
         """

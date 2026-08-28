@@ -94,9 +94,33 @@ def build_report(session) -> dict:
                 "rounds": v["rounds"],
             })
 
+    # v5.0: 逐题标准答案沉淀（修复"参考答案沉淀"恒为空缺陷）
+    detailed_qa = []
+    for d in session.all_diagnoses:
+        q_text = d.get("question", "") or ""
+        rewritten = d.get("rewritten_answer", "") or ""
+        if not rewritten:
+            continue
+        detailed_qa.append({
+            "round": d.get("round", 0),
+            "round_name": d.get("round_name", ""),
+            "question": q_text,
+            "rewritten_answer": rewritten,
+            "key_changes": d.get("key_changes", []) or [],
+            "weakness_tags": d.get("weakness_tags", []) or [],
+            "overall_score": d.get("overall_score", 0),
+        })
+
+    # v5.0: 薄弱点跨轮累计标签（供前端薄弱点面板 + 复盘）
+    weakness_tag_summary = []
+    counts = getattr(session, "_weakness_counts", {}) or {}
+    for tag, cnt in sorted(counts.items(), key=lambda x: -x[1]):
+        weakness_tag_summary.append({"tag": tag, "count": cnt})
+
     return {
         "session_id": session.session_id,
         "mode": getattr(session, "mode", "simulation"),
+        "stage": getattr(session, "stage", "phone_screen"),
         "interviewer_style": getattr(session, "style", "friendly"),
         "interviewer_history": getattr(session, "interviewer_history", []),
         "total_rounds": len(rounds),
@@ -115,6 +139,8 @@ def build_report(session) -> dict:
         "strengths": strengths,
         "weaknesses": weaknesses,
         "suggestions": suggestions,
+        "detailed_qa": detailed_qa,
+        "weakness_tag_summary": weakness_tag_summary,
     }
 
 
@@ -244,8 +270,19 @@ def generate_review_markdown(report: dict) -> str:
         lines.append("- 各维度均在 3.5 分以上，无明显短板，继续保持！")
     lines.append("")
 
-    # 3. 可背诵的标准答案
-    lines.append("## 三、参考答案沉淀\n")
+    # 3. 薄弱点标签汇总（v5.0: 跨轮累计）
+    tag_summary = report.get("weakness_tag_summary") or []
+    if tag_summary:
+        lines.append("## 三、薄弱点标签（跨轮累计）\n")
+        for item in tag_summary[:10]:
+            tag = item.get("tag", "")
+            cnt = item.get("count", 1)
+            if tag:
+                lines.append(f"- **{tag}**（出现 {cnt} 次）")
+        lines.append("")
+
+    # 4. 可背诵的标准答案
+    lines.append("## 四、参考答案沉淀\n")
     lines.append(
         "> 以下是将你的回答优化后的标准版本，建议背诵核心要点。\n"
     )
@@ -257,15 +294,15 @@ def generate_review_markdown(report: dict) -> str:
             lines.append(f"{rewritten}")
             lines.append("")
 
-    # 4. 下次面试 TODO
-    lines.append("## 四、下次面试 TODO\n")
+    # 5. 下次面试 TODO
+    lines.append("## 五、下次面试 TODO\n")
     lines.append("- [ ] 针对薄弱维度专项练习")
     lines.append("- [ ] 熟背参考答案的核心结构")
     lines.append("- [ ] 用量化数据替换模糊描述")
     lines.append("- [ ] 练习 STAR 法则完整叙事")
     lines.append("")
 
-    # 5. 原始报告链接
+    # 6. 原始报告链接
     lines.append("---\n")
     lines.append(
         "> 完整诊断数据见系统内的「综合报告」页面。"

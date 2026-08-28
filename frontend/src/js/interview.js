@@ -92,6 +92,15 @@ export function initInterview() {
               innerHTML: '<div class="mode-name">🎓 教练模式</div><div class="mode-desc">先教后问，降低门槛</div>',
               onClick: () => selectMode('coach'),
             }),
+            // v5.0: 新增拷打 / 只面试模式（对标 agent-interview-coach）
+            el('div', { className: 'mode-option', 'data-mode': 'hardcore',
+              innerHTML: '<div class="mode-name">🔥 拷打模式</div><div class="mode-desc">高压追问，专抓名词堆砌与真实性漏洞</div>',
+              onClick: () => selectMode('hardcore'),
+            }),
+            el('div', { className: 'mode-option', 'data-mode': 'interview_only',
+              innerHTML: '<div class="mode-name">🤐 只面试模式</div><div class="mode-desc">只问不解析，还原真实面试节奏</div>',
+              onClick: () => selectMode('interview_only'),
+            }),
           ),
         ),
         el('div', { className: 'form-group' },
@@ -231,7 +240,7 @@ function updateSummary() {
   const set = (id, text) => { const node = $(`#${id}`); if (node) node.textContent = text; };
   set('summary-resume', $('#resume-text').value.trim() ? '已填写' : '未填写');
   set('summary-jd', $('#jd-text').value.trim() ? '已填写' : '未填写');
-  const modeNames = { simulation: '拟真模式', traditional: '传统模式', coach: '教练模式' };
+  const modeNames = { simulation: '拟真模式', traditional: '传统模式', coach: '教练模式', hardcore: '拷打模式', interview_only: '只面试模式' };
   set('summary-mode', modeNames[currentMode] || currentMode);
   const styleNames = { friendly: '友好型', strict: '严格型', pressure: '压力型' };
   set('summary-style', styleNames[currentStyle] || currentStyle);
@@ -412,11 +421,30 @@ function initSessionLayout(data) {
   const sidebar = $('#diag-sidebar');
   // 阶段进度
   sidebar.appendChild(buildStageIndicator(0));
-  // v2.4: 显示模式标签
-  if (data.mode === 'traditional') {
-    sidebar.appendChild(el('div', { className: 'mode-badge',
-      textContent: '📝 传统模式 · 5轮次面试' }));
-  }
+  // v2.4: 显示模式标签；v5.0: 显示模式 + 阶段 + 会话中切换
+  const modeNames = { simulation: '🎯 拟真模式', traditional: '📝 传统模式', coach: '🎓 教练模式', hardcore: '🔥 拷打模式', interview_only: '🤐 只面试模式' };
+  const stageNames = { phone_screen: '电话筛选面', tech_round_1: '技术一面', tech_round_2: '技术二面', hr: 'HR 面' };
+  sidebar.appendChild(el('div', { className: 'mode-badge', id: 'session-mode-badge',
+    textContent: `${modeNames[data.mode] || data.mode} · ${stageNames[data.stage] || '进行中'}` }));
+
+  // v5.0: 会话中切换模式的快捷菜单（下拉）
+  sidebar.appendChild(el('div', { className: 'session-mode-switch', id: 'session-mode-switch',
+    innerHTML: `
+      <select class="session-mode-select" id="session-mode-select">
+        ${Object.entries(modeNames).map(([v, label]) => `<option value="${v}" ${v === data.mode ? 'selected' : ''}>${label}</option>`).join('')}
+      </select>
+      <span class="session-mode-hint">切换面试模式（下一轮生效）</span>` }));
+
+  const modeSelect = $('#session-mode-select');
+  if (modeSelect) modeSelect.addEventListener('change', () => {
+    const next = modeSelect.value;
+    if (next && next !== (window._sessionMode || data.mode)) {
+      if (ws && typeof ws.send === 'function') {
+        ws.send('switch_mode', { mode: next });
+      }
+    }
+  });
+  window._sessionMode = data.mode;
 }
 
 function handleWSMessage(type, data) {
@@ -495,6 +523,27 @@ function handleWSMessage(type, data) {
       showDiagnosis($('#chat-flow'), data);
       break;
 
+    // v5.0: 薄弱点实时累计面板
+    case 'weakness_update':
+      renderWeaknessPanel(data);
+      break;
+
+    // v5.0: 会话中模式切换确认
+    case 'mode_change':
+      if (data && data.current) {
+        window._sessionMode = data.current.mode;
+        const badge = $('#session-mode-badge');
+        if (badge) {
+          const names = { simulation: '🎯 拟真模式', traditional: '📝 传统模式', coach: '🎓 教练模式', hardcore: '🔥 拷打模式', interview_only: '🤐 只面试模式' };
+          const stageNames = { phone_screen: '电话筛选面', tech_round_1: '技术一面', tech_round_2: '技术二面', hr: 'HR 面' };
+          badge.textContent = `${names[data.current.mode] || data.current.mode} · ${stageNames[data.current.stage] || '进行中'}`;
+        }
+        const sel = $('#session-mode-select');
+        if (sel) sel.value = data.current.mode;
+        if (data.message && data.message !== '模式未变化') toast(data.message, 'info');
+      }
+      break;
+
     // v2.1: 安全拦截
     case 'security_block':
       toast('⚠ 回答被拦截: ' + data.reason, 'error');
@@ -567,6 +616,46 @@ function buildStageIndicator(currentRound) {
     div.appendChild(el('span', { className: 'stage-label', textContent: r.name }));
   });
   return div;
+}
+
+// v5.0: 薄弱点实时累计面板（对标 agent-interview-coach 的 /今日弱点）
+function renderWeaknessPanel(data) {
+  const sidebar = $('#diag-sidebar');
+  if (!sidebar) return;
+  const container = $('#weakness-panel');
+  const tags = (data && data.tags) || [];
+  const counts = (data && data.counts) || {};
+
+  if (!container) {
+    if (!tags.length) return;
+    const panel = el('div', { className: 'card weakness-panel', id: 'weakness-panel' },
+      el('div', { className: 'card-title', textContent: '⚠️ 薄弱点（跨轮累计）' }),
+      el('div', { className: 'weakness-tags', id: 'weakness-tags' }),
+      data.recovery_active ? el('div', { className: 'recovery-banner',
+        textContent: '🛟 已进入「不会答恢复」辅导' }) : '',
+    );
+    sidebar.appendChild(panel);
+  }
+
+  const tagsBox = $('#weakness-tags');
+  if (tagsBox) {
+    tagsBox.innerHTML = '';
+    if (!tags.length) {
+      tagsBox.appendChild(el('div', { className: 'weakness-empty', textContent: '暂无薄弱点标签' }));
+    } else {
+      tags.forEach(t => {
+        const cnt = counts[t] || 1;
+        tagsBox.appendChild(el('span', { className: 'weakness-tag',
+          textContent: `${t} ×${cnt}` }));
+      });
+    }
+  }
+  // 恢复横幅
+  const banner = $('#weakness-panel .recovery-banner');
+  if (data && data.recovery_active && !banner) {
+    $('#weakness-panel').appendChild(el('div', { className: 'recovery-banner',
+      textContent: '🛟 已进入「不会答恢复」辅导' }));
+  }
 }
 
 function showQuestion(area, data) {

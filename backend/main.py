@@ -42,6 +42,7 @@ from .schemas import (
     GapAnalysisRequest, GapAnalysisResponse,
     CrossJobCompareRequest, CrossJobCompareResponse, JobCompareItem,
     CareerPlanRequest, CareerPlanResponse,  # v3.2 职业规划
+    ModeSwitchRequest, ModeSwitchResponse,  # v5.0 面试模式切换
 )
 from .security import full_check, check_output
 from .web_research import enrich_jd_with_research
@@ -268,7 +269,7 @@ async def create_session(req: SessionCreateRequest, request: Request = None):
                        resume_filename="inline", jd_text=jd_final,
                        resume_text=resume_text)
 
-    # 创建面试会话 (v2.4: 传递 mode)
+    # 创建面试会话 (v2.4: 传递 mode; v5.0: 传递 stage)
     session = InterviewSession(
         session_id=session_id,
         resume_text=resume_text,
@@ -276,7 +277,8 @@ async def create_session(req: SessionCreateRequest, request: Request = None):
         llm_client=llm_client,
         diagnosis_engine=diagnosis_engine,
         interview_style=req.style or "friendly",
-        mode=req.mode or "simulation",
+        mode=req.mode.value if req.mode else "simulation",
+        stage=req.stage.value if req.stage else "phone_screen",
         include_self_intro=req.include_self_intro or False,
         question_type_mix=req.question_type_mix or {},
     )
@@ -332,6 +334,27 @@ async def api_get_session(session_id: str):
     # v4.0: 附带报告，供历史详情抽屉展示综合评分/轮次汇总
     report = await get_report(session_id)
     return {"session": session, "qa_count": len(qas), "qas": qas, "report": report}
+
+
+# ===== v5.0: 会话进行中切换面试模式/阶段 =====
+
+@app.post("/api/interview/{session_id}/mode", response_model=ModeSwitchResponse)
+@limiter.limit(config.RATE_LIMIT_SESSION)
+async def switch_interview_mode(session_id: str, req: ModeSwitchRequest, request: Request = None):
+    async with _session_lock:
+        session = active_sessions.get(session_id)
+    if not session:
+        raise HTTPException(404, "会话不存在或已结束")
+
+    event = session.switch_mode(req.mode.value, req.stage.value if req.stage else None)
+    # 若当前有未使用的追问，模式切换后清空，避免旧模式产物串场
+    session.pending_follow_up = ""
+    return ModeSwitchResponse(
+        session_id=session_id,
+        mode=session.mode,
+        stage=session.stage,
+        message=event["message"],
+    )
 
 
 @app.get("/api/reports/{session_id}")
@@ -938,12 +961,13 @@ async def ws_interview(websocket: WebSocket, session_id: str):
         return
 
     try:
-        # 1. 发送面试官信息（v2.4: 含模式信息）
+        # 1. 发送面试官信息（v2.4: 含模式信息；v5.0: 含阶段信息）
         await websocket.send_json({
             "type": "interviewer_info",
             "data": {
                 "style": session.style,
                 "mode": session.mode,
+                "stage": session.stage,
                 "total_rounds": len(session.rounds),
                 "rounds_info": [{"index": r["round_index"], "name": r["name"]}
                                 for r in session.rounds],
@@ -1026,6 +1050,30 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                         await websocket.send_json({"type": "pong", "data": {}})
                         continue
 
+                    # v5.0: 会话中切换模式/阶段（实时生效）
+                    if msg_type == "switch_mode":
+                        from .schemas import InterviewMode, InterviewStage
+                        mode_val = data.get("mode", "")
+                        stage_val = data.get("stage") or None
+                        try:
+                            mode = InterviewMode(mode_val).value if mode_val else None
+                            stage = InterviewStage(stage_val).value if stage_val else None
+                        except ValueError:
+                            await websocket.send_json({
+                                "type": "error",
+                                "data": {"message": f"未知模式或阶段: {mode_val} / {stage_val}"}
+                            })
+                            continue
+                        if mode:
+                            event = session.switch_mode(mode, stage)
+                        elif stage:
+                            event = session.switch_mode(session.mode, stage)
+                        else:
+                            continue
+                        session.pending_follow_up = ""
+                        await websocket.send_json({"type": "mode_change", "data": event})
+                        continue
+
                     if msg_type != "answer":
                         continue
 
@@ -1069,6 +1117,12 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                     await websocket.send_json({
                         "type": "radar_update",
                         "data": session.radar_snapshot()
+                    })
+
+                    # v5.0: 每题诊断后推送薄弱点累计面板
+                    await websocket.send_json({
+                        "type": "weakness_update",
+                        "data": session.weakness_payload()
                     })
 
                     # v2.6: 追问已由诊断一次性产出，无需二次 LLM 调用

@@ -2,7 +2,7 @@
 <h1 align="center">🤖 AI 模拟面试官与职业规划</h1>
 
 <p align="center">
-  <strong>v4.2 — 小米 MiMo 云端语音（TTS/ASR）+ 市场数据 Tab（B 档内嵌实时采集）+ 全新 UIUX（课程项目级，非生产级）</strong>
+  <strong>v5.0 — 简历证据检索 + 不会答恢复 + 薄弱点累计 + 会话中多模式切换（课程项目级，非生产级）</strong>
 </p>
 
 <p align="center">
@@ -45,9 +45,14 @@ AI 模拟面试官是一个面向求职者的智能面试练习平台。上传�
 - **Web 层限流**：slowapi 频率限制 + 安全响应头 + 请求体大小限制（降低滥用，非安全边界）
 - **启发式内容检查**：基于关键词/正则拦截最幼稚的注入尝试（非安全边界，可被绕过；详见「已知局限」）
 - **多 AI 后端**：DeepSeek / 通义千问 / 智谱 GLM / OpenAI 可切换
+- **模型调用优雅降级（fallback）**：主模型失败（限流/超时/不可用）时按 `LLM_FALLBACK_CHAIN` 自动切换备用模型，调用方无感知（v4.3）
+- **简历证据检索（v5.0）**：本地关键词 + 优先级加权轻量检索器，为追问与诊断实时产出「本轮证据包」，配合证据硬规则约束模型**只依据简历证据或亲述评价**、严禁编造经历，杜绝"AI 凭空捏造候选人做过的事"
+- **不会答恢复（v5.0）**：检测到候选人示弱（不会/不懂/没思路…）自动切换辅导式引导，而非机械继续拷打
+- **薄弱点跨轮累计（v5.0）**：把各轮诊断的薄弱标签跨轮聚合，实时面板 + 报告沉淀「今日弱点」，并新增逐题参考答案背诵（修复参考答案恒为空）
+- **会话中多模式/多阶段切换（v5.0）**：模拟过程中动态切换模式（simulation / traditional / coach / hardcore / interview_only）与阶段（phone_screen / tech_round_1 / tech_round_2 / hr）
 - **题库管理**：CRUD + 收藏 + 从面试会话导入
 - **Docker 部署**：Dockerfile + docker-compose.yml 一键部署
-- **自动化测试**：320 个测试用例覆盖核心路径
+- **自动化测试**：438 个测试用例覆盖核心路径（含依赖 API Key 的 LLM 类测试）
 
 ---
 
@@ -165,6 +170,13 @@ ZHIPU_MODEL=glm-4-flash
 OPENAI_API_KEY=sk-xxx
 OPENAI_BASE_URL=https://api.openai.com/v1
 OPENAI_MODEL=gpt-4o-mini
+
+# 模型调用优雅降级（fallback，可选，v4.3）
+# 主模型失败(限流/超时/不可用)时按序自动切换备用模型，调用方无感知
+# 格式: "provider:model,provider:model,..."；留空=不降级(单模型)
+# qwen-plus 与 deepseek-chat 能力相当(通用对话主力)，作备用首选
+# LLM_FALLBACK_CHAIN=deepseek:deepseek-chat,qwen:qwen-plus
+# LLM_FALLBACK_MAX_RETRIES=3
 ```
 
 ---
@@ -213,6 +225,7 @@ AI-simulated-interviewer/
 │   │       ├── adapters.py             # 采集记录 → 标准 job dict + JD 组装
 │   │       └── tasks.py                # 后台任务表（互斥/进度/TTL 清理）
 │   ├── voice_service.py          # [v4.2 NEW] MiMo 云端语音代理（TTS 合成 + ASR 识别）
+│   ├── resume_retriever.py       # [v5.0 NEW] 简历证据检索器（分块/加权/预算/证据包）
 │   └── interview_engine/         # 面试引擎子包
 │       ├── __init__.py
 │       ├── session.py            # 核心状态机
@@ -240,7 +253,7 @@ AI-simulated-interviewer/
 │           ├── components.css    # 框架组件
 │           └── pages/            # 领域样式（含 market.css 纸墨印章风格）
 │
-├── tests/                        # 自动化测试（314 用例）
+├── tests/                        # 自动化测试（400+ 用例，本机非 LLM 类全绿）
 │   ├── conftest.py               # 共享 fixtures
 │   ├── test_schemas.py           # Schema 验证
 │   ├── test_api.py               # HTTP 路由集成测试（含安全测试）
@@ -256,7 +269,9 @@ AI-simulated-interviewer/
 │   ├── test_career_planner.py    # [v3.2] 职业规划（schema + 路由 + 降级路径）
 │   ├── test_market_crawler_*.py  # [v4.1] 采集适配器 + 后台任务状态机
 │   ├── test_voice_service.py     # [v4.2] MiMo 语音服务（key 校验/错误处理/mock）
-│   └── test_voice_api.py         # [v4.2] /api/voice/* 代理路由
+│   ├── test_voice_api.py         # [v4.2] /api/voice/* 代理路由
+│   ├── test_session.py           # [v5.0] 会话状态机（追问/权重/薄弱点/恢复/多模式，49 例）
+│   └── test_resume_retriever.py  # [v5.0] 简历证据检索（分块/命中/预算/溯源，12 例）
 │
 ├── docs/                         # 需求文档与周报
 │   ├── week1_*.md                # v1 模块需求
@@ -288,7 +303,7 @@ AI-simulated-interviewer/
 | **日志** | logging + RotatingFileHandler（5MB×3 旋转） |
 | **部署** | Docker + Docker Compose（跨平台一键部署） |
 | **分层校验** | import-linter 契约（L1-L4，`run.py lint` 强制） |
-| **测试** | pytest（314 用例） |
+| **测试** | pytest（400+ 用例，本机非 LLM 类全绿） |
 
 ---
 
@@ -365,9 +380,12 @@ AI-simulated-interviewer/
 | **WebSocket 无连接身份校验** | `/ws/interview/{session_id}` 仅校验会话存在性，不校验连接者身份；任何持有 session_id 的客户端均可接管该会话流程，与"无认证/授权"同源 | 接入认证层 + 连接归属校验；v3.1 已为 `switch_provider` 单例重赋值加锁消除重赋值竞态 |
 | **全局单例可变状态** | `llm_client`/`diagnosis_engine` 为模块级单例，被所有会话共享、无按会话隔离；多后端高频切换或并发导入下内部 provider 状态存在理论竞态 | 引入按会话隔离的客户端实例或请求作用域依赖（课程项目阶段仅文档披露，不做隔离） |
 | **双 Agent 成本** | Diagnostician + Rewriter 每题至少 2 次 LLM 调用，流式下延迟与 token 成本翻倍 | 做单 Agent + 结构化输出（JSON）的对比实验，量化"分 vs 合"的质量/成本权衡后再决策 |
+| **模型调用单点故障（已缓解）** | 原仅单模型，任一 provider 故障即硬失败；v4.3 起支持 `LLM_FALLBACK_CHAIN` 优雅降级，主模型失败自动切备用模型，调用方零改动、不影响双 Agent 诊断客观性 | 仍建议为备用 provider 配置独立密钥以保障可用性 |
 | **SQLite 扩展性** | 单文件数据库；多 Worker 下 WebSocket 需 sticky session，水平扩展受限 | 换异步 Postgres / 引入连接池；或改用内存态 + 持久化分离 |
 | **内容护栏可被绕过** | 见上节，正则过滤防不住认真攻击者 | 见上节演进方向 |
 | **测试偏纯函数** | 50 个用例覆盖了权重计算、Schema 校验等确定性逻辑；但**诊断准确性、追问是否抓最弱维度、评分稳定性**依赖 LLM 输出，难以在单测中验证 | 引入基于黄金样本的回归评测（LLM-as-judge / 人工抽检），把"核心主张"纳入可观测范围 |
+| **证据检索为本地启发式** | v5.0 简历证据检索是本地关键词 + 优先级加权，非语义向量检索；中文分词粒度受限，同义/模糊表述可能漏命中，仅作证据提示不替代向量库；可调参数为代码级常量未下沉 `.env` | 引入轻量向量库（如 sqlite-vec / faiss）做语义召回；参数下沉配置 |
+| **参考答案面板未渲染** | v5.0 报告已产出 `detailed_qa`（逐题参考答案）字段，但前端 `report.js` 尚无对应渲染面板，属前后端待对齐 | 在报告 Tab 补逐题参考答案背诵面板 |
 | **市场基准数据来源（学术诚信披露）** | Gap 分析的"市场基准参照"数据来自本人此前已完成并提交的采集项目（job-crawler）的 `data.db`，经 importer + store 导入 `market.db`，**本次仅做管道整合、不含数据采集工作量** | 若评审基于"本次周期实际产出"，可评估替换为小样本人工整理/公开数据集 |
 | **权重注入 prompt 因果未验证** | Diagnostician prompt 中的权重真正生效处在 `weighted_score()` 加权平均；prompt 是否改变模型打分分布未经 A/B 验证（已有 prompt 已改为中性诚实表述） | 做"有无权重说明文字"的 A/B 对照实验，量化影响 |
 | **LLM 权重稳定性未测** | `analyze_jd_weights()` 用 LLM 判 JD 权重，`temperature=0.2` 非完全确定，"千岗千面"卖点的同-JD 权重方差从未测过 | 固定 JD 反复采样统计权重方差，给出稳定性区间 |

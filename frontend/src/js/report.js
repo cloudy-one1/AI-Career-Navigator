@@ -195,6 +195,20 @@ function renderReport(report) {
     ));
   }
 
+  // v5.0: 薄弱点标签跨轮累计（对标 agent-interview-coach /今日弱点）
+  if (report.weakness_tag_summary?.length) {
+    content.appendChild(el('div', { className: 'card', style: 'margin-top:12px;' },
+      el('div', { className: 'card-title', textContent: '🏷 薄弱点标签（跨轮累计）' }),
+      el('div', { className: 'report-tag-cloud', style: 'display:flex;flex-wrap:wrap;gap:8px;' },
+        ...report.weakness_tag_summary.map(item => el('span', {
+          className: 'report-tag',
+          style: 'padding:4px 12px;border-radius:14px;background:#FEF2F2;color:#DC2626;font-size:.8rem;font-weight:500;',
+          textContent: `${item.tag} ×${item.count}`,
+        })),
+      ),
+    ));
+  }
+
   // 建议
   if (report.suggestions) {
     content.appendChild(el('div', { className: 'card' },

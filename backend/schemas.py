@@ -8,6 +8,26 @@ v2.5: 新增诊断反馈模型 + 岗位画像研究模型。
 
 from pydantic import BaseModel, Field
 from typing import Optional
+from enum import Enum
+
+
+# ========== v5.0: 面试模式 / 阶段枚举 ==========
+
+class InterviewMode(str, Enum):
+    """面试模式（对标 agent-interview-coach 的多模式协议）"""
+    SIMULATION = "simulation"        # 拟真模式（6 阶段标准面试官）
+    TRADITIONAL = "traditional"      # 传统模式（5 轮次）
+    COACH = "coach"                  # 教练模式（先补基础再追问，不输出分数）
+    HARDCORE = "hardcore"            # 拷打模式（高压追问，抓名词堆砌/过度包装/真实性漏洞）
+    INTERVIEW_ONLY = "interview_only"  # 只面试模式（只问不解析，≤一句反馈+一个追问）
+
+
+class InterviewStage(str, Enum):
+    """面试阶段（对标 agent-interview-coach 的 4 阶段协议）"""
+    PHONE_SCREEN = "phone_screen"    # 电话筛选面
+    TECH_ROUND_1 = "tech_round_1"    # 技术一面
+    TECH_ROUND_2 = "tech_round_2"    # 技术二面/主管面
+    HR = "hr"                        # HR 面
 
 
 # ========== 面试官风格 ==========
@@ -51,7 +71,8 @@ class SessionCreateRequest(BaseModel):
     resume_text: str = Field(default="", description="简历文本")
     jd_text: str = Field(default="", description="岗位描述")
     style: str = Field(default="friendly", description="面试官风格: friendly/strict/pressure/...")
-    mode: str = Field(default="simulation", description="面试模式: simulation(拟真6阶段) / traditional(传统5轮次) / coach(教练模式)")
+    mode: InterviewMode = Field(default=InterviewMode.SIMULATION, description="面试模式: simulation/traditional/coach/hardcore/interview_only")
+    stage: InterviewStage = Field(default=InterviewStage.PHONE_SCREEN, description="面试阶段（v5.0 多阶段协议）")
     include_self_intro: bool = Field(default=False, description="是否包含自我介绍环节")
     question_type_mix: dict = Field(default={}, description="题型占比偏好: {knowledge: N, project: N, behavior: N}，0-100")
 
@@ -94,8 +115,10 @@ class DiagnosisResult(BaseModel):
     quantification: DimensionScore
     logic_coherence: DimensionScore
     job_relevance: DimensionScore
+    professional_depth: DimensionScore  # v5.0: 专业深度维度（与诊断引擎五维对齐）
     overall_score: float = Field(..., description="综合评分")
     overall_comment: str = Field(..., description="综合评语")
+    weakness_tags: list[str] = Field(default=[], description="v5.0: 本轮薄弱点标签（供跨轮累计）")
 
 
 class DiagnoseResponse(BaseModel):
@@ -116,6 +139,20 @@ class HistoryItem(BaseModel):
     diagnosis: dict
     rewrite_suggestion: str
     created_at: str
+
+
+class ModeSwitchRequest(BaseModel):
+    """v5.0: 会话进行中切换面试模式"""
+    mode: InterviewMode = Field(default=InterviewMode.SIMULATION, description="目标模式")
+    stage: InterviewStage | None = Field(default=None, description="可选：同步切换阶段")
+
+
+class ModeSwitchResponse(BaseModel):
+    """v5.0: 模式切换结果"""
+    session_id: str
+    mode: str
+    stage: str
+    message: str
 
 
 # ========== 多轮面试模型 ==========

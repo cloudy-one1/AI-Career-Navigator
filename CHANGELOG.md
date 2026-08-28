@@ -1,8 +1,53 @@
 # 变更日志（CHANGELOG）
 
-> 记录 v2 → v4.2 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+> 记录 v2 → v5.0 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
 
 ---
+
+## v5.0 简历证据检索 + 不会答恢复 + 薄弱点累计 + 会话中多模式切换（2026-08-28）
+
+> 对标 [agent-interview-coach](https://github.com/xiaodeng-lp/agent-interview-coach) 的 interview_corpus / coaching recovery 思路，补齐三块硬短板：(1) **简历证据检索**——新增 `resume_retriever.py` 轻量检索器，为追问与诊断实时产出「本轮证据包」，并用证据硬规则约束诊断模型**只依据简历证据或候选人亲述评价**、严禁编造经历，从机制上杜绝"AI 凭空捏造候选人做过的事"；(2) **不会答恢复（coaching recovery）**——检测到候选人示弱（不会/不懂/没思路…）时切换辅导式引导，而非机械继续拷打；(3) **薄弱点跨轮累计**——把各轮诊断的薄弱标签跨轮聚合，实时面板 + 报告沉淀「今日弱点」。另支持会话中动态切换模式/阶段（simulation / traditional / coach / hardcore / interview_only × phone_screen / tech_round_1 / tech_round_2 / hr）。新增/重写测试 61 例（session 状态机 + resume_retriever），分层 lint 通过。
+
+### 新增（功能线）
+- **简历证据检索器（`resume_retriever.py`，L2）**：本地关键词 + 文件名优先级加权（`FILE_PRIORITY`，`score = priority + 命中词数×8`），无向量库/无托管依赖；`_chunk_text` 按 `CHUNK_SIZE=2000` 分块、`CHUNK_OVERLAP=250` 保相邻块语义；`_score_chunks` 仅在前 `SEARCH_HEAD_CHARS=800` 字符内匹配，且**只选命中≥1 关键词的块**（修复"无命中块也当选证据"缺陷）；`select_context` 施加单源 `MAX_CHUNKS_PER_SOURCE=2` / 总块数 `MAX_CONTEXT_CHUNKS=4` / 总字符 `MAX_CONTEXT_CHARS=6000` 三重硬预算防 token 膨胀；单文档纳入 `MAX_CHARS_PER_FILE=120_000`；无证据返回 `_NO_EVIDENCE_MESSAGE` 兜底；`trace_retrieval()` 逐块溯源（chunk_id/source/matched_terms/score/selected/reason）。
+- **诊断注入证据包 + 证据硬规则**：`diagnosis_engine` 的 `diagnose()/stream()/run_diagnosis*()` 新增 `evidence_package` / `mode` / `recovery_requested` 参数；新增 `EVIDENCE_USE_HARD_RULES`（只能依据证据或亲述评价、严禁编造、证据不足需明确澄清式追问、与简历矛盾需指出）、`COACHING_RECOVERY_INSTRUCTION`（不会答恢复）、`_MODE_INSTRUCTIONS`（五模式指令）、`WEAKNESS_KEYWORDS + _extract_weakness_tags`（薄弱点标签提取，限 6 个）；`normalize_result()` 新增返回 `weakness_tags`。
+- **会话状态机（`interview_engine/session.py`）**：`UNCERTAIN_ANSWER_MARKERS + needs_recovery()` 检测不会答信号；`_evidence_for()` 惰性构建 `ResumeRetriever` 生成证据包；`accumulate_weaknesses()/weakness_payload()` 跨轮累计薄弱点（返回 `tags/counts/recovery_active`）；`switch_mode(mode, stage)` 会话中切模式/阶段（切 `traditional` 于下一轮重建轮次结构）；`advance_round()` 在 `mode_changed` 时按新模式重建轮次；`stream_answer()/handle_answer()` 注入证据/模式/恢复信号。
+- **多模式/多阶段协议**：`schemas.py` 新增 `InterviewMode`（simulation/traditional/coach/hardcore/interview_only）与 `InterviewStage`（phone_screen/tech_round_1/tech_round_2/hr）枚举；`SessionCreateRequest` 新增 `mode`/`stage`；新增 `ModeSwitchRequest/ModeSwitchResponse` 响应模型；`DiagnosisResult` 新增 `weakness_tags`。
+- **后端端点**：HTTP `POST /api/interview/{session_id}/mode`（`switch_interview_mode`）；WS `/ws/interview/{session_id}` 新增 `switch_mode` 消息、`mode_change` 事件、`weakness_update` 事件（每题诊断后推送）、`interviewer_info` 含 `stage`。
+- **报告沉淀**：`report.py` 新增 `detailed_qa`（逐题标准答案，含 rewritten_answer/key_changes/weakness_tags，修复"参考答案恒为空"缺陷）与 `weakness_tag_summary`（跨轮薄弱点标签）；`generate_review_markdown()` 新增「薄弱点标签（跨轮累计）」章节。
+- **前端**：`interview.js` 新增 🔥拷打/🤐只面试两个模式卡片、会话中模式下拉切换、`weakness_update` →「⚠️ 薄弱点（跨轮累计）」面板 + `recovery-banner`「🛟 已进入不会答恢复辅导」、`mode_change` 徽章刷新、侧栏模式+阶段徽章；`report.js` 新增「🏷 薄弱点标签（跨轮累计）」标签云。
+
+### 修复
+- `resume_retriever.py` 初始化顺序：`_chunk_id` 在 `add_document()` 之后才赋值导致分块抛 `AttributeError`（改为先初始化）。
+- `resume_retriever.py` 命中过滤：无关键词命中的块也会凭 priority 入选，与"无匹配返回兜底提示"语义冲突（改为仅选命中块）。
+- `tests/test_session.py` 重写：旧草稿按臆测接口断言（`market_keyword`/`current_round_index`/四维 technical_depth），与 v5.0 实际实现完全脱节、必挂；重写为对齐真实接口（含五维 `professional_depth`、`config` 单例常量、`switch_mode` 事件、证据/恢复/薄弱点等 v5.0 能力）的可用测试。
+- `llm_client.py` 模块级全局单例导入即崩溃：`.env` 的 `LLM_FALLBACK_CHAIN` 含未配置 key 的备用 provider（如 `qwen:qwen-plus` 但 `QWEN_API_KEY` 为空）时，`_init_client` 在构建 fallback 候选 `OpenAI(api_key="")` 直接抛 `OpenAIError`，导致所有 import 它的测试在 collection 阶段失败（4 个 LLM/环境类测试无法收集）。修复：fallback 候选构建时对 key 做 `_api_key_issue` 校验，**无效 key 的候选直接跳过**（符合 fallback「备用缺失应降级而非致命」语义），主候选不受影响。修复后整套测试（含 LLM 类）438 例全绿。
+
+### 工程化
+- **测试**：新增 `tests/test_resume_retriever.py`（分块/命中/预算/溯源/证据包共 12 例）+ 重写 `tests/test_session.py`（状态机/追问/权重/轮次/薄弱点/恢复/多模式共 49 例），共 61 例；完整套件约 438 例（含依赖 API Key 的 `test_career_planner`/`test_gap_analyzer`/`test_llm_client`/`test_llm_fallback`），本机缺 Key 时其中 4 个 LLM/环境类测试无法收集、其余通过。
+
+### 范围与约束
+- 检索为**本地关键词启发式**，非语义向量检索：中文分词粒度受限，同义/模糊表述可能漏命中；仅作证据提示，不替代向量库。可调参数目前为代码级常量（`resume_retriever.py`），未下沉 `.env`。
+- 证据硬规则依赖 `evidence_package` 注入，仅约束诊断/追问阶段；**前端参考答案沉淀面板（`detailed_qa`）尚未渲染**，报告已产出字段，属前后端待对齐项。
+- 会话中切换 `traditional` 需下一轮生效；模拟模式内部（simulation/coach/hardcore/interview_only）可即时切换。
+
+## v4.3 模型调用优雅降级（fallback）（2026-08-28）
+
+> 在 L1 基础设施 `LLMClient` 新增配置驱动的模型 fallback 降级链：主模型调用失败（异常/限流/超时/返回不可用内容）时按 `LLM_FALLBACK_CHAIN` 自动切换备用 provider:model，覆盖非流式与流式（WebSocket 主流程）；调用方零改动，全局单例语义不变。新增 11 例 fallback 单测，分层 lint 通过。
+
+### 新增（功能线）
+- **fallback 候选池**：`llm_client.py._init_client` 按 `LLM_FALLBACK_CHAIN` 预构建有序候选（各自独立 api_key/base_url/model），主候选（当前 provider/model）始终在首位；`LLM_FALLBACK_MAX_RETRIES` 限制最大尝试数。
+- **降级包装器**：新增 `_call_with_fallback`（非流式，含 `success_pred` 软失败判定，JSON 解析失败自动重试下一候选）与 `_stream_with_fallback`（异步流式：`yield` 前失败无缝切换、已产出半截则停止并报错不拼接）。
+- **调用方零改动**：`chat / chat_json / chat_stream / chat_stream_async` 签名不变、内部自动 fallback；`question_gen / diagnosis_engine / career_planner / gap_analyzer / dimension_weights / web_research` 等全部汇聚到 `LLMClient` 的模块自动获得降级（不含 v4.2 MiMo 语音，其走独立降级通道）。
+- **配置**：`config.py` 新增 `LLM_FALLBACK_CHAIN` / `LLM_FALLBACK_MAX_RETRIES`；`.env.example` 新增 fallback 配置块。
+
+### 工程化
+- **测试**：新增 `tests/test_llm_fallback.py`（非流式/流式/配置解析共 11 例）；LLM 相关测试 18 例通过。
+- **可观测**：`get_provider_info` 暴露 `fallback_count`；fallback 命中与软失败均有日志标注。
+
+### 范围与约束
+- 单候选（未配置 `LLM_FALLBACK_CHAIN`）行为完全退化为现状，向后兼容。
+- fallback 不改变双 Agent 诊断客观性（评分与改写仍按既定顺序/prompt 隔离），仅解决单点 provider 故障；需为备用 provider 配置独立密钥方可生效。
 
 ## v4.2 小米 MiMo 云端语音接入（2026-08-28）
 
