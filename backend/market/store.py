@@ -135,6 +135,23 @@ async def query_jobs(keyword: Optional[str] = None, city: Optional[str] = None,
         await db.close()
 
 
+async def get_job_by_id(job_id: int) -> Optional[dict]:
+    """按主键查询单条岗位；不存在返回 None（tags 反序列化为 list）"""
+    db = await get_db()
+    try:
+        async with db.execute(
+            "SELECT * FROM job_postings WHERE id = ?", (job_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["tags"] = json.loads(d.get("tags") or "[]")
+        return d
+    finally:
+        await db.close()
+
+
 async def list_keywords() -> list[str]:
     """所有已采集过的搜索关键词（用于 JD 文本反向命中）"""
     db = await get_db()

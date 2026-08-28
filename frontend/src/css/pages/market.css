@@ -1,0 +1,1332 @@
+/* ===================================================
+   market.css — 市场数据 Tab（v3.3）纸墨印章设计系统
+   还原 job-crawler 的采集页 + 岗位列表页设计语言：
+   米色纸张 / 衬线字体 / 印章红 / data-no 编号档案感。
+   全部样式作用域限定 #market-panel 内，不影响其余 5 个 Tab。
+   =================================================== */
+
+/* ── 局部设计 Token：浅色公文风（默认） ── */
+#market-panel {
+  --mkt-paper: #F4F2ED;            /* 米色纸张底 */
+  --mkt-paper-card: #FCFAF6;       /* 卡片纸 */
+  --mkt-paper-deep: #EAE6DC;       /* 纸深面（横幅/表头） */
+  --mkt-ink: #1F2320;              /* 墨色正文 */
+  --mkt-ink-2: #4A5248;            /* 次级墨 */
+  --mkt-ink-muted: #8A918A;        /* 浅墨 */
+  --mkt-stamp: #C44F3A;            /* 印章红 */
+  --mkt-stamp-deep: #9B3025;       /* 印章深红 */
+  --mkt-stamp-soft: rgba(196, 79, 58, 0.10);
+  --mkt-stamp-bright: #E0634C;     /* 悬停亮红 */
+  --mkt-line: rgba(31, 35, 32, 0.14);
+  --mkt-line-strong: rgba(31, 35, 32, 0.30);
+  --mkt-shadow: 0 2px 6px rgba(31, 35, 32, 0.06), 0 10px 28px -12px rgba(31, 35, 32, 0.16);
+  --mkt-shadow-lift: 0 4px 10px rgba(31, 35, 32, 0.08), 0 18px 40px -16px rgba(31, 35, 32, 0.22);
+  --mkt-serif: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "STSong", "SimSun", serif;
+  --mkt-sans: "Noto Sans SC", "PingFang SC", "Microsoft YaHei", sans-serif;
+  --mkt-accent: var(--mkt-stamp);  /* 语义强调色（深色 SaaS 风下被四色切换器覆盖） */
+}
+
+/* 纸张肌理感：柔和米色渐变 + 细颗粒 */
+#market-panel {
+  background:
+    radial-gradient(1200px 600px at 15% -5%, rgba(196, 79, 58, 0.05), transparent 60%),
+    radial-gradient(900px 500px at 95% 10%, rgba(196, 79, 58, 0.04), transparent 55%),
+    var(--mkt-paper);
+  border-radius: var(--radius-lg, 16px);
+  padding: 20px 24px 40px;
+  color: var(--mkt-ink);
+  font-family: var(--mkt-sans);
+  transition: background var(--dur-base, 250ms) ease;
+}
+
+/* ── 顶部横幅：印章 Logo + 视图导航 + 风格切换 ── */
+.mkt-topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 22px;
+  padding-bottom: 16px;
+  border-bottom: 2px solid var(--mkt-line);
+}
+
+.mkt-seal {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.mkt-seal-mark {
+  width: 46px;
+  height: 46px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(150deg, var(--mkt-stamp-bright), var(--mkt-stamp) 55%, var(--mkt-stamp-deep));
+  color: #FFF8F2;
+  font-family: var(--mkt-serif);
+  font-size: 22px;
+  font-weight: 700;
+  border-radius: 10px;
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 248, 242, 0.55),
+    inset 0 0 0 3.5px rgba(155, 48, 37, 0.35),
+    var(--mkt-shadow);
+  letter-spacing: 0.08em;
+  user-select: none;
+}
+
+.mkt-seal-title {
+  font-family: var(--mkt-serif);
+  font-weight: 700;
+  font-size: 20px;
+  line-height: 1.25;
+  letter-spacing: 0.12em;
+}
+
+.mkt-seal-sub {
+  font-size: 11px;
+  color: var(--mkt-ink-muted);
+  letter-spacing: 0.35em;
+  margin-top: 2px;
+  writing-mode: horizontal-tb;
+}
+
+.mkt-topnav {
+  display: flex;
+  gap: 6px;
+  margin-left: 8px;
+  flex-wrap: wrap;
+}
+
+.mkt-topnav-btn {
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--mkt-ink-2);
+  font-family: var(--mkt-serif);
+  font-size: 14px;
+  padding: 7px 14px;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: all var(--dur-fast, 150ms) var(--ease-out, ease);
+  letter-spacing: 0.06em;
+}
+
+.mkt-topnav-btn:hover {
+  color: var(--mkt-stamp);
+  background: var(--mkt-stamp-soft);
+}
+
+.mkt-topnav-btn.active {
+  background: var(--mkt-ink);
+  color: var(--mkt-paper-card);
+  border-color: var(--mkt-ink);
+  box-shadow: var(--mkt-shadow);
+}
+
+/* 风格切换器（右上） */
+.mkt-theme-zone {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.mkt-theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border: 1px solid var(--mkt-line-strong);
+  border-radius: 999px;
+  background: var(--mkt-paper-card);
+  color: var(--mkt-ink-2);
+  font-size: 13px;
+  font-family: var(--mkt-serif);
+  cursor: pointer;
+  transition: all var(--dur-fast, 150ms) var(--ease-out, ease);
+}
+
+.mkt-theme-toggle:hover {
+  border-color: var(--mkt-stamp);
+  color: var(--mkt-stamp);
+  transform: translateY(-1px);
+}
+
+.mkt-theme-toggle .icon { font-size: 14px; }
+
+/* 语义色切换器（深色 SaaS 风下可见） */
+.mkt-accent-picker {
+  display: none;
+  align-items: center;
+  gap: 5px;
+}
+
+#market-panel.market-theme-dark .mkt-accent-picker { display: inline-flex; }
+
+.mkt-accent-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  padding: 0;
+  transition: transform var(--dur-fast, 150ms) var(--ease-spring, ease);
+}
+
+.mkt-accent-dot:hover { transform: scale(1.18); }
+.mkt-accent-dot.active {
+  border-color: #fff;
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.25);
+}
+
+/* ── 采集视图 ── */
+.mkt-banner {
+  position: relative;
+  overflow: hidden;
+  border-radius: 14px;
+  padding: 22px 26px;
+  margin-bottom: 20px;
+  background:
+    linear-gradient(115deg, var(--mkt-paper-card), var(--mkt-paper-deep));
+  border: 1px solid var(--mkt-line);
+  box-shadow: var(--mkt-shadow);
+}
+
+.mkt-banner::after {
+  content: "51JOB · 实时采集";
+  position: absolute;
+  right: 18px;
+  bottom: -6px;
+  font-family: var(--mkt-serif);
+  font-size: 44px;
+  font-weight: 700;
+  color: var(--mkt-line);
+  letter-spacing: 0.1em;
+  pointer-events: none;
+  user-select: none;
+}
+
+.mkt-banner h2 {
+  font-family: var(--mkt-serif);
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 6px;
+  letter-spacing: 0.08em;
+}
+
+.mkt-banner p {
+  margin: 0;
+  font-size: 13px;
+  color: var(--mkt-ink-2);
+  max-width: 560px;
+  line-height: 1.7;
+}
+
+.mkt-count-badge {
+  position: absolute;
+  top: 18px;
+  right: 20px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  background: var(--mkt-stamp);
+  color: #FFF8F2;
+  border-radius: 10px;
+  padding: 8px 14px;
+  box-shadow: var(--mkt-shadow);
+  font-family: var(--mkt-serif);
+}
+
+.mkt-count-badge .num {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.mkt-count-badge .lbl { font-size: 12px; opacity: 0.9; letter-spacing: 0.1em; }
+
+.mkt-card {
+  background: var(--mkt-paper-card);
+  border: 1px solid var(--mkt-line);
+  border-radius: 14px;
+  box-shadow: var(--mkt-shadow);
+  margin-bottom: 18px;
+}
+
+.mkt-card-pad { padding: 22px 24px; }
+
+.mkt-card-title {
+  font-family: var(--mkt-serif);
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  margin: 0 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mkt-card-title::before {
+  content: "";
+  width: 4px;
+  height: 16px;
+  border-radius: 2px;
+  background: var(--mkt-stamp);
+}
+
+.mkt-card-sub {
+  font-size: 12px;
+  color: var(--mkt-ink-muted);
+  margin: 0 0 16px;
+  padding-left: 12px;
+}
+
+.mkt-form-grid {
+  display: grid;
+  grid-template-columns: 1.4fr 1fr 0.8fr 0.6fr;
+  gap: 16px;
+  align-items: end;
+}
+
+.mkt-field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.mkt-field label {
+  font-size: 12px;
+  color: var(--mkt-ink-2);
+  letter-spacing: 0.12em;
+  font-weight: 600;
+}
+
+.mkt-input,
+.mkt-select {
+  width: 100%;
+  padding: 9px 12px;
+  border: 1px solid var(--mkt-line-strong);
+  border-radius: 8px;
+  background: var(--mkt-paper-card);
+  color: var(--mkt-ink);
+  font-size: 13.5px;
+  font-family: var(--mkt-sans);
+  transition: border-color var(--dur-fast, 150ms), box-shadow var(--dur-fast, 150ms);
+}
+
+.mkt-input:focus,
+.mkt-select:focus {
+  outline: none;
+  border-color: var(--mkt-stamp);
+  box-shadow: 0 0 0 3px var(--mkt-stamp-soft);
+}
+
+.mkt-input::placeholder { color: var(--mkt-ink-muted); }
+
+/* 省份→城市级联 */
+.mkt-city-row {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mkt-city-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-height: 30px;
+}
+
+.mkt-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--mkt-stamp);
+  background: var(--mkt-stamp-soft);
+  color: var(--mkt-stamp-deep);
+  font-size: 12.5px;
+  cursor: default;
+  animation: mkt-pop var(--dur-base, 250ms) var(--ease-spring, ease);
+}
+
+.mkt-chip button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0 2px;
+  border-radius: 4px;
+}
+
+.mkt-chip button:hover { color: var(--mkt-stamp-deep); }
+
+.mkt-city-hint { font-size: 12px; color: var(--mkt-ink-muted); }
+
+@keyframes mkt-pop {
+  from { transform: scale(0.85); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+/* 按钮 */
+.mkt-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 10px 20px;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  font-family: var(--mkt-serif);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: all var(--dur-fast, 150ms) var(--ease-out, ease);
+}
+
+.mkt-btn-primary {
+  background: linear-gradient(150deg, var(--mkt-stamp-bright), var(--mkt-stamp) 55%, var(--mkt-stamp-deep));
+  color: #FFF8F2;
+  box-shadow: var(--mkt-shadow);
+}
+
+.mkt-btn-primary:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: var(--mkt-shadow-lift);
+}
+
+.mkt-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.mkt-btn-ghost {
+  background: var(--mkt-paper-card);
+  border-color: var(--mkt-line-strong);
+  color: var(--mkt-ink-2);
+}
+
+.mkt-btn-ghost:hover:not(:disabled) {
+  border-color: var(--mkt-stamp);
+  color: var(--mkt-stamp);
+}
+
+.mkt-btn-sm { padding: 6px 14px; font-size: 13px; border-radius: 8px; }
+.mkt-btn-block { width: 100%; }
+
+.mkt-actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+
+/* 进度卡 */
+.mkt-progress {
+  display: none;
+  margin-top: 16px;
+  padding: 16px 20px;
+  border-radius: 12px;
+  border: 1px solid var(--mkt-stamp);
+  background: var(--mkt-stamp-soft);
+}
+
+.mkt-progress.visible { display: block; }
+
+.mkt-progress-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.mkt-progress-msg {
+  font-size: 13.5px;
+  color: var(--mkt-ink);
+  font-weight: 600;
+}
+
+.mkt-progress-stat {
+  font-family: var(--mkt-serif);
+  font-size: 15px;
+  color: var(--mkt-stamp-deep);
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.mkt-progress-bar {
+  height: 8px;
+  border-radius: 4px;
+  background: rgba(196, 79, 58, 0.18);
+  overflow: hidden;
+}
+
+.mkt-progress-bar-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: 4px;
+  background: linear-gradient(90deg, var(--mkt-stamp), var(--mkt-stamp-bright));
+  transition: width 0.6s var(--ease-out, ease);
+}
+
+.mkt-progress-sub { font-size: 12px; color: var(--mkt-ink-muted); margin-top: 8px; }
+
+/* 错误条 */
+.mkt-error {
+  display: none;
+  margin-top: 16px;
+  padding: 14px 18px;
+  border-radius: 12px;
+  background: rgba(196, 79, 58, 0.08);
+  border: 1px solid var(--mkt-stamp);
+  color: var(--mkt-stamp-deep);
+  font-size: 13.5px;
+  line-height: 1.7;
+}
+
+.mkt-error.visible { display: block; }
+
+.mkt-error code {
+  background: rgba(196, 79, 58, 0.12);
+  padding: 1px 6px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+
+/* ── 岗位库视图 ── */
+.mkt-stats-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.mkt-stat-card {
+  background: var(--mkt-paper-card);
+  border: 1px solid var(--mkt-line);
+  border-radius: 12px;
+  padding: 16px 18px;
+  box-shadow: var(--mkt-shadow);
+  position: relative;
+  overflow: hidden;
+  transition: transform var(--dur-base, 250ms) var(--ease-out, ease);
+}
+
+.mkt-stat-card:hover { transform: translateY(-3px); }
+
+.mkt-stat-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  background: var(--mkt-stamp);
+  opacity: 0.85;
+}
+
+.mkt-stat-label {
+  font-size: 12px;
+  color: var(--mkt-ink-muted);
+  letter-spacing: 0.14em;
+  margin-bottom: 6px;
+}
+
+.mkt-stat-value {
+  font-family: var(--mkt-serif);
+  font-size: 24px;
+  font-weight: 700;
+  line-height: 1.15;
+  color: var(--mkt-ink);
+}
+
+.mkt-stat-value small { font-size: 13px; font-weight: 400; color: var(--mkt-ink-muted); }
+
+.mkt-skills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.mkt-skill-tag {
+  font-size: 12px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--mkt-line-strong);
+  color: var(--mkt-ink-2);
+  background: var(--mkt-paper-card);
+}
+
+.mkt-skill-tag:nth-child(1) { border-color: var(--mkt-stamp); color: var(--mkt-stamp-deep); background: var(--mkt-stamp-soft); }
+
+/* 筛选行 */
+.mkt-filters {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 0.8fr 0.7fr 0.7fr auto;
+  gap: 12px;
+  align-items: end;
+  padding: 16px 20px;
+  margin-bottom: 16px;
+}
+
+/* 表格 */
+.mkt-table-wrap {
+  overflow-x: auto;
+  border-radius: 12px;
+  border: 1px solid var(--mkt-line);
+  background: var(--mkt-paper-card);
+  box-shadow: var(--mkt-shadow);
+}
+
+.mkt-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+  font-size: 13.5px;
+}
+
+.mkt-table thead th {
+  font-family: var(--mkt-serif);
+  font-size: 12.5px;
+  letter-spacing: 0.16em;
+  font-weight: 700;
+  color: var(--mkt-ink-2);
+  text-align: left;
+  padding: 14px 16px;
+  border-bottom: 2px solid var(--mkt-ink);
+  background: var(--mkt-paper-deep);
+  white-space: nowrap;
+  position: sticky;
+  top: 0;
+}
+
+.mkt-table tbody td {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--mkt-line);
+  vertical-align: middle;
+  color: var(--mkt-ink-2);
+  position: relative;
+}
+
+.mkt-table tbody tr {
+  transition: transform var(--dur-fast, 150ms) var(--ease-out, ease),
+              background var(--dur-fast, 150ms),
+              box-shadow var(--dur-fast, 150ms);
+}
+
+.mkt-table tbody tr:hover {
+  background: var(--mkt-stamp-soft);
+  transform: scale(1.006);
+  box-shadow: 0 6px 18px -8px rgba(196, 79, 58, 0.28);
+}
+
+.mkt-table tbody tr:hover td { color: var(--mkt-stamp-deep); }
+.mkt-table tbody tr:hover td.mkt-cell-title a { color: var(--mkt-stamp); }
+
+.mkt-table tbody tr.selected {
+  outline: 2px solid var(--mkt-stamp);
+  outline-offset: -2px;
+  background: var(--mkt-stamp-soft);
+}
+
+.mkt-cell-no {
+  width: 44px;
+  text-align: center;
+  font-family: var(--mkt-serif);
+  color: var(--mkt-ink-muted) !important;
+  font-size: 12px;
+}
+
+.mkt-cell-title {
+  font-weight: 600;
+  color: var(--mkt-ink);
+}
+
+.mkt-cell-title a {
+  color: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.mkt-cell-title a:hover { color: var(--mkt-stamp); text-decoration: underline; }
+
+.mkt-cell-company { max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mkt-cell-city { white-space: nowrap; }
+.mkt-salary { font-family: var(--mkt-serif); font-weight: 700; white-space: nowrap; }
+.mkt-salary .sep { color: var(--mkt-ink-muted); font-weight: 400; }
+.mkt-date { color: var(--mkt-ink-muted); font-size: 12.5px; white-space: nowrap; }
+
+.mkt-row-actions { display: flex; gap: 8px; white-space: nowrap; }
+
+.mkt-link-51 {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
+  color: var(--mkt-ink-2);
+  text-decoration: none;
+  border: 1px solid var(--mkt-line-strong);
+  padding: 3px 10px;
+  border-radius: 6px;
+  transition: all var(--dur-fast, 150ms);
+}
+
+.mkt-link-51:hover {
+  color: #FFF8F2;
+  background: var(--mkt-stamp);
+  border-color: var(--mkt-stamp);
+}
+
+.mkt-row-check {
+  width: 40px;
+  text-align: center;
+}
+
+.mkt-checkbox {
+  width: 17px;
+  height: 17px;
+  accent-color: var(--mkt-stamp);
+  cursor: pointer;
+}
+
+/* 空态 */
+.mkt-empty {
+  padding: 46px 20px;
+  text-align: center;
+  color: var(--mkt-ink-muted);
+  font-size: 13.5px;
+  font-family: var(--mkt-serif);
+  letter-spacing: 0.08em;
+}
+
+/* 翻页 */
+.mkt-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 14px;
+  flex-wrap: wrap;
+  color: var(--mkt-ink-muted);
+  font-size: 13px;
+}
+
+.mkt-page-btns { display: flex; gap: 8px; }
+
+.mkt-page-btn {
+  min-width: 34px;
+  height: 34px;
+  border-radius: 8px;
+  border: 1px solid var(--mkt-line-strong);
+  background: var(--mkt-paper-card);
+  color: var(--mkt-ink-2);
+  cursor: pointer;
+  font-size: 13px;
+  transition: all var(--dur-fast, 150ms);
+}
+
+.mkt-page-btn:hover:not(:disabled) { border-color: var(--mkt-stamp); color: var(--mkt-stamp); }
+.mkt-page-btn.active { background: var(--mkt-ink); color: var(--mkt-paper-card); border-color: var(--mkt-ink); }
+.mkt-page-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* 多选操作条 */
+.mkt-compare-bar {
+  display: none;
+  align-items: center;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 12px 18px;
+  border-radius: 12px;
+  background: linear-gradient(115deg, var(--mkt-stamp), var(--mkt-stamp-deep));
+  color: #FFF8F2;
+  box-shadow: var(--mkt-shadow-lift);
+  flex-wrap: wrap;
+  animation: mkt-slide-down var(--dur-base, 250ms) var(--ease-out, ease);
+}
+
+.mkt-compare-bar.visible { display: flex; }
+
+.mkt-compare-bar .cnt { font-family: var(--mkt-serif); font-weight: 700; font-size: 15px; }
+
+.mkt-compare-bar .mkt-btn {
+  background: #FFF8F2;
+  color: var(--mkt-stamp-deep);
+  margin-left: auto;
+}
+
+.mkt-compare-bar .mkt-btn:hover { transform: translateY(-2px); }
+
+.mkt-compare-bar .mkt-btn-ghost {
+  background: transparent;
+  border-color: rgba(255, 248, 242, 0.6);
+  color: #FFF8F2;
+}
+
+@keyframes mkt-slide-down {
+  from { opacity: 0; transform: translateY(-8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* ── 详情视图（全屏独立）── */
+.mkt-view { display: none; }
+.mkt-view.active { display: block; animation: mkt-fade-in var(--dur-base, 250ms) var(--ease-out, ease); }
+@keyframes mkt-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+.mkt-detail-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--mkt-ink-2);
+  font-size: 13.5px;
+  font-family: var(--mkt-serif);
+  cursor: pointer;
+  padding: 6px 10px 6px 0;
+  margin-bottom: 14px;
+  letter-spacing: 0.06em;
+}
+
+.mkt-detail-back:hover { color: var(--mkt-stamp); }
+
+.mkt-detail-head {
+  position: relative;
+  background:
+    linear-gradient(115deg, var(--mkt-paper-card), var(--mkt-paper-deep));
+  border: 1px solid var(--mkt-line);
+  border-radius: 14px;
+  padding: 26px 28px;
+  box-shadow: var(--mkt-shadow);
+  margin-bottom: 16px;
+}
+
+.mkt-detail-company {
+  font-size: 14px;
+  color: var(--mkt-ink-2);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.mkt-detail-company .dot { width: 4px; height: 4px; border-radius: 50%; background: var(--mkt-stamp); }
+
+.mkt-detail-title {
+  font-family: var(--mkt-serif);
+  font-size: 26px;
+  font-weight: 700;
+  margin: 0 0 10px;
+  letter-spacing: 0.04em;
+  line-height: 1.3;
+}
+
+.mkt-detail-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}
+
+.mkt-detail-badge {
+  position: absolute;
+  top: 20px;
+  right: 24px;
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  background: var(--mkt-stamp);
+  color: #FFF8F2;
+  border-radius: 9px;
+  padding: 8px 12px;
+  font-family: var(--mkt-serif);
+  box-shadow: var(--mkt-shadow);
+}
+
+.mkt-detail-badge .no { font-size: 18px; font-weight: 700; line-height: 1; }
+.mkt-detail-badge .lbl { font-size: 10px; letter-spacing: 0.22em; opacity: 0.9; }
+
+/* 信息四栏 */
+.mkt-detail-info {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.mkt-info-cell {
+  background: var(--mkt-paper-card);
+  border: 1px solid var(--mkt-line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  box-shadow: var(--mkt-shadow);
+}
+
+.mkt-info-label {
+  font-size: 11px;
+  color: var(--mkt-ink-muted);
+  letter-spacing: 0.18em;
+  margin-bottom: 6px;
+}
+
+.mkt-info-value {
+  font-family: var(--mkt-serif);
+  font-size: 17px;
+  font-weight: 700;
+  color: var(--mkt-stamp-deep);
+}
+
+.mkt-info-value.muted { color: var(--mkt-ink-2); font-weight: 600; }
+
+/* 详情主体布局 */
+.mkt-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.mkt-desc {
+  background: var(--mkt-paper-card);
+  border: 1px solid var(--mkt-line);
+  border-radius: 14px;
+  box-shadow: var(--mkt-shadow);
+  padding: 22px 24px;
+}
+
+.mkt-desc h3 {
+  font-family: var(--mkt-serif);
+  font-size: 15px;
+  margin: 0 0 12px;
+  letter-spacing: 0.14em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mkt-desc h3::before {
+  content: "";
+  width: 4px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--mkt-stamp);
+}
+
+.mkt-desc-text {
+  font-size: 13.5px;
+  line-height: 1.85;
+  color: var(--mkt-ink-2);
+  white-space: pre-wrap;
+  max-height: 420px;
+  overflow-y: auto;
+  padding-right: 6px;
+}
+
+.mkt-desc-text::-webkit-scrollbar { width: 6px; }
+.mkt-desc-text::-webkit-scrollbar-thumb { background: var(--mkt-line-strong); border-radius: 3px; }
+
+/* 分析侧栏 */
+.mkt-analyze {
+  background: var(--mkt-paper-card);
+  border: 1px solid var(--mkt-line);
+  border-radius: 14px;
+  box-shadow: var(--mkt-shadow);
+  padding: 22px 24px;
+}
+
+.mkt-analyze h3 {
+  font-family: var(--mkt-serif);
+  font-size: 15px;
+  margin: 0 0 14px;
+  letter-spacing: 0.14em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mkt-analyze h3::before {
+  content: "";
+  width: 4px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--mkt-stamp);
+}
+
+.mkt-resume-ta {
+  width: 100%;
+  min-height: 120px;
+  padding: 10px 12px;
+  border: 1px solid var(--mkt-line-strong);
+  border-radius: 8px;
+  background: var(--mkt-paper);
+  color: var(--mkt-ink);
+  font-size: 13px;
+  font-family: var(--mkt-sans);
+  line-height: 1.6;
+  resize: vertical;
+  transition: border-color var(--dur-fast, 150ms), box-shadow var(--dur-fast, 150ms);
+}
+
+.mkt-resume-ta:focus {
+  outline: none;
+  border-color: var(--mkt-stamp);
+  box-shadow: 0 0 0 3px var(--mkt-stamp-soft);
+}
+
+.mkt-analyze-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+}
+
+/* Gap 结果卡片 */
+.mkt-gap-summary {
+  border-radius: 12px;
+  padding: 16px 18px;
+  margin-top: 16px;
+  border: 1px solid var(--mkt-line);
+  background: var(--mkt-paper);
+}
+
+.mkt-gap-score {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.mkt-gap-ring {
+  width: 72px;
+  height: 72px;
+  flex: none;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--mkt-serif);
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--mkt-ink);
+  box-shadow: inset 0 0 0 1px var(--mkt-line-strong);
+}
+
+.mkt-gap-risk { font-size: 12.5px; padding: 3px 10px; border-radius: 999px; }
+
+.mkt-gap-risk.low { background: rgba(5, 150, 105, 0.12); color: #059669; border: 1px solid rgba(5, 150, 105, 0.3); }
+.mkt-gap-risk.mid { background: rgba(217, 119, 6, 0.12); color: #D97706; border: 1px solid rgba(217, 119, 6, 0.3); }
+.mkt-gap-risk.high { background: rgba(220, 38, 38, 0.1); color: #DC2626; border: 1px solid rgba(220, 38, 38, 0.3); }
+
+.mkt-gap-dims { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+
+.mkt-dim-row {
+  border: 1px solid var(--mkt-line);
+  border-radius: 10px;
+  padding: 12px 14px;
+  background: var(--mkt-paper-card);
+}
+
+.mkt-dim-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.mkt-dim-name { font-family: var(--mkt-serif); font-weight: 700; font-size: 14px; }
+
+.mkt-dim-score { font-size: 13px; font-weight: 700; }
+.mkt-dim-score.high { color: #059669; }
+.mkt-dim-score.mid { color: #D97706; }
+.mkt-dim-score.low { color: #DC2626; }
+
+.mkt-dim-bar {
+  height: 7px;
+  border-radius: 4px;
+  background: rgba(31, 35, 32, 0.08);
+  overflow: hidden;
+  margin-bottom: 8px;
+}
+
+.mkt-dim-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.5s var(--ease-out, ease);
+}
+
+.mkt-dim-bar-fill.high { background: linear-gradient(90deg, #059669, #10B981); }
+.mkt-dim-bar-fill.mid { background: linear-gradient(90deg, #D97706, #F59E0B); }
+.mkt-dim-bar-fill.low { background: linear-gradient(90deg, #DC2626, #EF4444); }
+
+.mkt-dim-evidence { font-size: 12.5px; color: var(--mkt-ink-2); line-height: 1.65; }
+.mkt-dim-evidence b { color: var(--mkt-stamp-deep); }
+
+.mkt-gap-suggestion {
+  margin-top: 12px;
+  padding: 12px 14px;
+  border-radius: 10px;
+  border-left: 3px solid var(--mkt-stamp);
+  background: var(--mkt-stamp-soft);
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--mkt-ink-2);
+}
+
+/* 市场基准 */
+.mkt-market-ref {
+  margin-top: 16px;
+  border: 1px dashed var(--mkt-line-strong);
+  border-radius: 12px;
+  padding: 14px 16px;
+  font-size: 12.5px;
+  color: var(--mkt-ink-2);
+  line-height: 1.7;
+}
+
+.mkt-market-ref .title { font-family: var(--mkt-serif); font-weight: 700; margin-bottom: 6px; color: var(--mkt-ink); }
+
+/* 跨岗位对比结果 */
+.mkt-compare-result { margin-top: 18px; }
+
+.mkt-compare-rec {
+  border-radius: 12px;
+  padding: 16px 20px;
+  margin-bottom: 14px;
+  background: linear-gradient(115deg, var(--mkt-stamp-soft), var(--mkt-paper-card));
+  border: 1px solid var(--mkt-stamp);
+  font-size: 13.5px;
+  line-height: 1.8;
+  color: var(--mkt-ink-2);
+}
+
+.mkt-compare-rec b { color: var(--mkt-stamp-deep); }
+
+.mkt-rank-card {
+  display: flex;
+  gap: 14px;
+  align-items: stretch;
+  background: var(--mkt-paper-card);
+  border: 1px solid var(--mkt-line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+  box-shadow: var(--mkt-shadow);
+}
+
+.mkt-rank-no {
+  flex: none;
+  width: 40px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-family: var(--mkt-serif);
+  font-size: 20px;
+  font-weight: 700;
+  color: #FFF8F2;
+  background: var(--mkt-stamp);
+}
+
+.mkt-rank-no.n2 { background: var(--mkt-ink-2); }
+.mkt-rank-no.n3 { background: var(--mkt-ink-muted); }
+
+.mkt-rank-body { flex: 1; min-width: 0; }
+
+.mkt-rank-title {
+  font-family: var(--mkt-serif);
+  font-size: 15px;
+  font-weight: 700;
+  margin-bottom: 4px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.mkt-rank-score {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--mkt-stamp-deep);
+}
+
+.mkt-rank-keys { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+
+.mkt-rank-key {
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+}
+
+.mkt-rank-key.ok { background: rgba(5, 150, 105, 0.1); color: #059669; border: 1px solid rgba(5, 150, 105, 0.28); }
+.mkt-rank-key.gap { background: rgba(220, 38, 38, 0.08); color: #DC2626; border: 1px solid rgba(220, 38, 38, 0.25); }
+
+/* ── 加载中 ── */
+.mkt-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--mkt-ink-muted);
+  font-size: 13px;
+  padding: 20px 0;
+}
+
+.mkt-spinner {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 2px solid var(--mkt-line-strong);
+  border-top-color: var(--mkt-stamp);
+  animation: mkt-spin 0.7s linear infinite;
+}
+
+@keyframes mkt-spin { to { transform: rotate(360deg); } }
+
+/* ── 深色 SaaS 风（.market-theme-dark）：还原 job-crawler 深色主题 ── */
+#market-panel.market-theme-dark {
+  --mkt-ink: #E8EAED;
+  --mkt-ink-2: #B6BEC9;
+  --mkt-ink-muted: #7C8698;
+  --mkt-line: rgba(255, 255, 255, 0.12);
+  --mkt-line-strong: rgba(255, 255, 255, 0.26);
+  --mkt-stamp: var(--mkt-accent, #6EE7E0);
+  --mkt-stamp-deep: var(--mkt-accent, #5EEAD4);
+  --mkt-stamp-bright: var(--mkt-accent, #8BF3EA);
+  --mkt-stamp-soft: rgba(110, 231, 224, 0.12);
+  --mkt-shadow: 0 2px 6px rgba(0, 0, 0, 0.35), 0 10px 30px -10px rgba(0, 0, 0, 0.5);
+  --mkt-shadow-lift: 0 4px 12px rgba(0, 0, 0, 0.4), 0 18px 44px -12px rgba(0, 0, 0, 0.6);
+
+  background:
+    radial-gradient(1100px 600px at 10% -8%, rgba(99, 102, 241, 0.18), transparent 60%),
+    radial-gradient(900px 520px at 95% 5%, rgba(56, 189, 248, 0.10), transparent 55%),
+    linear-gradient(160deg, #0F1226 0%, #141A33 45%, #1A1030 100%);
+  color: var(--mkt-ink);
+}
+
+/* 深色下卡片毛玻璃 */
+#market-panel.market-theme-dark .mkt-card,
+#market-panel.market-theme-dark .mkt-stat-card,
+#market-panel.market-theme-dark .mkt-detail-head,
+#market-panel.market-theme-dark .mkt-desc,
+#market-panel.market-theme-dark .mkt-analyze,
+#market-panel.market-theme-dark .mkt-info-cell,
+#market-panel.market-theme-dark .mkt-dim-row,
+#market-panel.market-theme-dark .mkt-rank-card,
+#market-panel.market-theme-dark .mkt-banner {
+  background: rgba(255, 255, 255, 0.055);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+#market-panel.market-theme-dark .mkt-input,
+#market-panel.market-theme-dark .mkt-select,
+#market-panel.market-theme-dark .mkt-resume-ta {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--mkt-ink);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+#market-panel.market-theme-dark .mkt-input:focus,
+#market-panel.market-theme-dark .mkt-select:focus,
+#market-panel.market-theme-dark .mkt-resume-ta:focus {
+  border-color: var(--mkt-stamp);
+  box-shadow: 0 0 0 3px var(--mkt-stamp-soft);
+}
+
+#market-panel.market-theme-dark .mkt-input::placeholder { color: var(--mkt-ink-muted); }
+
+#market-panel.market-theme-dark .mkt-table-wrap {
+  background: rgba(255, 255, 255, 0.055);
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+#market-panel.market-theme-dark .mkt-table thead th {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--mkt-ink-2);
+  border-bottom-color: var(--mkt-stamp);
+}
+
+#market-panel.market-theme-dark .mkt-table tbody td { border-bottom-color: rgba(255, 255, 255, 0.1); }
+
+#market-panel.market-theme-dark .mkt-table tbody tr:hover {
+  background: var(--mkt-stamp-soft);
+  box-shadow: 0 6px 18px -8px rgba(0, 0, 0, 0.6);
+}
+
+#market-panel.market-theme-dark .mkt-topnav-btn.active {
+  background: var(--mkt-stamp);
+  color: #0F1226;
+  border-color: var(--mkt-stamp);
+}
+
+#market-panel.market-theme-dark .mkt-seal-mark {
+  background: linear-gradient(150deg, var(--mkt-stamp-bright), var(--mkt-stamp));
+  color: #0F1226;
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.5),
+    0 0 22px -4px var(--mkt-stamp-soft);
+}
+
+#market-panel.market-theme-dark .mkt-btn-ghost,
+#market-panel.market-theme-dark .mkt-page-btn {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: var(--mkt-ink-2);
+}
+
+#market-panel.market-theme-dark .mkt-page-btn.active {
+  background: var(--mkt-stamp);
+  color: #0F1226;
+  border-color: var(--mkt-stamp);
+}
+
+#market-panel.market-theme-dark .mkt-chip {
+  background: var(--mkt-stamp-soft);
+  color: var(--mkt-stamp);
+  border-color: var(--mkt-stamp);
+}
+
+#market-panel.market-theme-dark .mkt-gap-summary { background: rgba(255, 255, 255, 0.045); }
+#market-panel.market-theme-dark .mkt-dim-bar { background: rgba(255, 255, 255, 0.12); }
+#market-panel.market-theme-dark .mkt-skill-tag { background: rgba(255, 255, 255, 0.05); }
+
+#market-panel.market-theme-dark .mkt-theme-toggle {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.22);
+  color: var(--mkt-ink-2);
+}
+
+/* 语义色切换器：Cyan / Pink / Gold / Purple */
+#market-panel.market-theme-dark.theme-cyan   { --mkt-accent: #6EE7E0; }
+#market-panel.market-theme-dark.theme-pink   { --mkt-accent: #F9A8D4; }
+#market-panel.market-theme-dark.theme-gold   { --mkt-accent: #FCD34D; }
+#market-panel.market-theme-dark.theme-purple { --mkt-accent: #C4B5FD; }
+
+/* ── 响应式 ── */
+@media (max-width: 900px) {
+  #market-panel { padding: 16px 14px 32px; }
+  .mkt-form-grid { grid-template-columns: 1fr 1fr; }
+  .mkt-detail-grid { grid-template-columns: 1fr; }
+  .mkt-detail-info { grid-template-columns: 1fr 1fr; }
+  .mkt-filters { grid-template-columns: 1fr 1fr; }
+}
+
+@media (max-width: 560px) {
+  .mkt-form-grid,
+  .mkt-detail-info,
+  .mkt-filters { grid-template-columns: 1fr; }
+  .mkt-topbar { gap: 10px; }
+  .mkt-theme-zone { margin-left: 0; }
+  .mkt-count-badge { position: static; margin-top: 10px; }
+  .mkt-banner::after { display: none; }
+}
+
+/* ── 动效降级 ── */
+@media (prefers-reduced-motion: reduce) {
+  #market-panel *,
+  #market-panel *::before,
+  #market-panel *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

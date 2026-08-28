@@ -6,7 +6,7 @@ import { $, $$, el, toast, DIM_NAMES, scoreClass } from './utils.js';
 import { createInterviewWS, request } from './api.js';
 import {
   voiceSupport, speak, stopSpeaking, isSpeaking,
-  voiceFillTextarea, autoReadQuestion,
+  voiceFillWithASR, autoReadQuestion, getMimoStatus,
 } from './voice.js';
 import { mountLiveRadar, updateLiveRadar, resetLiveRadar } from './liveRadar.js';
 
@@ -632,10 +632,10 @@ function showQuestion(area, data) {
   const answerArea = el('div', { className: 'answer-area answer-dock' },
     el('div', { className: 'answer-input-wrap' },
       el('textarea', { id: 'answer-input', className: 'answer-textarea', placeholder: '在此输入你的回答...' }),
-      voiceSupport.stt ? el('button', {
+      (voiceSupport.stt || voiceSupport.mimo) ? el('button', {
         id: 'voice-input-btn',
         className: 'voice-btn voice-btn-mic',
-        title: '语音输入',
+        title: voiceSupport.mimo ? '语音输入（MiMo）' : '语音输入',
         innerHTML: '<span class="voice-icon">🎤</span>',
         onClick: toggleVoiceInput,
       }) : '',
@@ -682,8 +682,8 @@ function toggleReadQuestion(e, questionText) {
 }
 
 function toggleVoiceInput() {
-  if (voiceState === 'listening') {
-    // 停止录音
+  if (voiceState === 'listening' || voiceState === 'processing') {
+    // 停止录音/识别
     if (voiceStopFn) { voiceStopFn(); voiceStopFn = null; }
     voiceState = 'idle';
     updateVoiceButtonStates();
@@ -693,16 +693,18 @@ function toggleVoiceInput() {
   const textarea = $('#answer-input');
   if (!textarea) return;
 
-  voiceStopFn = voiceFillTextarea(textarea, (state) => {
+  // v4.2: MiMo ASR 优先，浏览器 STT 降级
+  voiceFillWithASR(textarea, (state) => {
     voiceState = state;
     updateVoiceButtonStates();
     if (state === 'idle') voiceStopFn = null;
+  }).then((stop) => {
+    voiceStopFn = stop;
+    if (voiceStopFn) {
+      voiceState = 'listening';
+      updateVoiceButtonStates();
+    }
   });
-
-  if (voiceStopFn) {
-    voiceState = 'listening';
-    updateVoiceButtonStates();
-  }
 }
 
 function updateVoiceButtonStates() {
@@ -717,15 +719,35 @@ function updateVoiceButtonStates() {
   // 麦克风按钮
   const micBtn = $('#voice-input-btn');
   if (micBtn) {
-    micBtn.classList.toggle('active', voiceState === 'listening');
+    micBtn.classList.toggle('active', voiceState === 'listening' || voiceState === 'processing');
     const icon = micBtn?.querySelector('.voice-icon');
-    if (icon) icon.textContent = voiceState === 'listening' ? '⏹' : '🎤';
+    if (icon) icon.textContent = voiceState === 'processing' ? '⏳' : (voiceState === 'listening' ? '⏹' : '🎤');
   }
+
+  // v4.2: 语音引擎角标（MiMo / 浏览器降级）
+  syncEngineBadge(micBtn);
 
   // 录音时改变 textarea 边框颜色
   const textarea = $('#answer-input');
   if (textarea) {
     textarea.classList.toggle('listening', voiceState === 'listening');
+  }
+}
+
+/**
+ * 在麦克风按钮旁同步"语音引擎"角标
+ * @param {HTMLElement|null} micBtn
+ */
+function syncEngineBadge(micBtn) {
+  if (!micBtn || !micBtn.parentElement) return;
+  let badge = micBtn.parentElement.querySelector('.voice-engine-badge');
+  if (getMimoStatus() === 'ready') {
+    if (badge) badge.remove();
+    return;
+  }
+  if (!badge) {
+    badge = el('span', { className: 'voice-engine-badge', textContent: '浏览器语音' });
+    micBtn.parentElement.appendChild(badge);
   }
 }
 
@@ -745,10 +767,10 @@ function showFollowUp(area, question) {
     ),
     el('div', { className: 'answer-input-wrap', style: 'margin-top:12px;' },
       el('textarea', { id: 'fu-answer-input', className: 'answer-textarea', placeholder: '补充你的回答...' }),
-      voiceSupport.stt ? el('button', {
+      (voiceSupport.stt || voiceSupport.mimo) ? el('button', {
         id: 'fu-voice-input-btn',
         className: 'voice-btn voice-btn-mic',
-        title: '语音输入',
+        title: voiceSupport.mimo ? '语音输入（MiMo）' : '语音输入',
         innerHTML: '<span class="voice-icon">🎤</span>',
         onClick: toggleFuVoiceInput,
       }) : '',
@@ -775,7 +797,7 @@ function showFollowUp(area, question) {
 }
 
 function toggleFuVoiceInput() {
-  if (voiceState === 'listening') {
+  if (voiceState === 'listening' || voiceState === 'processing') {
     if (voiceStopFn) { voiceStopFn(); voiceStopFn = null; }
     voiceState = 'idle';
     updateFuVoiceUI();
@@ -785,24 +807,26 @@ function toggleFuVoiceInput() {
   const textarea = $('#fu-answer-input');
   if (!textarea) return;
 
-  voiceStopFn = voiceFillTextarea(textarea, (state) => {
+  // v4.2: MiMo ASR 优先，浏览器 STT 降级
+  voiceFillWithASR(textarea, (state) => {
     voiceState = state;
     updateFuVoiceUI();
     if (state === 'idle') voiceStopFn = null;
+  }).then((stop) => {
+    voiceStopFn = stop;
+    if (voiceStopFn) {
+      voiceState = 'listening';
+      updateFuVoiceUI();
+    }
   });
-
-  if (voiceStopFn) {
-    voiceState = 'listening';
-    updateFuVoiceUI();
-  }
 }
 
 function updateFuVoiceUI() {
   const micBtn = $('#fu-voice-input-btn');
   if (micBtn) {
-    micBtn.classList.toggle('active', voiceState === 'listening');
+    micBtn.classList.toggle('active', voiceState === 'listening' || voiceState === 'processing');
     const icon = micBtn.querySelector('.voice-icon');
-    if (icon) icon.textContent = voiceState === 'listening' ? '⏹' : '🎤';
+    if (icon) icon.textContent = voiceState === 'processing' ? '⏳' : (voiceState === 'listening' ? '⏹' : '🎤');
   }
   const textarea = $('#fu-answer-input');
   if (textarea) {

@@ -101,6 +101,32 @@ class Config:
     MARKET_DB_PATH = os.path.join(BASE_DIR, "data", "market.db")
     JOB_CRAWLER_DB_PATH = os.getenv("JOB_CRAWLER_DB_PATH", "")            # job-crawler data.db 路径（空=导入时指定）
 
+    # ===== v3.3: 实时采集（job-crawler B档内嵌）=====
+    # 采集口令（可选）：非空时前端调用 /api/market/crawl 必须携带相同 token，防滥用
+    MARKET_CRAWL_TOKEN = os.getenv("MARKET_CRAWL_TOKEN", "")
+    # 单次采集城市数上限 / 页数上限（与 job-crawler 一致）
+    MARKET_CRAWL_CITY_LIMIT = int(os.getenv("MARKET_CRAWL_CITY_LIMIT", "5"))
+    MARKET_CRAWL_PAGE_LIMIT = int(os.getenv("MARKET_CRAWL_PAGE_LIMIT", "5"))
+    # 采集接口限流（Playwright 较重，防滥用）
+    MARKET_CRAWL_RATE_LIMIT = os.getenv("MARKET_CRAWL_RATE_LIMIT", "3/minute")
+
+    # ===== v4.2: 小米 MiMo 云端语音（可选）=====
+    # 未配置 MIMO_API_KEY 时，前端自动降级为浏览器原生语音（speechSynthesis / SpeechRecognition）
+    # 协议：TTS/ASR 均走 OpenAI 兼容的 {base}/chat/completions，认证头用 api-key
+    MIMO_API_KEY = os.getenv("MIMO_API_KEY", "")
+    MIMO_BASE_URL = os.getenv("MIMO_BASE_URL", "https://api.xiaomimimo.com/v1")
+    MIMO_TTS_MODEL = os.getenv("MIMO_TTS_MODEL", "mimo-v2.5-tts")
+    MIMO_ASR_MODEL = os.getenv("MIMO_ASR_MODEL", "mimo-v2.5-asr")
+    # 预置音色（中文面试场景默认 冰糖；可选 茉莉/苏打/白桦/Mia/Chloe/Milo/Dean）
+    MIMO_TTS_VOICE = os.getenv("MIMO_TTS_VOICE", "冰糖")
+    # TTS 风格提示（自然语言，可空字符串）；首条 user 消息注入
+    MIMO_TTS_STYLE = os.getenv("MIMO_TTS_STYLE", "自然、专业的面试官语气，语速适中，吐字清晰。")
+    # ASR 识别语言：auto / zh / en
+    MIMO_ASR_LANGUAGE = os.getenv("MIMO_ASR_LANGUAGE", "auto")
+    # 语音请求超时（秒）与限流
+    MIMO_TIMEOUT = int(os.getenv("MIMO_TIMEOUT", "60"))
+    RATE_LIMIT_VOICE = os.getenv("RATE_LIMIT_VOICE", "20/minute")
+
     # ===== v2 追问阈值 =====
     FOLLOW_UP_MIN_LENGTH = 30       # 回答低于此字数触发追问
     FOLLOW_UP_MAX_COUNT = 2         # 单题最多追问次数

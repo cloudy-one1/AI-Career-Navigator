@@ -131,9 +131,18 @@ export async function importFromSession(sessionId) {
 
 // ===== v3.1: Gap 分析 =====
 
-/** 简历-岗位 Gap 分析 */
+/** 简历-岗位 Gap 分析（按会话） */
 export async function getGapAnalysis(sessionId) {
   return request('GET', `/api/gap-analysis/${sessionId}`);
+}
+
+/** 简历-岗位 Gap 分析（直接提交文本） */
+export async function runGapAnalysis({ resumeText, jdText, keyword = '' }) {
+  return request('POST', '/api/gap-analysis', {
+    resume_text: resumeText,
+    jd_text: jdText,
+    keyword,
+  });
 }
 
 /** 跨岗位对比：一份简历 vs 多个岗位 */
@@ -142,6 +151,52 @@ export async function crossJobCompare(resumeText, jdList) {
     resume_text: resumeText,
     jd_list: jdList,  // [{title, text}, ...]
   });
+}
+
+// ===== v3.3: 市场数据（实时采集 + 岗位库）=====
+
+/** 启动 51job 实时采集（后台任务，返回 task_id） */
+export async function startMarketCrawl({ keyword, cities, pages = 3, sortType = '0', token = '' }) {
+  const form = new URLSearchParams();
+  form.append('keyword', keyword);
+  cities.forEach(c => form.append('cities', c));
+  form.append('pages', String(pages));
+  form.append('sort_type', String(sortType));
+  if (token) form.append('token', token);
+  return request('POST', '/api/market/crawl', form, true);
+}
+
+/** 查询采集任务状态（轮询） */
+export async function getCrawlStatus(taskId) {
+  return request('GET', `/api/market/crawl/status/${taskId}`);
+}
+
+/** 省份→城市级联数据 */
+export async function getCityMap() {
+  return request('GET', '/api/market/city-map');
+}
+
+/** 岗位详情（含 Gap 分析用 JD 文本） */
+export async function getMarketJob(jobId) {
+  return request('GET', `/api/market/jobs/${jobId}`);
+}
+
+/** 岗位列表（过滤 + 分页） */
+export async function getMarketJobs(filters = {}, page = 0, limit = 50) {
+  const params = new URLSearchParams();
+  params.append('limit', String(limit));
+  params.append('offset', String(page * limit));
+  for (const [k, v] of Object.entries(filters)) {
+    if (v !== undefined && v !== null && v !== '') params.append(k, v);
+  }
+  return request('GET', `/api/market/jobs?${params.toString()}`);
+}
+
+/** 市场统计概览 */
+export async function getMarketStats(keyword = '') {
+  const params = new URLSearchParams();
+  if (keyword) params.append('keyword', keyword);
+  return request('GET', `/api/market/stats?${params.toString()}`);
 }
 
 // ===== v3.2: 职业规划 =====
@@ -262,4 +317,20 @@ export function createInterviewWS(sessionId, handlers) {
     },
     get readyState() { return ws ? ws.readyState : WebSocket.CLOSED; },
   };
+}
+
+// ===== v4.2: 小米 MiMo 云端语音（TTS / ASR）=====
+// 返回约定：TTS -> { used, audio_b64, format, message }；ASR -> { ok, text, message }
+// used/ok=false 表示未配 Key 或云端失败，由前端降级到浏览器原生语音。
+
+/** 文本 -> MiMo TTS -> Base64 音频 */
+export async function requestVoiceTTS(text, voice = 'default') {
+  return request('POST', '/api/voice/tts', { text, voice });
+}
+
+/** 上传录音 -> MiMo ASR -> 转写文本 */
+export async function requestVoiceASR(blob) {
+  const form = new FormData();
+  form.append('file', blob, 'recording.webm');
+  return request('POST', '/api/voice/asr', form, true);
 }

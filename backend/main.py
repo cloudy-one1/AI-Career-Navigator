@@ -10,7 +10,7 @@ import logging
 import os
 import time
 import uuid
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Query, HTTPException, Response, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -47,8 +47,11 @@ from .security import full_check, check_output
 from .web_research import enrich_jd_with_research
 from . import question_bank as qbank
 from .market import store as market_store, service as market_service  # v3.0
+from .market.crawler import tasks as crawler_tasks  # v3.3 实时采集（B档内嵌）
+from .market.crawler.adapters import build_jd_text  # v3.3 岗位 JD 组装
 from . import gap_analyzer  # v3.1
 from . import career_planner  # v3.2 职业规划
+from .voice_service import voice_service  # v4.2 MiMo 云端语音（TTS/ASR 代理）
 
 # ─── 集中日志 ───
 app_logger.setup_logging()
@@ -182,6 +185,47 @@ async def switch_provider(req: ProviderSwitchRequest):
         diagnosis_engine = DiagnosisEngine(llm_client=llm_client)
     logger.info(f"切换到后端: {req.provider}")
     return {"message": f"已切换到 {provider_info['name']}", "provider": req.provider}
+
+
+# ===== v4.2: MiMo 云端语音代理（TTS / ASR）=====
+# 密钥仅存后端 .env，前端不接触。未配 Key 或失败时返回 used/ok=false，由前端降级到浏览器原生语音。
+
+class VoiceTTSRequest(BaseModel):
+    text: str
+    voice: Optional[str] = None  # None 时由后端解析为配置默认音色
+
+
+@app.post("/api/voice/tts")
+@limiter.limit(config.RATE_LIMIT_VOICE)
+async def voice_tts(req: VoiceTTSRequest, request: Request = None):
+    """文本 -> mimo-v2.5-tts -> 音频（Base64 WAV）。"""
+    if not req.text or not req.text.strip():
+        raise HTTPException(status_code=400, detail="文本不能为空")
+    if not voice_service.enabled:
+        return {"used": False, "message": "未配置 MIMO_API_KEY"}
+    usage = await asyncio.to_thread(voice_service.synthesize, req.text, req.voice)
+    return {
+        "used": usage.used,
+        "audio_b64": usage.audio_b64,
+        "format": usage.format,
+        "message": usage.message,
+    }
+
+
+@app.post("/api/voice/asr")
+@limiter.limit(config.RATE_LIMIT_VOICE)
+async def voice_asr(request: Request, file: UploadFile = File(...)):
+    """上传音频 -> mimo-v2.5-asr -> 转写文本。"""
+    if not voice_service.enabled:
+        return {"ok": False, "text": "", "message": "未配置 MIMO_API_KEY"}
+    audio_bytes = await file.read()
+    if not audio_bytes:
+        raise HTTPException(status_code=400, detail="音频文件为空")
+    mime = file.content_type or "audio/webm"
+    result = await asyncio.to_thread(
+        voice_service.transcribe, audio_bytes, file.filename or "audio.webm", mime
+    )
+    return {"ok": result.ok, "text": result.text, "message": result.message}
 
 
 # ===== 会话管理 =====
@@ -555,6 +599,76 @@ async def market_jobs(
 async def market_stats(keyword: Optional[str] = Query(None)):
     """市场统计概览：总量/城市/薪资/学历分布、平均薪资、热门技能"""
     return await market_store.get_stats(keyword=keyword)
+
+
+# ===== v3.3: 市场实时采集 API（job-crawler B档内嵌）=====
+
+def _get_city_map():
+    """延迟加载城市映射：依赖 playwright 安装，未装时给出明确指引。"""
+    try:
+        from .market.crawler.python_job_scraper import get_province_city_map  # noqa: PLC0415
+        return get_province_city_map()
+    except ModuleNotFoundError as e:
+        raise HTTPException(
+            500,
+            f"实时采集组件未就绪：{e}。请执行 pip install playwright playwright-stealth "
+            "并运行 playwright install chromium",
+        )
+
+
+@app.post("/api/market/crawl")
+@limiter.limit(config.MARKET_CRAWL_RATE_LIMIT)
+async def market_crawl(
+    request: Request,
+    keyword: str = Form(..., min_length=1, max_length=50),
+    cities: List[str] = Form(..., min_length=1),
+    pages: int = Form(3),
+    sort_type: str = Form("0"),
+    token: Optional[str] = Form(None),
+):
+    """启动 51job 实时采集（后台任务，立即返回 task_id）。
+
+    单实例互斥：已有 running 任务时返回 409；
+    参数不合法返回 400；playwright 未安装返回 500（含安装指引）。
+    """
+    if config.MARKET_CRAWL_TOKEN and token != config.MARKET_CRAWL_TOKEN:
+        raise HTTPException(401, "采集口令不正确")
+    if len(cities) > config.MARKET_CRAWL_CITY_LIMIT:
+        raise HTTPException(400, f"单次最多选择 {config.MARKET_CRAWL_CITY_LIMIT} 个城市")
+    if not (1 <= pages <= config.MARKET_CRAWL_PAGE_LIMIT):
+        raise HTTPException(400, f"页数需为 1~{config.MARKET_CRAWL_PAGE_LIMIT}")
+
+    err = crawler_tasks.validate(keyword, cities, pages)
+    if err:
+        raise HTTPException(400, err)
+    task, err2 = crawler_tasks.start_crawl(keyword, cities, pages, sort_type)
+    if task is None:
+        raise HTTPException(409, err2)
+    return {"task_id": task.id}
+
+
+@app.get("/api/market/crawl/status/{task_id}")
+async def market_crawl_status(task_id: str):
+    """查询采集任务状态（前端 1.5s 轮询；终态任务 TTL 10 分钟后惰性清理）。"""
+    task = crawler_tasks.get_status(task_id)
+    if task is None:
+        raise HTTPException(404, "任务不存在或已过期")
+    return task.to_dict()
+
+
+@app.get("/api/market/city-map")
+async def market_city_map():
+    """省份→城市级联数据（采集表单用，前端不内嵌 388 城市表）。"""
+    return _get_city_map()
+
+
+@app.get("/api/market/jobs/{job_id}")
+async def market_job_detail(job_id: int):
+    """岗位详情 + Gap 分析用 JD 文本（title/company/salary/edu/exp/tags/描述）。"""
+    job = await market_store.get_job_by_id(job_id)
+    if job is None:
+        raise HTTPException(404, "岗位不存在")
+    return {"job": job, "jd_text": build_jd_text(job)}
 
 
 # ===== v3.1: Gap 分析 API =====

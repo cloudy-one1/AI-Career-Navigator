@@ -329,6 +329,31 @@
   box-shadow: 0 0 0 3px rgba(239,68,68,.15);
 }
 
+/* v4.2: 语音引擎角标（MiMo 降级提示） */
+.voice-engine-badge {
+  position: absolute;
+  right: 52px;
+  bottom: 14px;
+  font-size: 10px;
+  line-height: 1;
+  color: var(--text-2, #888);
+  background: rgba(0,0,0,.04);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 3px 6px;
+  white-space: nowrap;
+  pointer-events: none;
+  user-select: none;
+}
+/* 录音处理中：麦克风按钮加"处理中"微动效 */
+.voice-btn-mic.active.processing {
+  animation: micProcessing 1s infinite ease-in-out;
+}
+@keyframes micProcessing {
+  0%, 100% { transform: rotate(0deg); opacity: 1; }
+  50% { transform: rotate(8deg); opacity: .7; }
+}
+
 /* v2.5: Diagnosis Feedback Buttons */
 .diag-feedback {
   display: flex; align-items: center; gap: 6px;

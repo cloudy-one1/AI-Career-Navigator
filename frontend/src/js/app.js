@@ -9,6 +9,7 @@ import { initReport } from './report.js';
 import { initHistory } from './history.js';
 import { initQuestionBank } from './questionBank.js';
 import { initCareerPlan } from './careerPlan.js';
+import { initMarketData } from './marketData.js';
 
 function switchTab(tabName) {
   // 更新导航项（侧边栏 + 底部栏共用）
@@ -30,6 +31,7 @@ function switchTab(tabName) {
   else if (tabName === 'history') initHistory();
   else if (tabName === 'question-bank') initQuestionBank();
   else if (tabName === 'career-plan') initCareerPlan();
+  else if (tabName === 'market-data') initMarketData();
 
   updateInterviewStatus(tabName);
 }
