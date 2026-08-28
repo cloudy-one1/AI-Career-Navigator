@@ -2,7 +2,7 @@
 <h1 align="center">🤖 AI 模拟面试官与职业规划</h1>
 
 <p align="center">
-  <strong>v4.0 — 全新 UIUX 重构（Vite 工程化 + Design Tokens + 深色主题，课程项目级，非生产级）</strong>
+  <strong>v4.2 — 小米 MiMo 云端语音（TTS/ASR）+ 市场数据 Tab（B 档内嵌实时采集）+ 全新 UIUX（课程项目级，非生产级）</strong>
 </p>
 
 <p align="center">
@@ -28,12 +28,14 @@ AI 模拟面试官是一个面向求职者的智能面试练习平台。上传�
 
 - **全新 UIUX（v4.0）**：三步引导准备 Setup + 双栏面试工作台（对话流 + 固定诊断面板）+ 复盘态诊断卡（环形总分/原文改写对照）+ 报告 Dashboard + 深色主题（跟随系统）
 - **Vite 工程化（v4.0）**：Design Tokens 四层 CSS 架构 + 左垂直导航（桌面/平板/移动三态自适应）+ npm 开发/构建脚本
+- **市场数据 Tab（v4.1）**：B 档内嵌 Playwright 实时采集（省份→城市级联多选 + 进度轮询，采集自动回灌 market.db）+ 岗位库检索统计 + 全屏岗位详情（跳转 51job 原文）+ 单选 Gap 分析 / 多选跨岗位对比，纸墨印章双风格自由切换
+- **MiMo 云端语音（v4.2）**：后端代理 mimo-v2.5-tts（合成）+ mimo-v2.5-asr（识别，官方 chat/completions 协议），前端双引擎自动降级，录音用 MediaRecorder，密钥仅存后端不泄漏
 - **双 Agent 诊断引擎**：Diagnostician（诊断）+ Rewriter（改写）独立协作，非单一评分
 - **动态维度权重**：根据 JD 自动调整各维度权重 + SHA256 缓存，诊断更贴合岗位
 - **流式诊断反馈**：WebSocket 实时推送诊断结果、追问、雷达图数据
 - **7 种面试官角色**：友好/严格/压力/专业/好奇/质疑/鼓励型自动切换
 - **双模式面试**：拟真 6 阶段（破冰→技术广度→技术深度→项目拷问→行为面→反问）+ 传统 5 轮次
-- **语音交互**：浏览器内置 Web Speech API 实现题目朗读（TTS）+ 语音回答（STT）
+- **语音交互（v4.2 升级）**：小米 MiMo 云端语音优先（TTS 朗读 + ASR 语音转文字），未配 Key / 失败自动降级浏览器原生 Web Speech API，语音作为输入输出替代层不参与诊断内核
 - **Gap 分析**：简历-岗位六维度透明匹配（技能/城市/学历/经验/薪资/可信度），含市场基准参照
 - **跨岗位对比**：一份简历同时对比多个 JD，输出排名与择岗建议
 - **职业规划路径**（v3.2）：以 Gap 六维快照为基线，LLM 推理多阶段时间轴路径（需补技能/里程碑/岗位跃迁），替代横截面打分
@@ -45,7 +47,7 @@ AI 模拟面试官是一个面向求职者的智能面试练习平台。上传�
 - **多 AI 后端**：DeepSeek / 通义千问 / 智谱 GLM / OpenAI 可切换
 - **题库管理**：CRUD + 收藏 + 从面试会话导入
 - **Docker 部署**：Dockerfile + docker-compose.yml 一键部署
-- **自动化测试**：268 个测试用例覆盖核心路径
+- **自动化测试**：320 个测试用例覆盖核心路径
 
 ---
 
@@ -73,11 +75,17 @@ source .venv/bin/activate
 # 3. 安装依赖
 pip install -r requirements.txt
 
-# 4. 配置环境变量
+# 4. 安装 Playwright 浏览器（v4.1 市场数据 Tab 实时采集需要；跳过则实时采集不可用，岗位库检索/Gap 分析/跨岗位对比不受影响）
+python -m playwright install chromium
+
+# 5. 配置环境变量
 cp .env.example .env
 # 编辑 .env，填入你的 API Key（至少配置一个 AI 后端）
+# 可选：填入 MIMO_API_KEY 启用小米 MiMo 云端语音（更自然的朗读 + 跨浏览器语音识别）；不配置则自动使用浏览器原生语音
+# MiMo 端点：https://api.xiaomimimo.com/v1（sk- 开头 Key 走按量付费集群）；TTS/ASR 均按官方 chat/completions 协议调用
+# 可选音色：MIMO_TTS_VOICE=冰糖（默认）/ 茉莉 / 苏打 / 白桦 / Mia / Chloe / Milo / Dean
 
-# 5. 启动服务
+# 6. 启动服务
 python run.py
 ```
 
@@ -193,33 +201,46 @@ AI-simulated-interviewer/
 │   ├── web_research.py           # 岗位画像研究（DuckDuckGo）
 │   ├── data_support.py           # 技能匹配数据
 │   ├── skills_data.json          # 岗位技能静态数据
-│   ├── market/                    # [v3.0 NEW] 市场数据子包
+│   ├── market/                    # [v3.0] 市场数据子包
 │   │   ├── __init__.py
 │   │   ├── cleaner.py            # 数据清洗
 │   │   ├── importer.py           # 外部数据导入
 │   │   ├── service.py            # 导入编排 + 岗位快照检索
-│   │   └── store.py              # 数据持久化
+│   │   ├── store.py              # 数据持久化
+│   │   └── crawler/              # [v4.1 NEW] B 档内嵌实时采集（Playwright）
+│   │       ├── python_job_scraper.py   # job-crawler 采集核心（相对导入改造）
+│   │       ├── salary_parser.py        # 薪资解析
+│   │       ├── adapters.py             # 采集记录 → 标准 job dict + JD 组装
+│   │       └── tasks.py                # 后台任务表（互斥/进度/TTL 清理）
+│   ├── voice_service.py          # [v4.2 NEW] MiMo 云端语音代理（TTS 合成 + ASR 识别）
 │   └── interview_engine/         # 面试引擎子包
 │       ├── __init__.py
 │       ├── session.py            # 核心状态机
 │       └── report.py             # 综合报告生成
 │
-├── frontend/                     # 原生 ES Module 前端
+├── frontend/                     # 原生 ES Module 前端（Vite 工程化）
 │   ├── index.html                # SPA 骨架
-│   ├── css/style.css             # 全局样式（含 Gap 分析/市场参照/跨岗位对比）
-│   └── js/
-│       ├── app.js                # 主入口 + Tab 切换
-│       ├── api.js                # HTTP + WebSocket 封装
-│       ├── interview.js          # 面试流程控制
-│       ├── liveRadar.js          # 实时五维雷达图
-│       ├── report.js             # 综合报告 + Gap 分析 + 跨岗位对比
-│       ├── history.js            # 历史记录
-│       ├── questionBank.js       # 题库管理界面
-│       ├── careerPlan.js         # [v3.2] 职业规划 Tab（时间轴 + 阶段卡片 + 技能曲线）
-│       ├── voice.js              # 语音交互（TTS + STT）
-│       └── utils.js              # 工具函数
+│   ├── package.json / vite.config.js
+│   └── src/
+│       ├── js/
+│       │   ├── app.js            # 主入口 + Tab 切换（含市场数据分支）
+│       │   ├── api.js            # HTTP + WebSocket 封装（含市场采集/城市映射/岗位详情）
+│       │   ├── interview.js      # 面试流程控制
+│       │   ├── liveRadar.js      # 实时五维雷达图
+│       │   ├── report.js         # 综合报告 + Gap 分析 + 跨岗位对比
+│       │   ├── history.js        # 历史记录
+│       │   ├── questionBank.js   # 题库管理界面
+│       │   ├── careerPlan.js     # [v3.2] 职业规划 Tab（时间轴 + 阶段卡片 + 技能曲线）
+│       │   ├── marketData.js     # [v4.1] 市场数据 Tab（采集/岗位库/详情/分析）
+│       │   ├── voice.js          # 语音交互（TTS + STT）
+│       │   └── utils.js          # 工具函数
+│       └── css/
+│           ├── tokens.css        # Design Tokens（语义 Token + 深色预留）
+│           ├── base.css          # reset + 排版
+│           ├── components.css    # 框架组件
+│           └── pages/            # 领域样式（含 market.css 纸墨印章风格）
 │
-├── tests/                        # 自动化测试（50+ 用例）
+├── tests/                        # 自动化测试（314 用例）
 │   ├── conftest.py               # 共享 fixtures
 │   ├── test_schemas.py           # Schema 验证
 │   ├── test_api.py               # HTTP 路由集成测试（含安全测试）
@@ -232,7 +253,10 @@ AI-simulated-interviewer/
 │   ├── test_data_support.py      # 技能匹配
 │   ├── test_market_cleaner.py    # 市场数据清洗
 │   ├── test_market_importer.py   # 市场数据导入
-│   └── test_career_planner.py    # [v3.2] 职业规划（schema + 路由 + 降级路径）
+│   ├── test_career_planner.py    # [v3.2] 职业规划（schema + 路由 + 降级路径）
+│   ├── test_market_crawler_*.py  # [v4.1] 采集适配器 + 后台任务状态机
+│   ├── test_voice_service.py     # [v4.2] MiMo 语音服务（key 校验/错误处理/mock）
+│   └── test_voice_api.py         # [v4.2] /api/voice/* 代理路由
 │
 ├── docs/                         # 需求文档与周报
 │   ├── week1_*.md                # v1 模块需求
@@ -257,13 +281,14 @@ AI-simulated-interviewer/
 | **AI 后端** | DeepSeek / Qwen / 智谱 GLM / OpenAI（可运行时切换） |
 | **前端** | 原生 HTML5 + CSS3 + ES Module（无框架依赖） |
 | **图表** | Chart.js v4（雷达图） |
-| **语音** | Web Speech API（浏览器内置，无需后端） |
+| **语音（v4.2）** | 小米 MiMo 云端（TTS/ASR，需 `MIMO_API_KEY`）+ 浏览器 Web Speech API 降级 |
 | **简历解析** | pdfplumber + python-docx |
 | **岗位研究** | DuckDuckGo 搜索 + LLM 分析 |
+| **岗位采集（v4.1）** | Playwright + playwright-stealth（`playwright install chromium`，B 档内嵌 `market/crawler/`） |
 | **日志** | logging + RotatingFileHandler（5MB×3 旋转） |
 | **部署** | Docker + Docker Compose（跨平台一键部署） |
 | **分层校验** | import-linter 契约（L1-L4，`run.py lint` 强制） |
-| **测试** | pytest（257 用例） |
+| **测试** | pytest（314 用例） |
 
 ---
 

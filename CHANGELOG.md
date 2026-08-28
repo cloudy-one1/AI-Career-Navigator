@@ -1,6 +1,60 @@
 # 变更日志（CHANGELOG）
 
-> 记录 v2 → v4.0 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+> 记录 v2 → v4.2 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+
+---
+
+## v4.2 小米 MiMo 云端语音接入（2026-08-28）
+
+> 将面试语音交互从"浏览器原生 Web Speech API"升级为"**MiMo 云端语音优先 + 浏览器原生降级**"双引擎：TTS 朗读用 mimo-v2.5-tts，语音输入用 mimo-v2.5-asr（MediaRecorder 录音上传）。**诊断内核零变更**，语音仍是输入/输出替代层；320 测试全绿（新增 29 例）、分层 lint 通过。
+
+### 新增（功能线）
+- **后端语音代理**：`backend/voice_service.py`（L2/L3）封装 MiMo 官方 `chat/completions` 协议（认证头 `api-key`）；`config.py` 新增 `MIMO_API_KEY / MIMO_BASE_URL / MIMO_TTS_MODEL / MIMO_ASR_MODEL / MIMO_TTS_VOICE / MIMO_TTS_STYLE / MIMO_ASR_LANGUAGE / MIMO_TIMEOUT / RATE_LIMIT_VOICE`；新增路由 `POST /api/voice/tts`（文本→合成音频 Base64）与 `POST /api/voice/asr`（上传音频→转写文本），密钥仅存后端 .env。
+- **前端双引擎**（`frontend/src/js/voice.js`）：`voiceSupport.mimo` 能力检测 + `probeMimo()` 后台探测；`speak()` 改为 MiMo 优先、失败自动降级 `speechSynthesis`；新增 MediaRecorder 录音采集（`startRecording/stopRecording`）与 `transcribeRecording()` 上传 ASR；新增 `voiceFillWithASR()`（录音→识别→填入回答）。
+- **语音对话链路**（`interview.js`）：主回答区与追问区麦克风改用 MiMo ASR 优先；按钮显示条件放宽为"STT 或录音都可用"；新增 `processing` 状态与语音引擎角标（MiMo / 浏览器降级）。
+- **api.js**：新增 `requestVoiceTTS / requestVoiceASR` 接口。
+
+### 工程化
+- **依赖**：`httpx` 从测试段移入生产依赖（运行时语音代理所需）。
+- **环境变量**：`.env.example` 新增 MiMo 配置块（不配置则自动降级浏览器原生语音，功能不中断）。
+- **测试**：新增 `test_voice_service.py`（key 校验/音色映射/错误处理/超时/mock 调用）与 `test_voice_api.py`（路由降级/400/成功/失败路径），共 29 例；全量 320 用例通过。
+
+### 范围与约束
+- **MiMo-Audio 7B 开源模型不采用**：需 NVIDIA GPU≥24G + Linux，当前 Windows 环境不可行；选用云端 API（MiMo-V2.5-TTS 限时免费，ASR 0.5 元/小时）。
+- 语音仍作为输入/输出替代层，**不参与诊断内核**（与 CHARTER.md v2.3 定位一致）。
+- 未配 Key / 网络失败 / 超时 / 限流均自动降级浏览器原生语音，功能不中断。
+
+### 修复（v4.2 协议对齐，真实 Key 实测）
+- **问题**：首版按 OpenAI `/audio/speech`、`/audio/transcriptions` 协议编写，域名误用 `api.mimo.ai`，与 MiMo 官方协议不符，配置 Key 后调用失败（SSL/404）。
+- **修正**（以 mimo.mi.com 官方文档与开源实现 ppy-web/tts-mimo 核实为准）：
+  - 端点统一为 `POST {base}/chat/completions`（TTS/ASR 均如此）；认证头 `api-key`（非 Bearer）。
+  - 域名改为 `https://api.xiaomimimo.com/v1`（sk- 按量付费集群）；模型名统一小写 `mimo-v2.5-tts` / `mimo-v2.5-asr`。
+  - TTS 请求体 `messages[user=风格提示, assistant=待朗读文本] + audio{format:wav, voice}`；响应解析 `choices[0].message.audio.data`（Base64 WAV，兼容 data URL 前缀）。
+  - ASR 请求体 `messages[user.content[0].input_audio.data=音频 data URL] + asr_options{language}`；响应解析 `choices[0].message.content`（兼容字符串与 `[{"text":...}]` 列表）。
+  - 新增 `MIMO_TTS_VOICE`（默认冰糖）/ `MIMO_TTS_STYLE` / `MIMO_ASR_LANGUAGE`；非法音色名自动映射默认音色。
+- **端到端实测（真实 Key）**：TTS 合成成功，返回 WAV 校验头 `RIFF/WAVE/fmt` 正确；ASR 协议链路正确（服务器返回 402 余额不足，属账户计费问题而非协议错误，充值后可用；前端失败自动降级浏览器 STT，不阻塞）。
+
+---
+
+## v4.1 市场数据 Tab：B 档内嵌实时采集（2026-08-27）
+
+> 按用户定案 B 档（子模块内嵌），将开源项目 job-crawler 的 Playwright 采集核心整合进本系统，新增第 6 个"市场数据"Tab，复刻其纸墨印章设计语言（米色纸张 + 衬线 + 印章红）。**后端其余契约零变更**；291 测试全绿、分层 lint 通过。
+
+### 新增（功能线）
+- **实时采集**：关键词 + 省份→城市级联多选（≤5 城市）+ 排序（相关性/最新发布）+ 页数 1~5；后台线程执行 `scrape_jobs()`，前端 1.5s 轮询进度（当前城市/页数/累计条数/进度条）；采集结果经 `adapters.to_standard_job()` 直通 `store.upsert_jobs()` 回灌 `market.db`。
+- **岗位库**：统计概览（岗位总量/平均薪资/热门技能 TOP5/样本城市）+ 筛选（关键词/城市/学历/薪资区间）+ 纸感表格（编号角标/悬停浮起/行勾选）+ 分页。
+- **岗位详情**：全屏独立视图（还原 job-crawler job_detail 结构），展示完整描述/标签/薪资/经验/学历/发布时间，**支持跳转 51job 原文**，可一键用本岗位做 Gap 分析。
+- **岗位分析**：单选 Gap 分析（复用 `/api/gap-analysis`，含市场基准注入）；多选 2~5 个跨岗位对比（复用 `/api/cross-job-compare`，排名卡 + 风险等级）；简历文本可一键复用面试 Tab 内容。
+- **两套 UI 风格自由切换**：浅色公文风（米纸墨印）↔ 深色 SaaS 风（深墨底），顶部语义色切换器（青/粉/金/紫），localStorage 记忆；作用域严格限定 `#market-panel`，不影响其余 Tab 的 Indigo 设计体系。
+
+### 工程化
+- **crawler 子包**（`backend/market/crawler/`，随 `backend.market` 同属 L2，不越层）：`python_job_scraper.py`（相对导入改造、删 `__main__`、日志改名）+ `salary_parser.py` + `adapters.py`（字段映射/JD 组装）+ `tasks.py`（线程安全任务表、单实例互斥、TTL 10 分钟惰性清理）。
+- **新路由**：`POST /api/market/crawl`（Form 校验 + `3/minute` 限流）、`GET /api/market/crawl/status/{task_id}`、`GET /api/market/city-map`（省份→城市级联数据源，复用 scraper 的 388 城市表）、`GET /api/market/jobs/{job_id}`（岗位详情 + 组装 JD 文本供 Gap 分析）。
+- **依赖**：新增 `playwright>=1.40`、`playwright-stealth`；README 补充 `playwright install chromium` 安装步骤；未安装 playwright 时路由返回明确错误与安装指引。
+
+### 治理
+- **决策记录卡 DC-04**（CHARTER.md）：推翻 DC-02"不再用 Playwright 采集"决策，改以 B 档内嵌方式整合采集核心，以真实采集工作量补足"数据资产≠代码复现"缺陷；`data.db` 导入管道保留兜底，两者并存。
+- **测试**：新增 `test_market_crawler_adapters.py`（字段映射/薪资解析/描述截断/JD 组装）与 `test_market_crawler_tasks.py`（参数校验/单实例互斥/状态机/TTL 清理），共 23 个用例；全量 291 用例通过，`python run.py lint` 分层契约通过。
 
 ---
 
