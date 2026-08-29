@@ -2,7 +2,7 @@
 <h1 align="center">🤖 AI 模拟面试官与职业规划</h1>
 
 <p align="center">
-  <strong>v6.3 — 竞品借鉴专项四期：mock-interviewer 七项能力落地（角色卡三件套 / 简历锚点五分类 / 评分加减分项 / JD gap 注入 / 压力题库 / 恢复红线 + 3 次阈值 / assisted 标记，课程项目级，非生产级）</strong>
+  <strong>v6.4 — 竞品借鉴专项五期：HakiMeet 八项落地（长期记忆闭环 / 2D 记忆图谱 / RAG 注入去重 / 备选题 / 语音真打断 / 状态机收敛 / token 补强 / onboarding，课程项目级，非生产级）</strong>
 </p>
 
 <p align="center">
@@ -69,6 +69,11 @@ AI 模拟面试官是一个面向求职者的智能面试练习平台。上传�
 - **JD gap 出题优先级显式注入（v6.3）**：低于 `JD_GAP_SCORE_THRESHOLD` 的 JD 维度作为缺口注入出题 prompt，优先级链 **JD gap（必问）> JD 强匹配（验证）> 简历锚点（补充）**，纠正"模型顺简历走"的偏差；缺口无经历时改用假设/迁移问法
 - **压力题库随机注入（v6.3）**：新增 `pressure_bank.py`，5 类 16 道与简历/JD 解耦的压力题；全局开关 + 整场限量 1 + 破冰/收尾轮不注入 + 按 `attack_level` 抽签（友好/鼓励型概率为 0），补"内容层压力"
 - **恢复红线 + 连续 3 次阈值 + assisted 标记（v6.3）**：coaching 红线**绝不给答案**（工程兜底 `contains_answer_leak`）；连续 3 次触发主动建议跳过（可突破追问上限）；assisted 标记在报告披露"多少题在提示下完成"，占比过高即诊断信号
+- **长期记忆闭环（v6.4，对标 HakiMeet）**：薄弱点带 `resolved` 标记形成"练 → 评 → 记 → 再练"收敛——首轮出题回注入历史未解决短板（【历史薄弱点·优先考察】），标记已解决即退出回注入与复习建议口径；幂等迁移老库无感升级，拉取失败降级不阻断面试
+- **2D SVG 记忆图谱（v6.4，对标 HakiMeet）**：新增"长期记忆"页，中心→维度→薄弱点三级贝塞尔图谱；节点位置由 id 哈希确定性生成（刷新不跳位）、颜色 = 严重度×未解决率；平移缩放走 transform 合成层；图谱与明细栏双向联动，零前端依赖（刻意不做 2D/3D 双轨）
+- **RAG 注入去重 + 备选题（v6.4，对标 HakiMeet）**：会话级指纹缓存（blake2b 稳定摘要，非内置 hash）让同一段简历证据不再反复拼进 prompt；换题时把已问题目清单作为负向约束注入，重复题带样本重试一次
+- **语音真打断 + 状态机收敛（v6.4，对标 HakiMeet）**：语音世代号守卫——打断先摘回调再停止，修复"打断后仍触发结束回调 / 误降级续播"；面试页收敛为 PHASE 四态 + setPhase 单一入口，锁定/恢复统一走 setInputLocked
+- **前端成品感补强（v6.4）**：token 层补六级阴影/玻璃态/标准微交互缓动；空状态三件套、题库模板一键下载、全局 Promise 化确认弹窗——组件类一律走全局层，页面不得各自重写
 - **题库管理**：CRUD + 收藏 + 从面试会话导入
 - **Docker 部署**：Dockerfile + docker-compose.yml 一键部署
 - **自动化测试**：609 个测试用例覆盖核心路径（含依赖 API Key 的 LLM 类测试）
@@ -268,13 +273,14 @@ AI-simulated-interviewer/
 │       │   ├── questionBank.js   # 题库管理界面
 │       │   ├── careerPlan.js     # [v3.2] 职业规划 Tab（时间轴 + 阶段卡片 + 技能曲线）
 │       │   ├── marketData.js     # [v4.1] 市场数据 Tab（采集/岗位库/详情/分析）
-│       │   ├── voice.js          # 语音交互（TTS + STT）
-│       │   └── utils.js          # 工具函数
+│       │   ├── memoryGraph.js    # [v6.4] 长期记忆 Tab（2D SVG 薄弱点图谱 + 明细联动 + resolved）
+│       │   ├── voice.js          # 语音交互（TTS + STT，v6.4 世代守卫真打断）
+│       │   └── utils.js          # 工具函数（含 confirm 弹窗 / emptyState 三件套）
 │       └── css/
-│           ├── tokens.css        # Design Tokens（语义 Token + 深色预留）
+│           ├── tokens.css        # Design Tokens（语义 Token + 六级阴影 + 玻璃态 + 深色主题）
 │           ├── base.css          # reset + 排版
 │           ├── components.css    # 框架组件
-│           └── pages/            # 领域样式（含 market.css 纸墨印章风格）
+│           └── pages/            # 领域样式（含 market.css 纸墨印章 / memory.css 记忆图谱）
 │
 ├── tests/                        # 自动化测试（600+ 用例，本机非 LLM 类全绿）
 │   ├── conftest.py               # 共享 fixtures
@@ -296,7 +302,10 @@ AI-simulated-interviewer/
 │   ├── test_session.py           # [v5.0] 会话状态机（追问/权重/薄弱点/恢复/多模式，49 例）
 │   ├── test_resume_retriever.py  # [v5.0] 简历证据检索（分块/命中/预算/溯源，12 例）
 │   ├── test_grillmind_borrowings.py  # [v6.2] 收尾强控/追问点/净化/任务绑定/思考时长/逐题拆解（50 例）
-│   └── test_mock_interviewer_borrowings.py  # [v6.3] 角色卡/锚点/加减分/JD gap/压力题/恢复红线（50 例）
+│   ├── test_mock_interviewer_borrowings.py  # [v6.3] 角色卡/锚点/加减分/JD gap/压力题/恢复红线（50 例）
+│   ├── test_injection_dedup.py      # [v6.4] 注入去重（指纹稳定/先过滤后预算/耗尽回退，19 例）
+│   ├── test_alternate_question.py   # [v6.4] 备选题/换题（台账/负向约束/重试上限，10 例）
+│   └── test_weakness_memory.py      # [v6.4] 长期记忆闭环（迁移幂等/resolved/回注入，17 例）
 │
 ├── docs/                         # 需求文档与周报
 │   ├── week1_*.md                # v1 模块需求
@@ -410,7 +419,7 @@ AI-simulated-interviewer/
 | **内容护栏可被绕过** | 见上节，正则过滤防不住认真攻击者 | 见上节演进方向 |
 | **测试偏纯函数** | 50 个用例覆盖了权重计算、Schema 校验等确定性逻辑；但**诊断准确性、追问是否抓最弱维度、评分稳定性**依赖 LLM 输出，难以在单测中验证 | 引入基于黄金样本的回归评测（LLM-as-judge / 人工抽检），把"核心主张"纳入可观测范围 |
 | **证据检索为本地启发式** | v5.0 简历证据检索是本地关键词 + 优先级加权，非语义向量检索；中文分词粒度受限，同义/模糊表述可能漏命中，仅作证据提示不替代向量库；可调参数为代码级常量未下沉 `.env` | 引入轻量向量库（如 sqlite-vec / faiss）做语义召回；参数下沉配置 |
-| **知识库为关键词检索且未接入业务流** | v6.0 `knowledge_store.py` 为命名空间隔离的本地关键词检索（对标向量 RAG 的降级实现），同义表述可能漏命中；当前是 L2 前向储备，尚未被任何业务流调用 | 接入职业规划/出题的 Prompt 增强；知识规模大时升级向量索引 |
+| **知识库为关键词检索且未接入业务流** | v6.0 `knowledge_store.py` 为命名空间隔离的本地关键词检索（对标向量 RAG 的降级实现），同义表述可能漏命中；v6.4 已补齐 tracked 去重接口（`augment_prompt_tracked`），但业务检索仍只走 `ResumeRetriever` 一线，知识库注入暂无生产调用方 | 接入职业规划/出题的 Prompt 增强；知识规模大时升级向量索引 |
 | **next_action 依赖模型自觉** | v6.0 三态推进决策采信模型声明，模型误判"回答合格"时可能少追问；已用"回答过短仍强制追问"硬兜底 + 未声明时回退阈值规则，且追问次数上限不受影响 | 用真实面试样本统计 next_action 与人工判断的一致率后再决定是否提升模型话语权 |
 | **参考答案面板未渲染** | v5.0 报告已产出 `detailed_qa`（逐题参考答案）字段，但前端 `report.js` 尚无对应渲染面板，属前后端待对齐 | 在报告 Tab 补逐题参考答案背诵面板 |
 | **市场基准数据来源（学术诚信披露）** | Gap 分析的"市场基准参照"数据来自本人此前已完成并提交的采集项目（job-crawler）的 `data.db`，经 importer + store 导入 `market.db`，**本次仅做管道整合、不含数据采集工作量** | 若评审基于"本次周期实际产出"，可评估替换为小样本人工整理/公开数据集 |

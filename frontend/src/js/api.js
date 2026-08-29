@@ -78,6 +78,29 @@ export async function getGlobalWeaknessProfile() {
   return request('GET', `/api/weakness-profile`);
 }
 
+// ===== v6.3 长期记忆闭环 =====
+
+/** 薄弱点明细（记忆图谱数据源） */
+export async function getWeaknessPoints(includeResolved = false, limit = 200) {
+  return request('GET',
+    `/api/weakness-profile/points?include_resolved=${includeResolved}&limit=${limit}`);
+}
+
+/** 复习建议（最该优先补的未解决薄弱点） */
+export async function getWeaknessSuggestions(limit = 5) {
+  return request('GET', `/api/weakness-profile/suggestions?limit=${limit}`);
+}
+
+/** 标记已解决 / 恢复未解决 */
+export async function resolveWeakness(pointId, resolved = true) {
+  return request('PUT', `/api/weakness-profile/${pointId}/resolve`, { resolved });
+}
+
+/** 删除单条薄弱点（物理删除，不可恢复） */
+export async function deleteWeakness(pointId) {
+  return request('DELETE', `/api/weakness-profile/${pointId}`);
+}
+
 /** 获取所有会话 */
 export async function listSessions() {
   return request('GET', '/api/sessions');

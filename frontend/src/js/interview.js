@@ -13,19 +13,50 @@ import { mountLiveRadar, updateLiveRadar, resetLiveRadar } from './liveRadar.js'
 let ws = null;
 let currentStyle = 'friendly';
 let currentMode = 'simulation';  // v2.4: 面试模式
-let pendingFollowUp = false;
 let voiceStopFn = null;       // 当前录音停止函数
 let voiceState = 'idle';     // 'idle' | 'listening' | 'speaking'
 // v6.1: 最近一次输入来源（'text' | 'voice'），随 answer 上报；
 // 后端据此对语音回答启用 ASR 转写容错评分（借鉴 offerMaster）
 let lastInputSource = 'text';
-let autoReadEnabled = true;   // 是否自动朗读题目
-let currentInterviewerName = ''; // v2.4: 当前面试官名称
 let dimWeights = null;        // v2.6: 本场各维度权重
 // v6.2: 思考时长采集 —— 题目/追问展示时刻，提交时算出秒数随 answer 上报，
 // 最终进入报告的 qaBreakdown（借鉴 GrillMind 的 thinkingSeconds）
 let questionShownAt = 0;
 let followUpShownAt = 0;
+
+// ===== v6.3 集中状态机（借鉴 HakiMeet InterviewView 的单一状态驱动）=====
+// 会话阶段收敛为单一 state + setPhase() 入口，跨模块副作用统一在这里驱动。
+// phase 语义：setup（引导页）→ starting（建会话/连 WS 中）→ active（会话中）
+//            → done（已出报告）。断线重连不算阶段变化（onClose ≠ 结束）。
+// v6.3 清理的死状态：pendingFollowUp（无读取）、currentInterviewerName（无读取）、
+// autoReadEnabled（无写入恒 true，判断处直接保留 voiceSupport.tts 条件）。
+const PHASE = { SETUP: 'setup', STARTING: 'starting', ACTIVE: 'active', DONE: 'done' };
+const session = {
+  phase: PHASE.SETUP,
+  inputLocked: false,     // 诊断进行中锁输入（各锁定/恢复路径的公共判据）
+};
+
+function setPhase(next) {
+  if (session.phase === next) return;
+  session.phase = next;
+  // 副作用统一驱动：Header 面试状态灯（app.js updateInterviewStatus 读取）。
+  // 保留 window 全局镜像以兼容 app.js / report.js 的既有读取，避免连带改动。
+  window._interviewActive = next === PHASE.ACTIVE;
+  if (next === PHASE.SETUP) session.inputLocked = false;
+}
+
+/** 输入锁定统一入口。锁定只做 disabled；恢复时是否清空/聚焦由调用方决定
+ *  （各路径语义不同：正常恢复清空、超时保留草稿、拦截清空并聚焦）。 */
+function setInputLocked(locked, { clear = false, focus = false } = {}) {
+  session.inputLocked = locked;
+  const btn = $('#submit-answer');
+  const input = $('#answer-input');
+  if (btn) btn.disabled = locked;
+  if (input) input.disabled = locked;
+  if (locked) return;
+  if (clear && input) input.value = '';
+  if (focus && input) input.focus();
+}
 
 /** 计算从 shownAt 到现在的秒数（非法/未计时返回 0） */
 function elapsedSeconds(shownAt) {
@@ -40,6 +71,9 @@ export function initInterview() {
   const panel = $('#interview-panel');
   panel.innerHTML = '';
   setupStep = 1;
+  // v6.3: Tab 重建即回到 setup。会话 UI 无法跨重建恢复——
+  // 显式重置状态机优于让 phase 与 DOM 静默脱节（子代理调研的最高危路径）。
+  setPhase(PHASE.SETUP);
 
   panel.appendChild(el('div', { id: 'setup-view', className: 'setup-layout' },
     // ── 左侧：分步引导 ──
@@ -357,6 +391,7 @@ async function startInterview() {
 
     // v4.0: 进入实战态
     enterSessionView();
+    setPhase(PHASE.STARTING);   // v6.3: 状态机进入"连接中"
 
     // 连接 WebSocket
     connectWS(sessionId);
@@ -369,11 +404,18 @@ async function startInterview() {
 
 function connectWS(sessionId) {
   currentSessionId = sessionId;
-  window._interviewActive = true; // v4.0: 供全局 Header 面试状态灯使用
+  setPhase(PHASE.ACTIVE);   // v6.3: 状态灯等副作用由 setPhase 统一驱动（原 window._interviewActive = true）
   // v3.1: 重置模块级状态，防止快速开始两次面试时状态污染
+  // v6.3 补全：此前漏掉 voiceState / lastInputSource / 计时器 / 思考计时，
+  // 快速开始第二场会继承上一场污染（子代理调研风险 #4）
   roundInfo = [];
   currentRound = 0;
   currentQuestion = null;
+  voiceState = 'idle';
+  lastInputSource = 'text';
+  questionShownAt = 0;
+  followUpShownAt = 0;
+  clearTimeout(_answerTimeout);
   const area = $('#interview-area');
   area.innerHTML = '';
   resetLiveRadar();
@@ -405,11 +447,10 @@ function connectWS(sessionId) {
     onReconnectFailed: () => {
       clearTimeout(_answerTimeout);
       toast('连接失败，请刷新页面后重试', 'error');
-      // 恢复输入
+      // 恢复输入（v6.3: 统一入口；语义：重连失败 = 解锁 + 保留草稿文字）
       const sbBtn = $('#submit-answer');
-      if (sbBtn) { sbBtn.disabled = false; sbBtn.textContent = '提交回答'; }
-      const sbInput = $('#answer-input');
-      if (sbInput) { sbInput.disabled = false; }
+      if (sbBtn) sbBtn.textContent = '提交回答';
+      setInputLocked(false);
     },
   });
 }
@@ -499,7 +540,6 @@ function handleWSMessage(type, data) {
     // v2.6: 追问补充已记录
     case 'follow_up_received':
       $('#follow-up-block')?.remove();
-      pendingFollowUp = false;
       reactivateAnswerInput();
       break;
 
@@ -560,15 +600,13 @@ function handleWSMessage(type, data) {
     // v2.1: 安全拦截
     case 'security_block':
       toast('⚠ 回答被拦截: ' + data.reason, 'error');
-      // 重新激活输入
+      // 重新激活输入（v6.3: 统一入口；语义：安全拦截 = 解锁 + 清空 + 聚焦）
       const sbBtn = $('#submit-answer');
-      if (sbBtn) { sbBtn.disabled = false; sbBtn.textContent = '提交回答'; }
-      const sbInput = $('#answer-input');
-      if (sbInput) { sbInput.disabled = false; sbInput.value = ''; sbInput.focus(); }
+      if (sbBtn) sbBtn.textContent = '提交回答';
+      setInputLocked(false, { clear: true, focus: true });
       break;
 
     case 'follow_up':
-      pendingFollowUp = true;
       prefetchTTS(data.question);  // v6.1: 追问同样预取 TTS
       showFollowUp($('#chat-flow'), data.question);
       break;
@@ -601,7 +639,6 @@ function handleWSMessage(type, data) {
 // v2.4: 面试官切换动画
 function showInterviewerChange(area, data) {
   if (!data || !data.current) return;
-  currentInterviewerName = data.current.name;
 
   const isFirst = !data.previous;
 
@@ -773,7 +810,6 @@ function showQuestion(area, data) {
   area.appendChild(qCard);
   area.appendChild(answerArea);
   $('#answer-input')?.focus();
-  pendingFollowUp = false;
   questionShownAt = Date.now();   // v6.2: 开始计本题思考时长
   followUpShownAt = 0;
 
@@ -785,8 +821,8 @@ function showQuestion(area, data) {
     answerInput.addEventListener('input', () => { lastInputSource = 'text'; });
   }
 
-  // 自动朗读题目
-  if (autoReadEnabled && voiceSupport.tts) {
+  // 自动朗读题目（v6.3: autoReadEnabled 恒真死开关已移除）
+  if (voiceSupport.tts) {
     autoReadQuestion(data.question, (state) => {
       voiceState = state === 'speaking' ? 'speaking' : 'idle';
       updateVoiceButtonStates();
@@ -948,7 +984,7 @@ function showFollowUp(area, question) {
   followUpShownAt = Date.now();   // v6.2: 开始计追问思考时长
 
   // v6.2: 自动朗读追问（与题目一致），朗读结束自动切回文字输入
-  if (autoReadEnabled && voiceSupport.tts) {
+  if (voiceSupport.tts) {
     autoReadQuestion(question, (state) => {
       voiceState = state === 'speaking' ? 'speaking' : 'idle';
       updateVoiceButtonStates();
@@ -1012,7 +1048,7 @@ function submitAnswer() {
   updateVoiceButtonStates();
 
   const btn = $('#submit-answer');
-  btn.disabled = true;
+  setInputLocked(true);        // v6.3: 走统一锁定入口（session.inputLocked 同步置位）
   btn.textContent = '诊断中...';
 
   input.disabled = true;
@@ -1075,7 +1111,6 @@ function submitFollowUp() {
 
 function skipFollowUp() {
   $('#follow-up-block')?.remove();
-  pendingFollowUp = false;
   stopSpeaking();
   ws.send('skip_follow_up', {});
 }
@@ -1147,17 +1182,10 @@ function clearStreamBox() {
 
 function reactivateAnswerInput() {
   clearTimeout(_answerTimeout);  // v3.1: 收到响应，取消超时
-  const submitBtn = $('#submit-answer');
-  if (submitBtn) {
-    submitBtn.disabled = false;
-    submitBtn.textContent = '提交回答';
-  }
-  const answerInput = $('#answer-input');
-  if (answerInput) {
-    answerInput.value = '';
-    answerInput.disabled = false;
-    answerInput.focus();
-  }
+  // v6.3: 统一走 setInputLocked（语义：正常恢复 = 解锁 + 清空 + 聚焦）
+  const btn = $('#submit-answer');
+  if (btn) btn.textContent = '提交回答';
+  setInputLocked(false, { clear: true, focus: true });
 }
 
 function showDiagnosis(area, data) {
@@ -1364,12 +1392,15 @@ function showExtraQuestion(area, data) {
 function finishInterview(data) {
   // 面试已完成，主动关闭连接（后端 handler 返回也会关连接，提前关避免误触发重连）
   if (ws && ws.close) ws.close();
+  // v6.3 修复：close 后必须置空。否则二次面试 connectWS 前，
+  // 任何 ws.send（如教练模式的提示音通知）会打到旧 socket 静默丢失。
+  ws = null;
   const area = $('#interview-area');
   area.classList.add('hidden');
 
   // v4.0: 回到准备态（重建 Setup，清除已填内容）
-  window._interviewActive = false;
-  initInterview();
+  setPhase(PHASE.DONE);      // v6.3: 先入 done（副作用：状态灯熄灭）
+  initInterview();           // 内部 setPhase(SETUP) 重建引导页
 
   // 保存报告数据到全局，供 report.js 使用
   // 后端 interview_done 的 data 即为报告本体

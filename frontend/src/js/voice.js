@@ -62,6 +62,10 @@ const listeners = {};
 export function onVoiceEvent(event, callback) {
   if (!listeners[event]) listeners[event] = [];
   listeners[event].push(callback);
+  // v6.3: 返回取消函数，供一次性订阅（如 autoReadQuestion 的打断复位）
+  return () => {
+    listeners[event] = (listeners[event] || []).filter(fn => fn !== callback);
+  };
 }
 
 function emit(event, data) {
@@ -73,12 +77,24 @@ function emit(event, data) {
 let ttsUtterance = null;
 let ttsSpeaking = false;
 let mimoAudio = null;   // 当前 MiMo 播放的 <audio>
+// v6.3 语音世代号（真打断的核心）：
+// 每次打断递增，所有在飞的 onEnd 回调携带旧世代号即失效。
+// 对应 HakiMeet flush() 的教训——只停播放不清回调，结束回调仍会触发后续动作。
+let speechSeq = 0;
 
-/** 停止当前朗读（浏览器 + MiMo） */
+/** 停止当前朗读（浏览器 + MiMo）。真打断：先摘回调再停止。 */
 export function stopSpeaking() {
+  speechSeq++;
   if (mimoAudio) {
-    try { mimoAudio.pause(); } catch (_) {}
+    const a = mimoAudio;
     mimoAudio = null;
+    // 置空回调必须在 pause 之前：保证结束/出错回调不可能再触发后续动作
+    a.onended = null;
+    a.onerror = null;
+    try { a.pause(); } catch (_) {}
+    if (a.src && a.src.startsWith('blob:')) {
+      try { URL.revokeObjectURL(a.src); } catch (_) {}
+    }
   }
   if (ttsSpeaking || speechSynthesis.speaking) {
     speechSynthesis.cancel();
@@ -100,6 +116,14 @@ function browserSpeak(text, opts = {}) {
     if (opts.onEnd) opts.onEnd();
     return;
   }
+  const seq = speechSeq;   // v6.3: 捕获世代号，打断后旧回调不再触发 onEnd
+  // onEnd 一次性守卫：onend/onerror 互斥触发时也不会重复执行
+  let ended = false;
+  const fireEnd = () => {
+    if (ended || seq !== speechSeq) return;
+    ended = true;
+    if (opts.onEnd) opts.onEnd();
+  };
   const utterance = new SpeechSynthesisUtterance(text);
   utterance.lang = opts.lang || 'zh-CN';
   utterance.rate = opts.rate || 0.95;
@@ -121,7 +145,7 @@ function browserSpeak(text, opts = {}) {
     ttsSpeaking = false;
     ttsUtterance = null;
     emit('tts:end');
-    if (opts.onEnd) opts.onEnd();
+    fireEnd();
   };
   utterance.onerror = (e) => {
     ttsSpeaking = false;
@@ -130,7 +154,9 @@ function browserSpeak(text, opts = {}) {
     if (e.error !== 'canceled' && e.error !== 'interrupted') {
       console.warn('[Voice] 浏览器 TTS 错误:', e.error);
     }
-    if (opts.onEnd) opts.onEnd();
+    // v6.3 修复（真打断）：canceled/interrupted 是 stopSpeaking 触发的取消，
+    // 绝不能当作"自然结束"去调 onEnd —— 否则打断后仍会切回输入态/触发后续动作
+    if (e.error !== 'canceled' && e.error !== 'interrupted') fireEnd();
   };
 
   if (voices.length === 0) {
@@ -149,9 +175,12 @@ function browserSpeak(text, opts = {}) {
 
 // ---- MiMo TTS（主引擎）----
 function mimoSpeak(text, opts = {}) {
+  const seq = speechSeq;   // v6.3: 世代守卫
   return new Promise((resolve) => {
     requestVoiceTTS(text, 'default')
       .then((data) => {
+        // 拿到音频时已被打断：不得开始播放（否则"停了又响"）
+        if (seq !== speechSeq) { resolve(false); return; }
         if (!data || !data.used || !data.audio_b64) {
           resolve(false);
           return;
@@ -170,16 +199,18 @@ function mimoSpeak(text, opts = {}) {
           mimoAudio = null;
           URL.revokeObjectURL(url);
           emit('tts:end');
-          if (opts.onEnd) opts.onEnd();
+          if (seq === speechSeq && opts.onEnd) opts.onEnd();
           resolve(true);
         };
         audio.onerror = () => {
+          if (seq !== speechSeq) { resolve(false); return; }  // 已被打断，stopSpeaking 已清理
           mimoAudio = null;
           URL.revokeObjectURL(url);
           if (opts.onEnd) opts.onEnd();
           resolve(false);
         };
         audio.play().catch(() => {
+          if (seq !== speechSeq) { resolve(false); return; }
           mimoAudio = null;
           URL.revokeObjectURL(url);
           if (opts.onEnd) opts.onEnd();
@@ -200,8 +231,10 @@ export async function speak(text, opts = {}) {
   // 未探测时先探测，避免首读降级
   if (mimoStatus === 'unknown') await probeMimo();
 
+  const seq = speechSeq;   // v6.3: 世代守卫
   if (mimoStatus === 'ready') {
     const ok = await mimoSpeak(text, opts);
+    if (seq !== speechSeq) return;   // 朗读期间被打断：不得降级续播
     if (!ok) {
       // 本次失败，降级并标记，后续直接走浏览器
       mimoStatus = 'failed';
@@ -618,14 +651,30 @@ export function prefetchTTS(questionText) {
  */
 export async function autoReadQuestion(questionText, onStateChange, onEnd) {
   if (!voiceSupport.tts) { if (onEnd) onEnd(); return; }
+  const seq = speechSeq;                 // v6.3: 世代号
   const clean = cleanForTTS(questionText);
   const setState = (s) => { if (onStateChange) onStateChange(s); };
   setState('speaking');
+
+  // v6.3: onEnd 一次性守卫 + 打断复位。
+  // 语义区分：自然结束 → 复位 UI 且通知调用方（切回文字输入）；
+  // 被打断（tts:stop）→ 仅复位 UI，绝不触发调用方的连锁动作。
+  let finished = false;
+  const finish = (fireCallback) => {
+    if (finished) return;
+    finished = true;
+    offStop();
+    setState('idle');
+    if (fireCallback && seq === speechSeq && onEnd) onEnd();
+  };
+  const offStop = onVoiceEvent('tts:stop', () => finish(false));
+
   await speak(clean, {
     rate: 0.9,
     // v6.2: 朗读结束回调 —— 供调用方切回文字输入（聚焦输入框、收起语音态）
-    onEnd: () => { setState('idle'); if (onEnd) onEnd(); },
+    onEnd: () => finish(true),
   });
+  finish(false);   // 兜底：speak 同步返回（引擎不可用等）也复位
 }
 
 // ===== 启动时后台探测 MiMo 可用性 =====

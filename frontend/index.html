@@ -12,6 +12,7 @@
   <link rel="stylesheet" href="/src/css/pages/history.css">
   <link rel="stylesheet" href="/src/css/pages/dark.css">
   <link rel="stylesheet" href="/src/css/pages/market.css">
+  <link rel="stylesheet" href="/src/css/pages/memory.css">
   <link rel="stylesheet" href="/src/css/style.css">
 </head>
 <body>
@@ -60,6 +61,10 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
       <span class="nav-label">市场数据</span>
     </button>
+    <button class="nav-item" data-tab="memory">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="4.5" cy="7" r="2"/><circle cx="19.5" cy="7" r="2"/><circle cx="4.5" cy="17" r="2"/><circle cx="19.5" cy="17" r="2"/><line x1="6.3" y1="8.2" x2="9.6" y2="10.6"/><line x1="17.7" y1="8.2" x2="14.4" y2="10.6"/><line x1="6.3" y1="15.8" x2="9.6" y2="13.4"/><line x1="17.7" y1="15.8" x2="14.4" y2="13.4"/></svg>
+      <span class="nav-label">长期记忆</span>
+    </button>
   </nav>
 
   <!-- 主内容 -->
@@ -70,6 +75,7 @@
     <section id="question-bank-panel" class="panel"></section>
     <section id="career-plan-panel" class="panel"></section>
     <section id="market-data-panel" class="panel"></section>
+    <section id="memory-panel" class="panel"></section>
   </main>
 </div>
 
@@ -98,6 +104,10 @@
   <button class="nav-item" data-tab="market-data">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
     <span>市场</span>
+  </button>
+  <button class="nav-item" data-tab="memory">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="4.5" cy="7" r="2"/><circle cx="19.5" cy="7" r="2"/><circle cx="4.5" cy="17" r="2"/><circle cx="19.5" cy="17" r="2"/><line x1="6.3" y1="8.2" x2="9.6" y2="10.6"/><line x1="17.7" y1="8.2" x2="14.4" y2="10.6"/><line x1="6.3" y1="15.8" x2="9.6" y2="13.4"/><line x1="17.7" y1="15.8" x2="14.4" y2="13.4"/></svg>
+    <span>记忆</span>
   </button>
 </nav>
 

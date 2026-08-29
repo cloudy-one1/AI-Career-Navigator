@@ -2,7 +2,7 @@
 // questionBank.js v2.2 — 题库管理
 // ===================================================
 
-import { $, $$, el, toast, fmtDate } from './utils.js';
+import { $, $$, el, toast, fmtDate, emptyState } from './utils.js';
 import {
   getQuestionBank,
   createQuestion,
@@ -30,6 +30,8 @@ export function initQuestionBank() {
       el('div', { style: 'display:flex;gap:8px;flex-wrap:wrap;' },
         el('button', { id: 'btn-new-question', className: 'btn btn-primary', textContent: '+ 新建题目', onClick: showCreateForm }),
         el('button', { id: 'btn-import-session', className: 'btn btn-secondary', textContent: '📥 导入', onClick: showImportForm }),
+        // v6.3 onboarding: 模板一键下载，消解"题库该存什么"的疑问
+        el('button', { id: 'btn-download-template', className: 'btn btn-secondary', textContent: '📄 模板', onClick: downloadTemplate }),
       ),
     ),
   ));
@@ -87,11 +89,22 @@ async function loadQuestions() {
     const questions = data.questions || [];
     if (questions.length === 0) {
       container.innerHTML = '';
-      container.appendChild(el('div', { className: 'empty-state' },
-        el('div', { className: 'empty-icon', textContent: '📭' }),
-        el('div', { className: 'empty-text', textContent: currentFilters.search
-          ? '没有匹配的题目，试试其他关键词' : '题库为空，点击"新建题目"开始添加' }),
-      ));
+      // v6.3: 空状态三件套 + 空库时的模板下载引导
+      const empty = currentFilters.search
+        ? emptyState({ icon: '🔍', title: '没有匹配的题目', desc: '试试其他关键词，或清除筛选条件' })
+        : emptyState({
+            icon: '📭', title: '题库还是空的',
+            desc: '手动新建、从历史面试导入，或先下载模板看看题库该长什么样。',
+          });
+      if (!currentFilters.search) {
+        empty.appendChild(el('div', {
+          style: 'margin-top:12px;display:flex;gap:8px;justify-content:center;',
+        }, el('button', {
+          className: 'btn btn-sm btn-primary btn-press',
+          textContent: '下载题库模板', onClick: downloadTemplate,
+        })));
+      }
+      container.appendChild(empty);
       return;
     }
 
@@ -279,4 +292,58 @@ function showImportForm() {
   ));
 
   container.scrollIntoView({ behavior: 'smooth' });
+}
+
+// ===== v6.3 onboarding: 题库模板一键下载（借鉴 HakiMeet QuestionBankView）=====
+// 模板对齐后端 CreateQuestionRequest 字段（question_text/round_type/intent/tags/difficulty），
+// 内联真实示例题，Blob 触发下载 —— 把"我该往题库里放什么"这个疑问在页面上直接消解掉。
+function downloadTemplate() {
+  const md = [
+    '# 题库模板（AI 模拟面试官）',
+    '',
+    '按下面的字段说明整理题目后，在「题库管理 → 新建题目」中录入；',
+    '也可以把本文件交给任意 AI，让它按你的 JD 批量生成同格式题目。',
+    '',
+    '## 字段说明',
+    '',
+    '| 字段 | 必填 | 说明 |',
+    '|---|---|---|',
+    '| question_text | 是 | 题目正文（面试官口吻） |',
+    '| round_type | 否 | 阶段：破冰环节 / 技术广度 / 技术深度 / 项目拷问 / 行为面试 / 反问收尾 |',
+    '| intent | 否 | 考察意图（一句话） |',
+    '| tags | 否 | 标签，逗号分隔，如：Python,并发 |',
+    '| difficulty | 否 | 难度 1-5（默认 3） |',
+    '',
+    '## 示例题目',
+    '',
+    '### 示例 1',
+    '- question_text: 请介绍一个你最有代表性的项目，重点讲清楚业务背景、你的角色和最终可量化的结果。',
+    '- round_type: 项目拷问',
+    '- intent: 考察 STAR 完整性与量化表达能力',
+    '- tags: 项目经历,STAR',
+    '- difficulty: 3',
+    '',
+    '### 示例 2',
+    '- question_text: 高并发场景下缓存与数据库的一致性你是怎么保证的？发生过不一致吗，怎么定位的？',
+    '- round_type: 技术深度',
+    '- intent: 考察专业深度与真实踩坑经验，识别背题式回答',
+    '- tags: 缓存,一致性,Redis',
+    '- difficulty: 4',
+    '',
+    '### 示例 3',
+    '- question_text: 和同事在技术方案上产生严重分歧时，你会怎么推进？举一个真实发生的例子。',
+    '- round_type: 行为面试',
+    '- intent: 考察协作与沟通，验证行为面试回答的真实性',
+    '- tags: 协作,沟通',
+    '- difficulty: 3',
+    '',
+  ].join('\n');
+  const blob = new Blob([md], { type: 'text/markdown;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '题库模板.md';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  toast('模板已下载', 'success');
 }

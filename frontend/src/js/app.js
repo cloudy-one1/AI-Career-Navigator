@@ -10,6 +10,7 @@ import { initHistory } from './history.js';
 import { initQuestionBank } from './questionBank.js';
 import { initCareerPlan } from './careerPlan.js';
 import { initMarketData } from './marketData.js';
+import { initMemory } from './memoryGraph.js';   // v6.3 长期记忆
 
 function switchTab(tabName) {
   // 更新导航项（侧边栏 + 底部栏共用）
@@ -32,6 +33,7 @@ function switchTab(tabName) {
   else if (tabName === 'question-bank') initQuestionBank();
   else if (tabName === 'career-plan') initCareerPlan();
   else if (tabName === 'market-data') initMarketData();
+  else if (tabName === 'memory') initMemory();
 
   updateInterviewStatus(tabName);
 }

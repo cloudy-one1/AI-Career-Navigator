@@ -69,3 +69,49 @@ export function escHtml(str) {
   div.textContent = str;
   return div.innerHTML;
 }
+
+// ===== v6.3 onboarding 工具（借鉴 HakiMeet 的空状态三件套与全局确认弹窗）=====
+
+/** Promise 化确认弹窗（替代原生 window.confirm，样式与交互全局统一）。
+ *  danger=true 时确认按钮为红色，用于删除等不可逆操作。
+ *  Esc / 点击遮罩 = 取消。 */
+export function confirm(message, { title = '请确认', okText = '确定',
+                                   cancelText = '取消', danger = false } = {}) {
+  return new Promise(resolve => {
+    const mask = el('div', { className: 'confirm-mask' });
+    const done = val => {
+      mask.remove();
+      document.removeEventListener('keydown', onKey);
+      resolve(val);
+    };
+    const onKey = e => { if (e.key === 'Escape') done(false); };
+
+    mask.appendChild(el('div', { className: `confirm-box card${danger ? ' confirm-danger' : ''}` },
+      el('div', { className: 'confirm-title', textContent: title }),
+      el('div', { className: 'confirm-message', textContent: message }),
+      el('div', { className: 'confirm-actions' },
+        el('button', {
+          className: 'btn btn-secondary btn-press', textContent: cancelText,
+          onclick: () => done(false),
+        }),
+        el('button', {
+          className: `btn ${danger ? 'btn-danger' : 'btn-primary'} btn-press`,
+          textContent: okText, onclick: () => done(true),
+        }),
+      ),
+    ));
+    mask.addEventListener('click', e => { if (e.target === mask) done(false); });
+    document.addEventListener('keydown', onKey);
+    document.body.appendChild(mask);
+  });
+}
+
+/** 空状态三件套（图标 + 标题 + 说明），渲染进容器或独立返回。 */
+export function emptyState({ icon = '📭', title = '暂无数据', desc = '' } = {}) {
+  const wrap = el('div', { className: 'empty-state' },
+    el('div', { className: 'empty-icon', textContent: icon }),
+    el('div', { className: 'empty-title', textContent: title }),
+  );
+  if (desc) wrap.appendChild(el('div', { className: 'empty-desc', textContent: desc }));
+  return wrap;
+}

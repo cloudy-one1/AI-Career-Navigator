@@ -87,11 +87,19 @@
   --radius-lg: 16px;
   --radius-full: 999px;
 
-  /* ── 阴影 ── */
+  /* ── 阴影（v6.3 补齐六级 + 内阴影；xs 用于贴地元素，xl 用于弹层）── */
+  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
   --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
   --shadow-md: 0 4px 12px -2px rgba(15, 23, 42, 0.08);
   --shadow-lg: 0 12px 32px -8px rgba(15, 23, 42, 0.14);
+  --shadow-xl: 0 24px 48px -12px rgba(15, 23, 42, 0.22), 0 8px 16px -8px rgba(15, 23, 42, 0.10);
+  --shadow-inset: inset 0 1px 2px rgba(15, 23, 42, 0.06);
   --shadow-glow: 0 0 0 4px rgba(79, 70, 229, 0.12);
+
+  /* ── 玻璃态（v6.3；毛玻璃面板/悬浮工具条用）── */
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-border: rgba(255, 255, 255, 0.55);
+  --glass-blur: 14px;
 
   /* ── 动效 ── */
   --dur-fast: 150ms;
@@ -99,6 +107,9 @@
   --dur-slow: 350ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+  /* v6.3: 标准微交互缓动（hover/active 等位移类过渡统一用它，
+     与 --ease-out 的"入场"语义区分；取自 Material 标准曲线） */
+  --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* ===================================================
@@ -159,8 +170,14 @@
     --text-secondary: #94A3B8;
     --text-muted: #64748B;
 
+    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
     --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
     --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.5);
     --shadow-lg: 0 12px 32px -8px rgba(0, 0, 0, 0.6);
+    --shadow-xl: 0 24px 48px -12px rgba(0, 0, 0, 0.7), 0 8px 16px -8px rgba(0, 0, 0, 0.5);
+    --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+
+    --glass-bg: rgba(30, 41, 59, 0.72);
+    --glass-border: rgba(51, 65, 85, 0.55);
   }
 }

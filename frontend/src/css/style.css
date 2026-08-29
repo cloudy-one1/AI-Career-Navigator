@@ -25,6 +25,41 @@
   color: var(--text);
 }
 
+/* ── v6.3 全局微交互组件类（借鉴 HakiMeet 的统一微交互语法）──
+   hover 一律上浮 2px + 阴影升一级，active 一律 scale(0.98)，
+   缓动统一 var(--ease-standard)。页面不得各自重写同名样式。 */
+.card-hover {
+  transition: transform var(--dur-fast) var(--ease-standard),
+              box-shadow var(--dur-fast) var(--ease-standard);
+}
+.card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+.btn-press {
+  transition: transform var(--dur-fast) var(--ease-standard);
+}
+.btn-press:active { transform: scale(0.98); }
+
+/* v6.3: 统计胶囊（页头统计条共用，各页面直接复用） */
+.stat-chip {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px; border-radius: var(--radius-full);
+  background: var(--bg); border: 1px solid var(--border);
+  font-size: .78rem; color: var(--text-secondary);
+}
+.stat-chip b { color: var(--text); font-weight: 700; }
+
+/* v6.3: 玻璃态面板（图谱工具条 / 图例等悬浮元素） */
+.glass-panel {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--shadow-md);
+  border-radius: var(--radius-md);
+}
+
 /* Form Elements */
 .form-group { margin-bottom: 16px; }
 .form-label {
@@ -192,6 +227,41 @@
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
 }
 .btn-secondary:hover { background: var(--border); }
+/* v6.3: 危险操作按钮（confirm danger / 明细删除） */
+.btn-danger {
+  background: var(--color-danger); color: #fff;
+}
+.btn-danger:hover { filter: brightness(0.92); }
+
+/* v6.3: 全局确认弹窗（utils.confirm 的 DOM 结构） */
+.confirm-mask {
+  position: fixed; inset: 0; z-index: 1000;
+  background: rgba(15, 23, 42, 0.45);
+  -webkit-backdrop-filter: blur(2px); backdrop-filter: blur(2px);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+  animation: fadeIn var(--dur-fast) var(--ease-standard);
+}
+.confirm-box {
+  max-width: 380px; width: 100%; margin: 0;
+  box-shadow: var(--shadow-xl);
+  animation: popIn var(--dur-base) var(--ease-spring);
+}
+.confirm-box.confirm-danger { border-top: 3px solid var(--color-danger); }
+.confirm-title {
+  font-size: 1rem; font-weight: 700; color: var(--text); margin-bottom: 8px;
+}
+.confirm-message {
+  font-size: .85rem; color: var(--text-secondary); line-height: 1.6;
+  margin-bottom: 16px; word-break: break-word;
+}
+.confirm-actions {
+  display: flex; justify-content: flex-end; gap: 8px;
+}
+@keyframes popIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.96); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
 .btn-sm { padding: 6px 12px; font-size: .8rem; }
 .btn-block { width: 100%; }
 
@@ -607,6 +677,12 @@
 }
 .empty-state .empty-icon { font-size: 2.5rem; margin-bottom: 12px; }
 .empty-state .empty-text { font-size: .95rem; }
+/* v6.3: 三件套结构（图标 + 标题 + 说明），utils.emptyState() 的渲染目标 */
+.empty-state .empty-title {
+  font-size: 1rem; font-weight: 600; color: var(--text);
+  margin: 4px 0 6px;
+}
+.empty-state .empty-desc { font-size: .85rem; max-width: 420px; margin: 0 auto; }
 
 /* Progress Step Indicator */
 .progress-steps {

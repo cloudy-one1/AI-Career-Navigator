@@ -1,6 +1,35 @@
 # 变更日志（CHANGELOG）
 
-> 记录 v2 → v6.0 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+> 记录 v2 → v6.4 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+
+---
+
+## v6.4 竞品借鉴专项五期：HakiMeet 八项落地——长期记忆闭环 + 前端成品感（2026-08-29）
+
+> 对标 [HakiMeet](https://github.com/zhaojunfei/HakiMeet)（Vue3 + FastAPI 语音面试平台）研读后，按《[HakiMeet-深度研读.md](docs/HakiMeet-深度研读.md)》§7 的 **P1 八项**逐项落地。它的产品感强、工程纪律弱：值得学的是长期记忆闭环可视化与真打断语义，必须规避的是内置 `hash()` 去重键不稳、2D/3D 图谱双轨并存、页面各自复制粘贴样式——本轮落地全部按改进版处理。其中后端四项已随 v6.3 提交窗口先行入库，本节补记完整叙事；前端四项为本节新增。
+
+### 后端（已随 v6.3 窗口入库，此处补记叙事）
+
+1. **RAG 注入去重**：`content_hash()`（blake2b 8 字节，跨进程稳定——HakiMeet 用内置 `hash()` 受 PYTHONHASHSEED 随机化影响，重启即失效）；`resume_retriever.select_context_tracked()` / `knowledge_store.retrieve(exclude_hashes)` / `augment_prompt_tracked()` 贯通去重参数，返回值携带指纹；两条纪律：**先过滤再走字符预算**（被排除的名额不得白占预算）、**耗尽必须回退**（长会话后期所有块都已注入，不回退则证据包恒空，去重反致能力退化）。
+2. **备选题 / 换题**：会话层登记已问题目台账（文本 + 指纹），出题时以【已问题目清单·严禁重复】负向约束传入 `question_gen`；模型无视约束吐出重复题时，**把那道重复题追加进排除清单重试一次**（给出具体反例比反复强调规则有效，但只重试一次——重试是完整 LLM 往返）。
+3. **长期记忆闭环**：`weakness_profile` 幂等迁移补 `resolved` / `updated_at` 列（`CREATE TABLE IF NOT EXISTS` 不会给已存在的表补列，必须 PRAGMA 检查后 ALTER）；新增 `PUT /api/weakness-profile/{id}/resolve`、`GET /api/weakness-profile/{id}/suggestions`（静态段注册在 `/{session_id}` 之前防参数吞并）、`GET /api/weakness-profile/points`；首轮出题回注入历史未解决薄弱点（【历史薄弱点·优先考察】，仅首轮注入一次，后续轮次重复注入是纯 token 浪费）；拉取失败降级为"无历史记忆"，不阻断面试。
+4. **测试**：新增 `test_injection_dedup.py`（19 例）/ `test_alternate_question.py`（10 例）/ `test_weakness_memory.py`（17 例），覆盖指纹稳定性、去重与回退、迁移幂等（含老库升级）、resolved 闭环语义、换题重试上限。
+
+### 前端（本轮新增）
+
+5. **Design token 补强**：`tokens.css` 补 `--shadow-xs/xl/inset` 六级阴影、玻璃态 `--glass-*`、`--ease-standard` 微交互缓动（与 `--ease-out` 的"入场"语义区分）；`style.css` 落地全局组件类 `card-hover / btn-press / stat-chip / glass-panel / empty-state 三件套 / confirm 弹窗 / btn-danger`——页面不得各自重写（对应 HakiMeet"视觉统一、实现复制"的反面教材）。
+6. **长期记忆页 + 2D SVG 记忆图谱**（新文件 `memoryGraph.js` + `pages/memory.css`）：中心"薄弱点图谱" → 维度环形分布 → 子节点确定性哈希散开（FNV-1a 种子，**刷新不跳位**）；节点颜色 = 严重度×未解决率（红/橙/蓝/灰四级，token 化深色自适应）；SVG 二次贝塞尔连线、hover 节点↔明细项双向联动、点击节点滚动定位明细；平移缩放走 transform 合成层（缩放不重算路径）；每维度最多渲染 6 个子节点（超出聚合 +N）；**只做 2D 一套**（HakiMeet 2D/3D 双轨并存是维护负担）。标记已解决即退出回注入与建议口径——闭环收敛动作。
+7. **面试页状态机收敛 + 语音真打断**：`interview.js` 收敛为 `PHASE` 四态 + `setPhase()` 单一入口（副作用如状态灯统一驱动），锁定/恢复 4 条路径统一走 `setInputLocked()`（保留"超时保留草稿 / 拦截清空聚焦"等语义差异）；删除三个死状态（`pendingFollowUp` 无读取、`currentInterviewerName` 无读取、`autoReadEnabled` 无写入恒真）；修复 `connectWS` 重置不全（补 voiceState/计时器/思考计时，防第二场面试继承污染）与 `finishInterview` 后 `ws` 未置空（旧 socket 静默吞消息）。`voice.js` 引入语音世代号：`stopSpeaking()` 先摘 `onended` 回调再 pause（HakiMeet `flush()` 同类缺陷的教训），修复 `browserSpeak` 对 canceled/interrupted 也触发 `onEnd`、以及打断后 MiMo 失败误降级续播；`autoReadQuestion` 打断时仅复位 UI 不触发连锁动作。
+8. **Onboarding 细节**：题库页"📄 模板"一键下载（内联字段说明 + 真实示例题，Blob 触发）、空状态三件套接入题库页与记忆页、全局 Promise 化确认弹窗（删除薄弱点等不可逆操作二次确认）。
+
+### 工程化
+- 全量 **655 例通过**、`run.py lint` 分层契约通过；前端零新依赖（图谱为原生 SVG/DOM）。
+- 文档：研读报告 §7 八项落实状态逐条标注。
+
+### 范围与约束（诚实披露）
+- `knowledge_store` 的 tracked 去重接口仍是**前向储备**：业务检索当前只走 `ResumeRetriever` 一线，`augment_prompt_tracked` 暂无生产调用方（接口就绪，待职业规划/出题知识注入接线）。
+- 图谱子节点每维度最多 6 个（超出聚合 +N）；<768px 收起图例、双击复位代替滚轮缩放。
+- **Realtime 语音（研读报告 P2-9）明确不做**：端到端实时语音会让 `output_sanitizer` 与结构化评分无处挂载，与 v6.2 以来的核心优势冲突，如需引入应单独立项并配"转录后离线评分"兜底。
 
 ---
 
