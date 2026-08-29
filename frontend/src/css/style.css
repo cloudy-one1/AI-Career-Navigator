@@ -306,6 +306,12 @@
 .question-intent {
   font-size: .8rem; color: var(--text-muted); margin-top: 8px; font-style: italic;
 }
+/* v6.4: 本题依据 chip（出题来源：JD 缺口 / 简历锚点 / 压力题等） */
+.question-basis {
+  font-size: .78rem; color: var(--primary); margin-top: 6px;
+  background: rgba(79,70,229,.06); border-radius: 6px; padding: 4px 10px;
+  display: inline-block;
+}
 
 .answer-area { margin-top: 16px; }
 .answer-textarea {

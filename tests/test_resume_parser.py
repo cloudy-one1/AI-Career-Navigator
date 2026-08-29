@@ -79,3 +79,135 @@ class TestDOCXDetection:
         fake_docx = b"PK\x03\x04some zip content"
         result = resume_parser.parse_resume(fake_docx, "resume.docx")
         assert isinstance(result, str)
+
+
+# ===== v6.5: PDF 文本两阶段修复（借鉴 interviewerAgent internal/extract/pdf.go）=====
+
+
+class TestNumberedItemDetection:
+    """_is_numbered_item — Phase 1 硬断信号之一"""
+
+    @pytest.mark.parametrize("s", ["1. 完成xx", "2、负责yy", "3) 测试zz", "（4) 描述ww", "① 首先", "⑫ 最后"])
+    def test_numbered_items(self, s):
+        assert resume_parser._is_numbered_item(s)
+
+    @pytest.mark.parametrize("s", ["QPS 提升", "ab", "xx", "3.5xx", "2024年", "（）"])
+    def test_non_numbered_lines(self, s):
+        assert not resume_parser._is_numbered_item(s)
+
+    def test_short_line_never_numbered(self):
+        """<3 字符不判定（防 "1." 单独成行误判）"""
+        assert not resume_parser._is_numbered_item("1.")
+
+
+class TestCapsHeadingDetection:
+    """_is_caps_heading — Phase 1 硬断信号之二"""
+
+    def test_all_caps_heading(self):
+        assert resume_parser._is_caps_heading("EDUCATION")
+        assert resume_parser._is_caps_heading("WORK EXPERIENCE")
+
+    def test_short_acronym_not_heading(self):
+        """<6 字母的缩写不判定（API/SQL/CV 不能当标题）"""
+        assert not resume_parser._is_caps_heading("API")
+        assert not resume_parser._is_caps_heading("SQL DB")
+
+    def test_chinese_line_not_heading(self):
+        assert not resume_parser._is_caps_heading("工作经历")
+
+    def test_mixed_case_not_heading(self):
+        assert not resume_parser._is_caps_heading("Education")
+
+
+class TestRejoinBrokenLines:
+    """Phase 1：软换行拼接"""
+
+    def test_soft_wrapped_chinese_joined(self):
+        text = "负责电商推荐系统\n的后端 API 开发\n与性能优化"
+        out = resume_parser._rejoin_broken_lines(text)
+        assert out == "负责电商推荐系统的后端 API 开发与性能优化"
+
+    def test_ascii_words_get_space(self):
+        text = "Python\nBackend\nEngineer"
+        out = resume_parser._rejoin_broken_lines(text)
+        assert out == "Python Backend Engineer"
+
+    def test_numbered_item_keeps_own_line(self):
+        text = "职责如下\n1. 负责服务开发\n2、负责稳定性建设"
+        out = resume_parser._rejoin_broken_lines(text)
+        lines = [ln for ln in out.split("\n") if ln]
+        assert len(lines) == 3
+
+    def test_blank_lines_preserved(self):
+        text = "第一段\n\n第二段"
+        out = resume_parser._rejoin_broken_lines(text)
+        assert "\n\n" in out
+
+    def test_caps_heading_keeps_own_line(self):
+        text = "个人技能\nEDUCATION\n北京大学"
+        out = resume_parser._rejoin_broken_lines(text)
+        assert "EDUCATION" in out.split("\n")
+
+
+class TestRestoreStructure:
+    """Phase 2：结构断行复原"""
+
+    def test_chinese_header_gets_blank_lines(self):
+        text = "基本信息张三后端工程师教育背景北京大学"
+        out = resume_parser._restore_structure(text)
+        assert "\n教育背景\n" in out
+
+    def test_bullet_dot_gets_newline(self):
+        text = "成果如下·优化QPS·降低延迟"
+        out = resume_parser._restore_structure(text)
+        assert "\n·优化QPS" in out
+
+    def test_dash_before_cjk_gets_newline(self):
+        text = "工作内容- 负责网关开发- 负责限流"
+        out = resume_parser._restore_structure(text)
+        assert "\n- 负责网关开发" in out
+
+    def test_date_range_not_broken(self):
+        """2023-09 这类日期区间不含 CJK，不受 '-' 规则影响"""
+        text = "2023-09 至 2024-06 某公司"
+        out = resume_parser._restore_structure(text)
+        assert "2023-09" in out
+        assert "\n09" not in out
+
+    def test_embedded_numbered_item_gets_newline(self):
+        text = "完成了两件事。1.重构网关。2.上线灰度。"
+        out = resume_parser._restore_structure(text)
+        assert "\n1.重构网关" in out
+        assert "\n2.上线灰度" in out
+
+    def test_decimal_not_treated_as_item(self):
+        """3.14 / 3.5 这类小数不触发断行"""
+        text = "圆周率是3.14这个数字"
+        out = resume_parser._split_embedded_numbered_items(text)
+        assert "\n" not in out
+
+    def test_collapse_extra_blank_lines(self):
+        text = "a\n\n\n\nb"
+        out = resume_parser._restore_structure(text)
+        assert "\n\n\n" not in out
+
+
+class TestRepairPdfText:
+    """端到端：parse_pdf 输出的粘连文本被修复"""
+
+    def test_glued_resume_repaired(self):
+        glued = ("张三 后端工程师13800000000"
+                 "工作经历某某公司 后端开发- 负责网关开发- 优化QPS提升40%")
+        out = resume_parser._repair_pdf_text(glued)
+        assert "\n工作经历\n" in out
+        assert "\n- 负责网关开发" in out
+        assert "\n- 优化QPS" in out
+
+    def test_already_clean_text_unchanged_semantically(self):
+        clean = "张三\n\n工作经历\n某某公司"
+        out = resume_parser._repair_pdf_text(clean)
+        assert "张三" in out and "工作经历" in out and "某某公司" in out
+
+    def test_empty_text_passthrough(self):
+        assert resume_parser._repair_pdf_text("") == ""
+        assert resume_parser._repair_pdf_text("   ") == "   "

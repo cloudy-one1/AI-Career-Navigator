@@ -60,6 +60,8 @@ from .market.crawler import tasks as crawler_tasks  # v3.3 实时采集（B档�
 from .market.crawler.adapters import build_jd_text  # v3.3 岗位 JD 组装
 from . import gap_analyzer  # v3.1
 from . import career_planner  # v3.2 职业规划
+from . import company_profiles  # v6.5 公司风格层（借鉴 interviewerAgent companies/*.yaml）
+from . import weakness_memory   # v6.5 长期薄弱点记忆（EMA 衰减 + 过期淘汰）
 from .voice_service import voice_service  # v4.2 MiMo 云端语音（TTS/ASR 代理）
 
 # ─── 集中日志 ───
@@ -142,6 +144,8 @@ _provider_lock = asyncio.Lock()  # v3.1 整改：保护全局单例重赋值，�
 async def startup():
     await init_db()
     await market_store.init_market_db()  # v3.0: 市场岗位库（幂等）
+    # v6.5: 清理 30 天未再加重的历史薄弱点（启动即跑一次，失败不影响启动）
+    await weakness_memory.prune_expired()
     logger.info(f"AI 面试官 v3.1 启动完成，当前后端: {config.AI_PROVIDER}")
 
 
@@ -319,6 +323,29 @@ async def create_session(req: SessionCreateRequest, request: Request = None):
                        resume_filename="inline", jd_text=jd_final,
                        resume_text=resume_text)
 
+    # v6.5: 公司风格层 —— 显式选择 > JD 关键词自动匹配 > 不启用。
+    # "none" 为前端明确不启用的哨兵值（与空串的"自动匹配"区分）；
+    # 未知名称降级为自动匹配而非报错（公司风格是增强项，不是硬依赖）。
+    company_profile = None
+    company_display = None
+    try:
+        requested = (req.company_profile or "").strip()
+        if requested.lower() == "none":
+            logger.info("公司风格层：前端明确不启用")
+        else:
+            if requested:
+                company_profile = company_profiles.get_profile(requested)
+                if company_profile is None:
+                    logger.warning(f"未知公司风格 {requested!r}，降级为 JD 自动匹配")
+            if company_profile is None:
+                company_profile = company_profiles.match_profile(jd_final)
+            if company_profile:
+                company_display = company_profile.get("display_name")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"公司风格解析失败，降级为不启用: {e}")
+        company_profile = None
+        company_display = None
+
     # 创建面试会话 (v2.4: 传递 mode; v5.0: 传递 stage; v6.2: 传递简历追问点)
     session = InterviewSession(
         session_id=session_id,
@@ -333,6 +360,7 @@ async def create_session(req: SessionCreateRequest, request: Request = None):
         question_type_mix=req.question_type_mix or {},
         resume_points=resume_points,
         jd_gaps=jd_gaps,   # v6.3: JD 匹配缺口（出题优先级链第一环）
+        company_profile=company_profile,   # v6.5: 目标公司风格（None = 不启用）
     )
     async with _session_lock:
         active_sessions[session_id] = session
@@ -349,7 +377,16 @@ async def create_session(req: SessionCreateRequest, request: Request = None):
                  "question_count": r["question_count"]}
                 for r in rounds_source],
         research=research_data if research_data else None,
+        company_profile=company_display,
     )
+
+
+# ===== v6.5: 公司风格列表（供前端选择器） =====
+
+@app.get("/api/company-profiles")
+async def list_company_profiles():
+    """返回全部已加载的公司风格配置摘要。目录为空 / pyyaml 缺失时返回空列表。"""
+    return company_profiles.list_profiles()
 
 
 @app.post("/api/sessions/upload")
@@ -578,9 +615,14 @@ async def weakness_points(include_resolved: bool = False,
 
 @app.get("/api/weakness-profile/suggestions")
 async def weakness_suggestions(limit: int = Query(5, ge=1, le=20)):
-    """复习建议：最该优先补的未解决薄弱点（与面试回注入同一排序口径）。"""
+    """复习建议：最该优先补的未解决薄弱点（与面试回注入同一排序口径）。
+
+    v6.5: 与回注入同口径——优先 EMA 薄弱度降序，新表为空时回退 v6.3 的均分升序。
+    """
     try:
-        suggestions = await list_unresolved_weaknesses(limit=limit)
+        suggestions = await weakness_memory.active_memory_points(limit=limit)
+        if not suggestions:
+            suggestions = await list_unresolved_weaknesses(limit=limit)
         return {"status": "ok", "count": len(suggestions), "suggestions": suggestions}
     except Exception as e:
         logger.error(f"获取复习建议失败: {e}")
@@ -1149,8 +1191,13 @@ async def ws_interview(websocket: WebSocket, session_id: str):
         })
 
         # v6.3 长期记忆闭环：历史未解决薄弱点回注入（失败降级，不阻断面试）
+        # v6.5: 优先用 EMA 薄弱度排序；新表为空（老库刚升级、还没跑过完整会话）
+        #       时回退 v6.3 口径，否则升级后首场面试会静默丢掉记忆回注入。
         try:
-            session.set_long_term_memory(await list_unresolved_weaknesses(limit=10))
+            points = await weakness_memory.active_memory_points(limit=10)
+            if not points:
+                points = await list_unresolved_weaknesses(limit=10)
+            session.set_long_term_memory(points)
         except Exception as e:
             logger.warning(f"长期记忆回注入跳过: {e}")
 
@@ -1221,6 +1268,9 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                         # v6.3: 压力题标记（pressure_bank 注入），前端渲染"压力题"徽章
                         "is_pressure": bool(q.get("is_pressure", False)),
                         "pressure_topic": q.get("topic", ""),
+                        # v6.4: 出题依据（session.question_basis 确定性拼装），
+                        # 前端渲染"本题依据"chip；空串时前端不渲染
+                        "basis": session.question_basis(q),
                     }
                 })
 
@@ -1259,6 +1309,36 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                         await websocket.send_json({"type": "mode_change", "data": event})
                         continue
 
+                    # v6.5: 面试技能（有状态多轮）—— 默认显式触发，
+                    # 不在回答里做关键词猜测（原版纯 strings.Contains 会把普通回答误判成触发）。
+                    if msg_type == "skill":
+                        action = str(data.get("action", "")).strip()
+                        if action == "list":
+                            await websocket.send_json({
+                                "type": "skill_list",
+                                "data": {"skills": session.skill_registry.list()},
+                            })
+                        elif action == "activate":
+                            event = session.activate_skill(data.get("name", ""))
+                            await websocket.send_json({"type": "skill_start", "data": event})
+                            if event.get("ok"):
+                                opening = await session.generate_skill_turn()
+                                if opening:
+                                    await websocket.send_json({
+                                        "type": "follow_up",
+                                        "data": {
+                                            "question": opening,
+                                            "reason": event.get("skill", ""),
+                                            "skill": event.get("skill", ""),
+                                            "step": 1,
+                                            "total": event.get("total_steps", 1),
+                                        },
+                                    })
+                        elif action == "deactivate":
+                            event = session.deactivate_skill(reason="user_exit")
+                            await websocket.send_json({"type": "skill_end", "data": event})
+                        continue
+
                     if msg_type != "answer":
                         continue
 
@@ -1291,6 +1371,34 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                         })
                         continue
 
+                    # v6.5: 技能进行中 → 走技能轮，**不诊断**。
+                    # 测验答案（"B"）拿去打五维分只会污染报告，技能轮单独维护对话历史。
+                    if session.is_skill_active():
+                        skill_name = session.active_skill
+                        progress = session.advance_skill(answer_text)
+                        if progress.get("completed"):
+                            await websocket.send_json({
+                                "type": "skill_end",
+                                "data": {
+                                    "skill": skill_name,
+                                    "reason": "completed",
+                                    "message": progress.get("message", ""),
+                                },
+                            })
+                        else:
+                            reply = await session.generate_skill_turn()
+                            await websocket.send_json({
+                                "type": "follow_up",
+                                "data": {
+                                    "question": reply or "（技能环节生成失败，已退出）",
+                                    "reason": skill_name,
+                                    "skill": skill_name,
+                                    "step": progress.get("step", 1),
+                                    "total": progress.get("total", 1),
+                                },
+                            })
+                        continue
+
                     # v2.6: 安全通过 → 流式双 Agent 诊断，逐块推送
                     diag = None
                     async for stream_msg in session.stream_answer(
@@ -1319,6 +1427,15 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                         "type": "diagnosis_result",
                         "data": diag
                     })
+
+                    # v6.5: 难度变档事件（一次性信号，推送后清空）。
+                    # 必须让候选人/前端看见难度在动，否则分数变化无法归因。
+                    if session.pending_difficulty:
+                        await websocket.send_json({
+                            "type": "difficulty_change",
+                            "data": session.pending_difficulty,
+                        })
+                        session.pending_difficulty = None
 
                     # v2.6: 每题诊断后推送实时雷达数据
                     await websocket.send_json({
@@ -1452,6 +1569,13 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                         rps.extend(diag.get("risk_points", []) or [])
                 await save_weakness_profile(session_id, dim_key, avg,
                                             weights_map.get(dim_key, 0.2), rps)
+
+            # v6.5: 长期薄弱点记忆（EMA 衰减 + 30 天过期 + 中性区不动）。
+            # 与上面的快照写入是两件事：快照是历史流水，这里演进的是"当前状态"。
+            for dim_key, avg in (report.get("dimension_averages") or {}).items():
+                await weakness_memory.record_observation(
+                    dim_key, avg, weights_map.get(dim_key, 0.2)
+                )
         except Exception as e:
             logger.error(f"保存薄弱点画像失败: {e}")
 

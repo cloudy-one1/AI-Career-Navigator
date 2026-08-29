@@ -32,8 +32,8 @@ Diagnostician + Rewriter 是两个独立 Agent，**禁止合并为单一 Agent**
 | 层级 | 模块 | 允许依赖 |
 |---|---|---|
 | L1 基础设施 | `config.py` `logger.py` `llm_client.py` `db.py` | 仅标准库 / 三方库，**无项目内 import**（config 除外） |
-| L2 领域模型/数据 | `schemas.py` `security.py` `resume_parser.py` `resume_retriever.py`（v5.0） `dimension_weights.py` `gap_analyzer.py` `knowledge_store.py`（v6.0） `voice_service.py`（v4.2） `market/*` | 仅 L1（`from .config import ...` `from .db import ...`） |
-| L3 业务逻辑 | `question_gen.py` `diagnosis_engine.py` `interview_engine/*` `web_research.py` `question_bank.py` `data_support.py` `career_planner.py` | L1 + L2，禁止 import L4 |
+| L2 领域模型/数据 | `schemas.py` `security.py` `resume_parser.py` `resume_retriever.py`（v5.0） `dimension_weights.py` `gap_analyzer.py` `knowledge_store.py`（v6.0） `voice_service.py`（v4.2） `market/*` `company_profiles.py`（v6.5） `weakness_memory.py`（v6.6） `difficulty.py`（v6.6） | 仅 L1（`from .config import ...` `from .db import ...`） |
+| L3 业务逻辑 | `question_gen.py` `diagnosis_engine.py` `interview_engine/*` `web_research.py` `question_bank.py` `data_support.py` `career_planner.py` `interview_skills.py`（v6.6） | L1 + L2，禁止 import L4 |
 | L4 应用入口 | `main.py` | 所有层 |
 
 > 说明：`market/*` 从 v3.1 的 L3 调整为 L2，因为 `gap_analyzer`（L2）实际已依赖 `market`（v3.1 市场基准注入），若不调整即构成 L2→L3 越层。分层按"代码现状 + 语义（数据访问）"双校准。

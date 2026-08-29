@@ -291,7 +291,8 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
                                    resume_points: dict | None = None,
                                    avoid_questions: list[str] | None = None,
                                    memory_points: list[dict] | None = None,
-                                   jd_gaps: list[str] | None = None) -> list[dict]:
+                                   jd_gaps: list[str] | None = None,
+                                   difficulty_instruction: str = "") -> list[dict]:
     """
     为指定轮次生成问题。
     不同轮次使用不同的聚焦角度（v2.2 扩展为 6 阶段，v2.4 支持双模式）。
@@ -395,6 +396,9 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
                 "（如「如果让你做 X，你会怎么切入」），不要问不存在的事实细节。"
             )
 
+    # v6.5: 难度指令（轮内自适应；放在收尾指令之前——收尾是强控，必须留在最后压轴）
+    difficulty_block = f"\n\n{difficulty_instruction}" if difficulty_instruction else ""
+
     # v6.2: 收尾阶段内部指令注入（工程强控，替代"让模型自己决定何时收尾"）
     closing_block = f"\n\n{closing_instruction}" if closing_instruction else ""
 
@@ -430,7 +434,13 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
                 continue
             score = p.get("avg_score", 0)
             risks = [str(r) for r in (p.get("risk_points") or [])][:2]
-            line = f"- {dim}（历史均分 {score}）"
+            # v6.5: 有 EMA 薄弱度时用"反复失分 N 次"表述 —— 让模型知道这是
+            # 长期反复出现的短板还是一次失手，两者的追问力度不应相同。
+            times = int(p.get("occurrence_count") or 0)
+            if times > 1:
+                line = f"- {dim}（最近得分 {score}，累计失分 {times} 次）"
+            else:
+                line = f"- {dim}（最近得分 {score}）"
             if risks:
                 line += f"：{'；'.join(risks)}"
             lines.append(line)
@@ -453,12 +463,12 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
 {market_block}
 
 【本轮的考察重点】
-{focus}{type_mix_block}{jd_gap_block}{extra_block}{resume_points_block}{closing_block}{avoid_block}{memory_block}
+{focus}{type_mix_block}{jd_gap_block}{extra_block}{resume_points_block}{difficulty_block}{closing_block}{avoid_block}{memory_block}
 
 要求：
 1. 每个问题附上「考察意图」（1 句话即可）
 2. 问题应与候选人的实际经验强关联，避免空洞的通用题
-3. 难度递进：第 1 题为基础热身，最后 1 题为深度挑战
+3. 难度：若上方给了【出题难度指令】则严格按该档位出题；否则按"第 1 题基础热身、最后 1 题深度挑战"递进
 4. 输出严格 JSON 格式：{{"questions": [{{"index": 0, "question": "...", "intent": "...", "question_type": "knowledge/project/behavior"}}, ...]}}
 
 只输出 JSON，不要任何额外文字。"""

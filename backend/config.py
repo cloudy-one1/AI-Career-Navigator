@@ -322,6 +322,35 @@ class Config:
         5: 0.85,
     }
 
+    # ===== v6.4: 检索语义近似通道（借鉴 MockFlow 的零依赖混合召回）=====
+    # 检索评分在"关键词命中"之外叠加一条"字符 bigram 余弦相似度"通道，
+    # 补同义/改写召回短板（如知识块写"检索召回率优化"、提问说"向量检索召回"，
+    # 词命中为 0 但字面高度重叠）。零第三方依赖（MockFlow 用同一手法替代 Embedding）。
+    # 注意：余弦相似度在长文本间会被绝对值稀释（我们块头最长 800 字、回答可达数百字，
+    # 相关文本的实测相似度通常只有 0.1~0.3，与 MockFlow 的一行式语料完全不同量级），
+    # 因此零词命中块的入选门槛必须是"绝对下限 + 相对最高相似度"双闸，不能只用固定阈值。
+    # 绝对下限：相似度低于此值即使全场最高也不入选（防全场都低时矮子里拔将军）。
+    RETRIEVAL_SEMANTIC_MIN_SIM = float(os.getenv("RETRIEVAL_SEMANTIC_MIN_SIM", "0.12"))
+    # 相对门槛：零词命中块的相似度须达到全场最高相似度的此比例才入选。
+    RETRIEVAL_SEMANTIC_TOP_RATIO = float(os.getenv("RETRIEVAL_SEMANTIC_TOP_RATIO", "0.8"))
+    # bigram 余弦加成权重：加成 = WEIGHT × sim × 8.0（×8.0 对齐"命中一个词条 = +8 分"量级）。
+    # 实测相似度量级（0.1~0.3）下加成约 0.1~0.8 分——语义信号只做排序微调，词条命中仍是主导。
+    RETRIEVAL_SEMANTIC_WEIGHT = float(os.getenv("RETRIEVAL_SEMANTIC_WEIGHT", "0.35"))
+
+    # ===== v6.5: 动态难度（借鉴 interviewerAgent internal/difficulty，只抄轮内自适应）=====
+    # 只决定"当前这道题出多难"，**不参与阶段/轮次推进** —— 那部分归 v6.2 的工程强控。
+    # 阈值基于本项目的五维加权总分（1-5 制），非对方的 0-100 制。
+    DIFFICULTY_ENABLED = os.getenv(
+        "DIFFICULTY_ENABLED", "true"
+    ).strip().lower() not in ("0", "false", "no", "off")
+    DIFFICULTY_INITIAL_LEVEL = int(os.getenv("DIFFICULTY_INITIAL_LEVEL", "3"))
+    DIFFICULTY_MIN_LEVEL = int(os.getenv("DIFFICULTY_MIN_LEVEL", "1"))
+    DIFFICULTY_MAX_LEVEL = int(os.getenv("DIFFICULTY_MAX_LEVEL", "5"))
+    DIFFICULTY_UP_SCORE = float(os.getenv("DIFFICULTY_UP_SCORE", "4.0"))      # ≥ 此分连续达标 → 升档
+    DIFFICULTY_DOWN_SCORE = float(os.getenv("DIFFICULTY_DOWN_SCORE", "2.0"))  # ≤ 此分连续失手 → 降档
+    # 2.0~4.0 为中性区：两侧连续计数同时清零。
+    DIFFICULTY_CONSEC = int(os.getenv("DIFFICULTY_CONSEC", "2"))              # 连续 N 次触发变档
+
     # ===== v2 追问阈值 =====
     FOLLOW_UP_MIN_LENGTH = 30       # 回答低于此字数触发追问
     FOLLOW_UP_MAX_COUNT = 2         # 单题最多追问次数

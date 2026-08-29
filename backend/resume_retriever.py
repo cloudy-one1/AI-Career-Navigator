@@ -18,8 +18,12 @@ select_context_tracked() 在返回证据包的同时给出本轮入选块的稳�
 
 import hashlib
 import logging
+import math
 import re
+from collections import Counter
 from dataclasses import dataclass, field
+
+from .config import config
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +52,41 @@ NOISY_NAME_PATTERNS = ("backup", "副本", "~$", "证件照", "备份")
 # ── 关键词提取 ──
 _TERM_RE = re.compile(r"[A-Za-z][A-Za-z0-9_+-]{1,}|[\u4e00-\u9fff]{2,}")
 
+# 单个词条命中的分值（v6.4 抽为常量：语义通道的加成量级以它为基准）
+_TERM_HIT_WEIGHT = 8.0
+
+# ── 语义近似通道（v6.4，借鉴 MockFlow 的零依赖混合召回）──
+# 中文无分词按字符 bigram、英文按词计数，用余弦相似度近似"语义相似"。
+# 零第三方依赖（对标项目用同一手法替代 Embedding），同义/改写召回短板由它补。
+_ASCII_TOKEN_RE = re.compile(r"[a-z0-9_+-]{2,}")
+_CJK_RUN_RE = re.compile(r"[\u4e00-\u9fff]+")
+
+
+def bigram_tokens(text: str) -> Counter:
+    """把文本拆成 token 集合（计数）：英文取 2+ 字符词，中文取相邻字符 bigram。"""
+    low = (text or "").lower()
+    tokens: list[str] = _ASCII_TOKEN_RE.findall(low)
+    for run in _CJK_RUN_RE.findall(low):
+        if len(run) == 1:
+            tokens.append(run)
+        else:
+            tokens.extend(run[i:i + 2] for i in range(len(run) - 1))
+    return Counter(tokens)
+
+
+def bigram_cosine(left: str, right: str) -> float:
+    """两段文本的字符 bigram 余弦相似度（[0,1]）；任一侧为空返回 0。"""
+    lt, rt = bigram_tokens(left), bigram_tokens(right)
+    if not lt or not rt:
+        return 0.0
+    common = set(lt) & set(rt)
+    if not common:
+        return 0.0
+    dot = sum(lt[t] * rt[t] for t in common)
+    norm_l = math.sqrt(sum(v * v for v in lt.values()))
+    norm_r = math.sqrt(sum(v * v for v in rt.values()))
+    return dot / (norm_l * norm_r)
+
 
 @dataclass
 class EvidenceChunk:
@@ -58,10 +97,13 @@ class EvidenceChunk:
     source: str = "简历"
     priority: float = DEFAULT_PRIORITY
     matched_terms: list[str] = field(default_factory=list)
+    # v6.4: 语义近似通道（查询与块头的字符 bigram 余弦相似度及其分数加成）
+    semantic_sim: float = 0.0
+    semantic_bonus: float = 0.0
 
     @property
     def score(self) -> float:
-        return self.priority + len(self.matched_terms) * 8.0
+        return self.priority + len(self.matched_terms) * _TERM_HIT_WEIGHT + self.semantic_bonus
 
     @property
     def fingerprint(self) -> str:
@@ -69,7 +111,13 @@ class EvidenceChunk:
         return content_hash(self.text)
 
     def to_block(self) -> str:
-        terms = "、".join(self.matched_terms) if self.matched_terms else "无"
+        if self.matched_terms:
+            terms = "、".join(self.matched_terms)
+        elif self.semantic_sim >= 0.01:
+            # v6.4: 纯语义近似入选的块，标注依据来源（可解释性——为什么这条被选进证据包）
+            terms = f"bigram 相似度 {self.semantic_sim:.2f}"
+        else:
+            terms = "无"
         return f"[证据 {self.source}·#{self.chunk_id}｜命中:{terms}]\n{self.text.strip()}"
 
 
@@ -156,13 +204,45 @@ class ResumeRetriever:
 
     # ── 检索 ──
 
-    def _score_chunks(self, terms: list[str]) -> list[EvidenceChunk]:
+    def _score_chunks(self, terms: list[str],
+                      query_text: str | None = None) -> list[EvidenceChunk]:
+        """双通道评分（v6.4，借鉴 MockFlow 的零依赖混合召回）。
+
+        通道一（稀疏，原有）：query 提取的关键词在块头命中；
+        通道二（近似，新增）：查询全文与块头的字符 bigram 余弦相似度，
+        补同义/改写召回（词命中为 0 但字面高度重叠的改写表述）。
+
+        入选资格：命中词条即入选；零命中的块须通过"绝对下限 + 相对最高相似度"
+        双闸（sim >= MIN_SIM 且 sim >= TOP_RATIO × 全场最高 sim）才入选——
+        余弦相似度会被文本长度稀释，固定阈值不可用（见 config 注释）。
+        近似通道只改"排序与补召回"，不放松"无关块不得进入证据包"的红线。
+        query_text 为 None 时退化为纯词条通道（行为与 v6.3 完全一致）。
+        """
         term_set = set(terms)
         for chunk in self.chunks:
             head = chunk.text[:SEARCH_HEAD_CHARS].lower()
             chunk.matched_terms = [t for t in term_set if t in head]
-        # 仅保留命中至少一个关键词的块，避免把无关块当证据塞进上下文
-        hits = [c for c in self.chunks if c.matched_terms]
+            chunk.semantic_bonus = 0.0
+            chunk.semantic_sim = 0.0
+            if query_text:
+                sim = bigram_cosine(query_text, head)
+                chunk.semantic_sim = round(sim, 4)
+                if sim > 0:
+                    chunk.semantic_bonus = round(
+                        config.RETRIEVAL_SEMANTIC_WEIGHT * sim * _TERM_HIT_WEIGHT, 4)
+        # 零词命中块的语义入选门槛（双闸取严）
+        semantic_gate = 0.0
+        if query_text is not None and self.chunks:
+            top_sim = max(c.semantic_sim for c in self.chunks)
+            if top_sim > 0:
+                semantic_gate = max(config.RETRIEVAL_SEMANTIC_MIN_SIM,
+                                    config.RETRIEVAL_SEMANTIC_TOP_RATIO * top_sim)
+        # 仅保留命中关键词（或语义近似达标）的块，避免把无关块当证据塞进上下文
+        hits = [
+            c for c in self.chunks
+            if c.matched_terms
+            or (semantic_gate > 0 and c.semantic_sim >= semantic_gate)
+        ]
         return sorted(hits, key=lambda c: c.score, reverse=True)
 
     def _select(self, user_text: str, source_name: str | None,
@@ -175,7 +255,7 @@ class ResumeRetriever:
         if not self.chunks:
             return []
         terms = extract_terms(user_text or "")
-        ranked = self._score_chunks(terms)
+        ranked = self._score_chunks(terms, query_text=user_text or None)
 
         # 预算：单源限制 + 总块数限制
         per_source: dict[str, int] = {}
@@ -249,7 +329,7 @@ class ResumeRetriever:
         if not self.chunks:
             return []
         terms = extract_terms(user_text or "")
-        ranked = self._score_chunks(terms)
+        ranked = self._score_chunks(terms, query_text=user_text or None)
         per_source: dict[str, int] = {}
         picked_ids: set[int] = set()
         total_chars = 0
@@ -271,6 +351,7 @@ class ResumeRetriever:
                 "chunk_id": chunk.chunk_id,
                 "source": chunk.source,
                 "matched_terms": chunk.matched_terms,
+                "semantic_sim": chunk.semantic_sim,
                 "score": round(chunk.score, 1),
                 "chars": len(chunk.text),
                 "selected": chunk.chunk_id in picked_ids,

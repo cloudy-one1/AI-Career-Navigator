@@ -1,6 +1,91 @@
 # 变更日志（CHANGELOG）
 
-> 记录 v2 → v6.4 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+> 记录 v2 → v6.6 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+
+---
+
+## v6.6 竞品借鉴专项七期：interviewerAgent P1 三项落地——记忆衰减 + 技能状态机 + 动态难度（2026-08-29）
+
+> 承接 v6.5（同一来源的 P0 两项），落地研读报告 §17 的 **P1 三项**。本轮的共性是：**三项都不是新功能，而是给既有能力补上"时间维度""状态维度""强度维度"**——v6.4 建成的长期记忆闭环里跑的是裸计数器，模式切换没有结束条件，出题难度恒定不变。
+
+### 1. 长期薄弱点：EMA 衰减 + 30 天过期 + 中性区不动（`backend/weakness_memory.py`，L2）
+
+借鉴 `internal/memory/service.go` 的 `updateWeakness`，把 v6.4 的 `_weakness_counts[t] += 1` 升级为有强度的长期记忆：
+
+- **阈值换算**：对方 0-100 分制 → 我们五维 1-5 分，先映射薄弱度 `(5-score)/4×100`，阈值 **<3.0 加重 / >4.5 减轻 / 3.0–4.5 中性**；加重用 EMA（α=0.4，10 次迭代残差 0.6%），减轻按比例衰减（×0.7），计数归零即删除。
+- **岗位权重放大（相对原设计的增量）**：`weight/0.2` 夹 0.5–2.0 倍——岗位越看重的维度，同样失分越要命。复用 v2.6 的 JD 动态权重，对方无此概念。
+- **保留原版语义**：中性区连 `last_seen` 都不续期 → "30 天没再暴露严重短板即视为已改善"，衰减靠时间而非练习次数。
+- **存储分工**：`weakness_profile`=历史流水（图谱/建议），新增 `weakness_memory`=当前状态（每维度一行，新表用 `CREATE TABLE IF NOT EXISTS` 即可，无需 ALTER 迁移）。
+- **升级兼容**：新表为空时回注入与复习建议**回退 v6.3 口径**——否则老库升级后首场面试会静默丢掉记忆回注入。
+- 回注入 prompt 同步升级：从"历史均分 X"改为"最近得分 X，**累计失分 N 次**"，让模型区分"反复失分"与"一次失手"。
+
+### 2. 面试技能状态机（`backend/interview_skills.py`，L3）
+
+补上"临时插入、有步骤、有完成条件"的能力层——区别于既有 `switch_mode`（整场设定、无结束条件）：
+
+- **接口**：`SkillBase{name/description/priority/can_activate/build_prompt/on_turn_end/is_complete}` + `SkillRegistry`（按 priority 降序，match 取首个命中；单技能判定抛异常不影响其它技能）。
+- **两点刻意不照抄原版**：
+  - **触发**：原版纯关键词 `strings.Contains`（穷举 `"和…的区别"` 变体）会把普通回答误判为触发；本项目**默认显式触发**（WS `skill` 消息），`can_activate` 仅在开启自动匹配时参与。
+  - **结束**：原版完成只清字段不告知用户；本项目返回 `closing_message`，工程层推送"已回到正式面试"。
+- **技能轮不进诊断**：测验答案（"B"）不是面试作答，打五维分只会污染报告 → 技能轮单独维护 `skill_history`，不写 `all_diagnoses`/`answer_history`。
+- **内置 3 个**：`quick_quiz`（5 题即时判分，P80）、`concept_teach`（苏格拉底讲解 ≤4 轮，P70）、`tech_compare`（5 维度对比，P50）。原版 4 个中的 `project_highlight` 未移植——与 STAR 诊断 + `resume_anchors` 高度重合。
+
+### 3. 动态难度调度器（`backend/difficulty.py`，L2）
+
+- **只抄轮内自适应，不抄阶段推进**：对方的调度器同时决定难度与阶段；本项目阶段推进是 v6.2 的工程强控，让难度信号反向决定阶段流转等于把已收敛的可控性交回统计信号。本模块只回答"这道题出多难"。
+- **信号源纪律**（对方最大的坑）：它用"回复长度"代理评分，整套调度是噪声；我们直接用 `diagnosis_engine` 加权总分，且**无效分数（None/0/非数字）一律忽略**——诊断失败不是"得 0 分"，误记会把难度一路降到底档。
+- **归因披露（必须配套）**：难度改变出题分布但评分标准固定，分数变低时须能区分"变差了"与"难度升了" → `trace` 逐题记录档位进报告 `difficulty` 字段，变档时 WS 推 `difficulty_change`。
+- 出题 prompt 同步修正：原"第 1 题热身、最后 1 题深度挑战"与难度档指令自相矛盾，改为"有难度指令则按档位，否则按递进"。
+
+### 4. 测试与契约
+
+- 新增 `test_weakness_ema.py`（28 例）/ `test_interview_skills.py`（29 例）/ `test_difficulty.py`（26 例）；全量 **830 例通过**，`run.py lint` 通过。
+- 契约：`weakness_memory` + `difficulty` 注册 L2，`interview_skills` 注册 L3。
+- 需求文档：[week8_记忆衰减与技能难度_需求.md](docs/week8_记忆衰减与技能难度_需求.md)。
+
+### 范围边界（诚实披露）
+
+- **AI Coding 专项题库（原 P2-8）不做**：与"诊断回答质量"命题距离远；原项目实现是无状态旁路（刷新即丢、无评估），引进需连会话引擎与报告一起改。
+- ~~**技能未接前端 UI**~~ → **已补齐（同轮追加）**：面试页诊断侧边栏新增「🛠 面试技能」条——三个技能按钮显式激活（不靠关键词猜测）；激活中禁用其它按钮并显示 `技能名 步数/总步数` 与「退出技能」入口；技能轮发言经 `follow_up` 消息回带 `skill/step/total` 刷新进度；`difficulty_change` 以 toast 提示，让用户看见难度在动（否则分数变化无法归因）。`npm run build` 通过。
+- 难度**不影响**轮次推进与阶段判定，仅在出题 prompt 层生效。
+- 前端为 Vite 构建产物（`frontend/dist`），源码改动后需 `npm run build` 才会生效。
+
+---
+
+## v6.5 竞品借鉴专项六期：interviewerAgent 两项落地——公司风格配置层 + PDF 文本两阶段修复（2026-08-29）
+
+> 对标 [chenyongzhi1119/interviewerAgent](https://github.com/chenyongzhi1119/interviewerAgent)（Go 单二进制大厂面试模拟器，10 小时 AI 辅助完成）研读后，按《[interviewerAgent-深度研读.md](docs/interviewerAgent-深度研读.md)》§15 的 **P0 两项**落地。该项目"产品包装 90 分、内核 40 分"——三大增强系统（动态难度/Agent 记忆/Skill 注册中心）全部死于接线缺失（`estimateScore` 评错对象、`DiffPhase`/`UserID`/`Tags` 从未赋值），本轮只抄它**真正跑了**且**我们没有**的部分；同时以它的接线缺失为反面教材，新模块落地的同轮即补端到端断言测试。
+
+### 1. 公司风格配置层（`backend/company_profiles.py`，L2 + `backend/company_profiles/*.yaml`）
+
+借鉴其 `loadCompanies` 扫目录热加载与 15 行 `CompanyProfile` 字段结构，**加 YAML 即加公司、零改码**：
+
+- **字段三层**：`role_description`（公司人格：评判标准/追问清单）+ `rounds[].match+instructions`（轮次行为）+ `evaluation_rubric`（评估量表，进报告 `company_rubric`）。内置字节/腾讯/阿里三份种子配置（内容按本项目诊断驱动风格改写，不照抄）。
+- **与原版的关键差异**：其轮次按键 `1/2/3` 索引，只兼容"一面/二面/三面"一种结构；本项目改为**轮次名关键词匹配**（"技术广度"/"技术一面"同时命中"技术"），拟真 6 阶段与传统 5 轮两种模式通吃。新增 `match_keywords` 按 JD 关键词命中数自动选定。
+- **解析优先级**：前端显式选择 > JD 自动匹配 > 不启用；`"none"` 哨兵值明确关闭；未知名称降级为自动匹配而非报错。
+- **注入点与顺序**：`get_interviewer_role_prompt()` 前置「公司人格 > 本轮公司指令 > 风格角色卡」——公司是外层人格，风格卡是内层语气，两者正交（修复过程中发现并修正 `parts` 列表被重建覆盖公司块的 bug，公司块必须 append 不能重建）。
+- **容错哲学**（与 v6.2 简历追问点同款）：pyyaml 缺失 / 目录不存在 / 单文件损坏 / 空壳配置 → 跳过或整体降级，**绝不阻断面试主流程**。
+- API：`GET /api/company-profiles`（前端选择器）+ `SessionCreateRequest.company_profile`；前端面试设置 Step 2 新增"🏢 目标公司风格"下拉（自动匹配/具体公司/不启用），接口失败静默保留兜底选项。
+
+### 2. PDF 文本两阶段修复（`resume_parser.py`）
+
+移植其全仓库工程含量最高的 `internal/extract/pdf.go` 启发式，修复 PDF 提取文本的两类损伤（列宽切碎的软换行 / 标题条目与正文粘连）：
+
+- **Phase 1 逆拼接**：只认两种硬断信号（编号列表项、≥6 字母全大写标题——避免 API/SQL 被误判），其余全部拼回，仅 ASCII 单词相邻补空格；
+- **Phase 2 复原**：中文简历章节词表（22 词）前后插空行、`·` 前换行、`-` 后（允许隔空白）紧跟 CJK 换行（`2023-09` 日期与负数天然不含 CJK 不受影响）、嵌入正文的编号项前换行（`3.14`/`3.5` 小数排除）。
+- **对原版的一处改进**：行首 `N.` 判定额外排除点号后紧跟数字（`"3.5倍"` 不再被当编号拆行），与嵌入判定口径对齐（Go 原版此处偏松）；`-` 规则允许隔空白（Go 原版只处理 `-中文`，漏掉更常见的 `"- 负责xx"`）。
+- 全部纯函数（`_rejoin_broken_lines` / `_restore_structure` / `_repair_pdf_text` 等），`parse_pdf` 尾部调用，PDF 库无关。
+
+### 3. 明确不抄（范围纪律）
+
+- **多模态图片只注入首条消息**：本项目后端无任何图片输入链路（全文检索 0 命中），没有可挂载的调用点，强行预埋就是该项目式死代码（其 `vision.go` + 后端 image 分支因前端改走 Tesseract 全部不可达）。
+- 动态难度调度器 / Skill 状态机 / 薄弱点 EMA：属研读报告 P1 改造项，非本轮范围。
+
+### 4. 测试与契约
+
+- 新增 `tests/test_company_profiles.py`（25 例：加载/匹配/片段生成/会话角色卡集成/坏 YAML 与空目录降级）+ `test_resume_parser.py` 追加 45 例修复用例；全量 **747 例通过**。
+- `company_profiles` 注册 L2 层，`.importlinter` 契约同步，`run.py lint` 通过；`requirements.txt` 新增 `pyyaml>=6.0`（缺失时该层整体降级，非硬依赖）。
+- 需求文档：[week8_公司风格配置与PDF文本修复_需求.md](docs/week8_公司风格配置与PDF文本修复_需求.md)。
 
 ---
 

@@ -28,8 +28,8 @@ export async function uploadResume(file) {
   return request('POST', '/api/sessions/upload', form, true);
 }
 
-/** 生成问题（获取 session_id）v2.4: 支持 mode。v2.7: 支持自我介绍 + 题型占比 */
-export async function generateQuestions(resumeText, jdText, style = 'friendly', mode = 'simulation', includeSelfIntro = false, questionTypeMix = {}) {
+/** 生成问题（获取 session_id）v2.4: 支持 mode。v2.7: 支持自我介绍 + 题型占比。v6.5: 支持目标公司风格 */
+export async function generateQuestions(resumeText, jdText, style = 'friendly', mode = 'simulation', includeSelfIntro = false, questionTypeMix = {}, companyProfile = '') {
   return request('POST', '/api/sessions', {
     resume_text: resumeText,
     jd_text: jdText,
@@ -37,7 +37,13 @@ export async function generateQuestions(resumeText, jdText, style = 'friendly', 
     mode,
     include_self_intro: includeSelfIntro,
     question_type_mix: questionTypeMix,
+    company_profile: companyProfile || null,   // 空串 = 后端按 JD 自动匹配
   });
+}
+
+/** v6.5: 获取全部公司风格配置（目标公司选择器用） */
+export async function getCompanyProfiles() {
+  return request('GET', '/api/company-profiles');
 }
 
 /** 单题诊断（HTTP 兼容模式） */

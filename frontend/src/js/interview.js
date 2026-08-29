@@ -159,6 +159,13 @@ export function initInterview() {
             ),
           ),
         ),
+        // v6.5: 目标公司风格（借鉴 interviewerAgent 的 companies/*.yaml 配置层）
+        el('div', { className: 'form-group' },
+          el('label', { className: 'form-label', textContent: '🏢 目标公司风格' }),
+          el('select', { id: 'company-select', className: 'session-mode-select', onchange: updateSummary }),
+          el('span', { className: 'session-mode-hint',
+            textContent: '不同公司的评判标准与追问清单不同；默认按 JD 关键词自动匹配' }),
+        ),
       ),
 
       // Step 3：题型与风格
@@ -241,6 +248,10 @@ export function initInterview() {
           el('span', { className: 'summary-label', textContent: '自我介绍' }),
           el('span', { className: 'summary-value', id: 'summary-self', textContent: '不包含' }),
         ),
+        el('div', { className: 'summary-item' },
+          el('span', { className: 'summary-label', textContent: '公司' }),
+          el('span', { className: 'summary-value', id: 'summary-company', textContent: '自动匹配' }),
+        ),
         el('button', {
           id: 'start-btn', className: 'btn btn-primary btn-block',
           textContent: '🚀 开始面试',
@@ -254,6 +265,24 @@ export function initInterview() {
   panel.appendChild(el('div', { id: 'interview-area', className: 'hidden' }));
 
   updateSummary();
+  loadCompanyProfiles();   // v6.5: 异步填充公司风格下拉（失败静默，保留兜底选项）
+}
+
+/* v6.5: 目标公司风格下拉（选项来自 GET /api/company-profiles） */
+async function loadCompanyProfiles() {
+  const sel = $('#company-select');
+  if (!sel) return;
+  // 先放兜底选项，接口失败时用户仍可用（自动匹配 / 不启用）
+  sel.innerHTML = '<option value="">🔍 自动匹配（按 JD 关键词）</option>'
+    + '<option value="none">🚫 不启用公司风格</option>';
+  try {
+    const { getCompanyProfiles } = await import('./api.js');
+    const profiles = await getCompanyProfiles();
+    if (!Array.isArray(profiles) || !profiles.length) return;
+    sel.innerHTML = '<option value="">🔍 自动匹配（按 JD 关键词）</option>'
+      + profiles.map(p => `<option value="${p.name}">${p.display_name}</option>`).join('')
+      + '<option value="none">🚫 不启用公司风格</option>';
+  } catch (_) { /* 公司风格层不可用：保留兜底选项即可 */ }
 }
 
 /* v4.0: 步骤切换 */
@@ -294,6 +323,14 @@ function updateSummary() {
   const mix = getQuestionTypeMix();
   set('summary-mix', `知识${mix.knowledge}% · 项目${mix.project}% · 行为${mix.behavior}%`);
   set('summary-self', $('#self-intro-cb')?.checked ? '包含' : '不包含');
+  // v6.5: 公司风格摘要
+  const companySel = $('#company-select');
+  if (companySel) {
+    const v = companySel.value;
+    const label = v === 'none' ? '不启用'
+      : (v ? (companySel.options[companySel.selectedIndex]?.textContent || v) : '自动匹配');
+    set('summary-company', label);
+  }
 }
 
 /* v4.0: 进入实战态（隐藏 Setup，显示面试进行区） */
@@ -386,7 +423,8 @@ async function startInterview() {
     const { generateQuestions } = await import('./api.js');
     const includeSelfIntro = $('#self-intro-cb')?.checked ?? false;
     const questionTypeMix = getQuestionTypeMix();
-    const result = await generateQuestions(resumeText, jdText, currentStyle, currentMode, includeSelfIntro, questionTypeMix);
+    const companyProfile = $('#company-select')?.value ?? '';   // v6.5: 目标公司风格
+    const result = await generateQuestions(resumeText, jdText, currentStyle, currentMode, includeSelfIntro, questionTypeMix, companyProfile);
     const sessionId = result.session_id;
 
     // v4.0: 进入实战态
@@ -499,6 +537,46 @@ function initSessionLayout(data) {
     }
   });
   window._sessionMode = data.mode;
+
+  // v6.6: 面试技能入口（有状态多轮，走完自动退回正式面试；技能轮不计入本题评分）
+  sidebar.appendChild(el('div', { className: 'session-skill-bar', id: 'session-skill-bar',
+    innerHTML: `
+      <div class="skill-bar-title">🛠 面试技能</div>
+      <div class="skill-bar-actions">
+        <button class="btn btn-ghost btn-sm" data-skill="quick_quiz">⚡ 快速测验</button>
+        <button class="btn btn-ghost btn-sm" data-skill="concept_teach">💡 概念讲解</button>
+        <button class="btn btn-ghost btn-sm" data-skill="tech_compare">⚖️ 技术对比</button>
+      </div>
+      <span class="skill-bar-hint" id="skill-bar-hint">临时插入，走完自动回到面试；技能轮不计入评分</span>` }));
+
+  document.querySelectorAll('#session-skill-bar [data-skill]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (ws && typeof ws.send === 'function') {
+        ws.send('skill', { action: 'activate', name: btn.dataset.skill });
+      }
+    });
+  });
+}
+
+// v6.6: 技能条状态（激活时禁用其它技能按钮 + 显示进度与退出入口）
+function setSkillBarActive(active, skillName = '', step = 1, total = 1) {
+  document.querySelectorAll('#session-skill-bar [data-skill]').forEach(b => { b.disabled = active; });
+  const hint = $('#skill-bar-hint');
+  if (!hint) return;
+  if (!active) {
+    hint.textContent = '临时插入，走完自动回到面试；技能轮不计入评分';
+    return;
+  }
+  hint.innerHTML = `进行中：<b>${skillName}</b>　${step}/${total} · <a href="#" id="skill-exit">退出技能</a>`;
+  $('#skill-exit')?.addEventListener('click', (e) => {
+    e.preventDefault();
+    if (ws && typeof ws.send === 'function') ws.send('skill', { action: 'deactivate' });
+  });
+}
+
+// v6.6: 技能轮推进时刷新进度（step 由后端随消息带回）
+function updateSkillProgress(skillName, step, total) {
+  setSkillBarActive(true, skillName, step, total);
 }
 
 function handleWSMessage(type, data) {
@@ -609,6 +687,28 @@ function handleWSMessage(type, data) {
     case 'follow_up':
       prefetchTTS(data.question);  // v6.1: 追问同样预取 TTS
       showFollowUp($('#chat-flow'), data.question);
+      // v6.6: 技能轮的发言携带 skill/step/total → 刷新侧边栏进度
+      if (data.skill) updateSkillProgress(data.skill, data.step, data.total);
+      break;
+
+    // v6.6: 面试技能激活 / 结束
+    case 'skill_start':
+      if (data && data.ok) {
+        setSkillBarActive(true, data.skill, 1, data.total_steps);
+        toast(`🛠 ${data.message || '已进入技能环节'}`, 'info');
+      } else {
+        toast((data && data.message) || '技能激活失败', 'error');
+      }
+      break;
+
+    case 'skill_end':
+      setSkillBarActive(false);
+      if (data && data.message) toast(`✅ ${data.message}`, 'info');
+      break;
+
+    // v6.6: 动态难度变档 —— 必须让用户看见"难度在动"，否则分数变化无法归因
+    case 'difficulty_change':
+      toast((data && data.message) || '难度已调整', 'info');
       break;
 
     // v6.1: 候选人输入"结束面试"退出口令（后端 is_end_signal 命中）
@@ -784,6 +884,8 @@ function showQuestion(area, data) {
       }) : '',
     ),
     data.intent ? el('div', { className: 'question-intent', textContent: `🎯 考察: ${data.intent}` }) : '',
+    // v6.4: 本题依据（后端确定性拼装，空串不渲染——宁缺毋谎）
+    data.basis ? el('div', { className: 'question-basis', textContent: `📌 本题依据：${data.basis}` }) : '',
   );
 
   // 回答区（含语音输入按钮；v4.0: sticky 底部浮起输入条）

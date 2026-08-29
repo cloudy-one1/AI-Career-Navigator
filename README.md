@@ -74,9 +74,14 @@ AI 模拟面试官是一个面向求职者的智能面试练习平台。上传�
 - **RAG 注入去重 + 备选题（v6.4，对标 HakiMeet）**：会话级指纹缓存（blake2b 稳定摘要，非内置 hash）让同一段简历证据不再反复拼进 prompt；换题时把已问题目清单作为负向约束注入，重复题带样本重试一次
 - **语音真打断 + 状态机收敛（v6.4，对标 HakiMeet）**：语音世代号守卫——打断先摘回调再停止，修复"打断后仍触发结束回调 / 误降级续播"；面试页收敛为 PHASE 四态 + setPhase 单一入口，锁定/恢复统一走 setInputLocked
 - **前端成品感补强（v6.4）**：token 层补六级阴影/玻璃态/标准微交互缓动；空状态三件套、题库模板一键下载、全局 Promise 化确认弹窗——组件类一律走全局层，页面不得各自重写
+- **目标公司风格配置层（v6.5，对标 interviewerAgent）**：`backend/company_profiles/*.yaml` 热加载（加文件即加公司、零改码），公司人格 + 轮次指令 + 评估量表三层注入；内置字节/腾讯/阿里三份种子配置，支持 JD 关键词自动匹配与前端选择器，pyyaml 缺失/坏文件自动降级不阻断面试
+- **PDF 文本两阶段修复（v6.5，对标 interviewerAgent）**：`parse_pdf` 输出先逆拼接（仅编号项/全大写标题为硬断信号）再复原断行（中文章节词表/`·`/`-`+CJK/嵌入编号项，排除 `3.14` 小数与 `2023-09` 日期），修复列宽切碎与标题粘连两类损伤，纯函数可单测
+- **长期薄弱点 EMA 衰减 + 过期淘汰（v6.6，对标 interviewerAgent）**：长期记忆不再裸计数——EMA 加重（α=0.4）/ 高分减轻（×0.7）/ 30 天未再失分自然淘汰 / 中性区不动，并按 JD 维度权重放大（岗位越看重的短板越要命）；回注入按"加权薄弱度"排序并标注"累计失分 N 次"
+- **面试技能状态机（v6.6，对标 interviewerAgent）**：补上"临时插入、有步骤、有完成条件"的能力层（区别于整场生效的面试模式）——快速测验 / 概念讲解 / 技术对比三个内置技能，走完自动退回正式面试；技能轮不进诊断，避免测验答案污染评分
+- **动态难度调度（v6.6，对标 interviewerAgent）**：按诊断加权总分做轮内难度自适应（连续 2 次达标升档 / 失手降档，1-5 档）；难度**不参与阶段推进**（归 v6.2 工程强控），并逐题记录难度轨迹进报告、变档实时推送，解决"分数变低是能力下降还是难度升高"的归因问题
 - **题库管理**：CRUD + 收藏 + 从面试会话导入
 - **Docker 部署**：Dockerfile + docker-compose.yml 一键部署
-- **自动化测试**：609 个测试用例覆盖核心路径（含依赖 API Key 的 LLM 类测试）
+- **自动化测试**：830 个测试用例覆盖核心路径（含依赖 API Key 的 LLM 类测试）
 
 ---
 
@@ -233,7 +238,7 @@ AI-simulated-interviewer/
 │   ├── career_planner.py         # [v3.2] 职业路径规划（以 Gap 为基线做多阶段推理）
 │   ├── question_gen.py           # 问题生成（含市场数据注入）
 │   ├── question_bank.py          # 题库 CRUD 管理
-│   ├── resume_parser.py          # 简历解析（PDF/DOCX/TXT）
+│   ├── resume_parser.py          # 简历解析（PDF/DOCX/TXT）+ [v6.5] PDF 两阶段文本修复
 │   ├── web_research.py           # 岗位画像研究（DuckDuckGo）
 │   ├── data_support.py           # 技能匹配数据
 │   ├── skills_data.json          # 岗位技能静态数据
@@ -254,6 +259,11 @@ AI-simulated-interviewer/
 │   ├── resume_anchors.py         # [v6.3 NEW] 简历锚点五分类（技术选型/量化/架构/业务/团队，L2）
 │   ├── score_adjustments.py      # [v6.3 NEW] 评分规则化加减分项（确定性正则 + evidence，L2）
 │   └── pressure_bank.py          # [v6.3 NEW] 压力题库（5 类 16 道，与简历/JD 解耦，L2）
+│   ├── company_profiles.py       # [v6.5 NEW] 公司风格配置层（YAML 热加载/JD 匹配/片段生成，L2）
+│   ├── company_profiles/         # [v6.5 NEW] 公司风格 YAML（内置字节/腾讯/阿里，加文件即加公司）
+│   ├── weakness_memory.py        # [v6.6 NEW] 长期薄弱点 EMA 衰减 + 过期淘汰（L2）
+│   ├── difficulty.py             # [v6.6 NEW] 动态难度调度器（轮内自适应，L2）
+│   ├── interview_skills.py       # [v6.6 NEW] 面试技能状态机（有状态多轮，L3）
 │   └── interview_engine/         # 面试引擎子包
 │       ├── __init__.py
 │       ├── session.py            # 核心状态机

@@ -256,7 +256,32 @@ def build_report(session) -> dict:
         # v6.3: 借助引导统计 + 压力题注入情况（复盘时解释"分数是怎么来的"）
         "assistance_stats": assistance_stats,
         "pressure_questions_injected": getattr(session, "pressure_injected", 0),
+        # v6.5: 公司评估量表（session 携带目标公司风格时输出；
+        # getattr 双保险：mock session / 老会话对象没有该属性时不崩）
+        "company_profile": (getattr(session, "company_profile", None) or {}).get("display_name"),
+        "company_rubric": _company_rubric(session),
+        # v6.5: 难度轨迹 —— 难度升降会改变出题分布，而评分标准是固定的。
+        # 不披露轨迹的话，读者无法区分"候选人变差了"与"难度升了一档"。
+        "difficulty": _difficulty_summary(session),
     }
+
+
+def _difficulty_summary(session) -> dict:
+    """提取 session 的难度调度摘要（未启用/老会话返回 enabled=False）。"""
+    sched = getattr(session, "difficulty", None)
+    if sched is None or not getattr(sched, "state", None):
+        return {"enabled": False}
+    try:
+        return sched.summary()
+    except Exception:  # noqa: BLE001
+        return {"enabled": False}
+
+
+def _company_rubric(session) -> str:
+    """提取 session 上目标公司的评估量表（未启用公司风格时返回空串）。"""
+    profile = getattr(session, "company_profile", None) or {}
+    rubric = str(profile.get("evaluation_rubric") or "").strip()
+    return rubric
 
 
 def analyze_trends(dimension_trends: dict, weights: dict | None = None) -> tuple[list[str], list[str]]:

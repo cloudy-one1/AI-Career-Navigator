@@ -139,6 +139,21 @@ async def init_db():
         # v6.3: 老库升级（必须在 CREATE TABLE IF NOT EXISTS 之后单独做）
         await _ensure_weakness_columns(db)
 
+        # v6.5: 长期薄弱点记忆（EMA 衰减 + 过期淘汰）。
+        # 新建表用 CREATE TABLE IF NOT EXISTS 即可（新增表对老库也生效，
+        # 只有"给已有表加列"才需要下面的 PRAGMA+ALTER 迁移）。
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS weakness_memory (
+                dimension TEXT PRIMARY KEY,
+                weakness_score REAL NOT NULL DEFAULT 0,
+                occurrence_count INTEGER NOT NULL DEFAULT 0,
+                last_score REAL,
+                last_seen TEXT,
+                expires_at TEXT,
+                updated_at TEXT
+            )
+        """)
+
         # v3.1: JD 权重缓存表（避免同一 JD 重复调 LLM 分析权重）
         await db.execute("""
             CREATE TABLE IF NOT EXISTS jd_weights_cache (
@@ -651,6 +666,144 @@ async def delete_weakness(point_id: int) -> bool:
         return (cur.rowcount or 0) > 0
     finally:
         await db.close()
+
+
+# ===== v6.5: 长期薄弱点记忆（EMA 衰减 + 过期淘汰）=====
+# 与 weakness_profile（每会话每维度一行快照，历史）分工：
+#   weakness_profile = 历史流水（图谱/建议/回注入的素材）
+#   weakness_memory  = 当前状态（每维度一行，带薄弱度/计数/过期时间）
+# 纯计算在 L2 的 weakness_memory.py，这里只做 CRUD（L1 不得反向依赖 L2）。
+
+async def get_weakness_memory(dimension: str) -> dict | None:
+    """读取单个维度的长期薄弱点状态（不存在返回 None）。"""
+    db = await get_db()
+    try:
+        async with db.execute(
+            """SELECT dimension, weakness_score, occurrence_count, last_score,
+                      last_seen, expires_at, updated_at
+               FROM weakness_memory WHERE dimension = ?""",
+            (dimension,),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def upsert_weakness_memory(dimension: str, state: dict) -> None:
+    """写入/更新单个维度的长期薄弱点状态（由 L2 算好状态后传入）。"""
+    db = await get_db()
+    try:
+        await db.execute(
+            """INSERT INTO weakness_memory
+               (dimension, weakness_score, occurrence_count, last_score,
+                last_seen, expires_at, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(dimension) DO UPDATE SET
+                   weakness_score=excluded.weakness_score,
+                   occurrence_count=excluded.occurrence_count,
+                   last_score=excluded.last_score,
+                   last_seen=excluded.last_seen,
+                   expires_at=excluded.expires_at,
+                   updated_at=excluded.updated_at""",
+            (
+                dimension,
+                float(state.get("weakness_score") or 0.0),
+                int(state.get("occurrence_count") or 0),
+                float(state.get("last_score") or 0.0),
+                state.get("last_seen"),
+                state.get("expires_at"),
+                state.get("updated_at"),
+            ),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def delete_weakness_memory(dimension: str) -> None:
+    """删除单个维度的长期薄弱点状态（计数归零 / 已解决时调用）。"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "DELETE FROM weakness_memory WHERE dimension = ?", (dimension,)
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def list_active_weakness_memory(limit: int = 10) -> list[dict]:
+    """未过期的长期薄弱点，按薄弱度降序（最要命的排最前）。
+
+    过期判定与写入端一致用 localtime（数据库里存的是 localtime 文本）。
+    """
+    sql = """
+        SELECT dimension, weakness_score, occurrence_count, last_score,
+               last_seen, expires_at, updated_at
+        FROM weakness_memory
+        WHERE weakness_score > 0
+          AND (expires_at IS NULL OR expires_at > datetime('now', 'localtime'))
+        ORDER BY weakness_score DESC, occurrence_count DESC
+    """
+    params: list = []
+    if limit and limit > 0:
+        sql += " LIMIT ?"
+        params.append(limit)
+
+    db = await get_db()
+    try:
+        async with db.execute(sql, params) as cur:
+            return [dict(r) for r in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def prune_expired_weakness_memory() -> int:
+    """清理已过期的长期薄弱点，返回删除行数。"""
+    db = await get_db()
+    try:
+        cur = await db.execute(
+            """DELETE FROM weakness_memory
+               WHERE expires_at IS NOT NULL
+                 AND expires_at <= datetime('now', 'localtime')"""
+        )
+        await db.commit()
+        return cur.rowcount or 0
+    finally:
+        await db.close()
+
+
+async def get_latest_risk_points(dimensions: list[str]) -> dict[str, list[str]]:
+    """批量取各维度最近一次快照中的风险点（供回注入 prompt 引用）。
+
+    取"最近一次"而非聚合，因为风险点是最新的才最有指向性。
+    """
+    result: dict[str, list[str]] = {}
+    dims = [d for d in (dimensions or []) if d]
+    if not dims:
+        return result
+    placeholders = ",".join("?" * len(dims))
+    db = await get_db()
+    try:
+        async with db.execute(
+            f"""SELECT dimension, risk_points FROM weakness_profile
+                WHERE id IN (
+                    SELECT MAX(id) FROM weakness_profile
+                    WHERE dimension IN ({placeholders})
+                    GROUP BY dimension
+                )""",
+            dims,
+        ) as cur:
+            for row in await cur.fetchall():
+                d = row[0]
+                try:
+                    result[d] = json.loads(row[1] or "[]")
+                except (json.JSONDecodeError, TypeError):
+                    result[d] = []
+    finally:
+        await db.close()
+    return result
 
 
 # ===== v3.1: JD 权重缓存 =====

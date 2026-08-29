@@ -23,6 +23,7 @@ from ..question_gen import (
     generate_coach_tip,
 )
 from ..pressure_bank import sample_questions as sample_pressure_questions
+from ..resume_anchors import ANCHOR_KEYS, ANCHOR_META, merge_anchor_sources
 from ..dimension_weights import (
     DEFAULT_WEIGHTS,
     DIM_KEYS,
@@ -32,6 +33,9 @@ from ..dimension_weights import (
     weighted_score,
 )
 from ..resume_retriever import build_evidence_package, content_hash, ResumeRetriever
+from ..company_profiles import company_role_block, company_round_block  # v6.5 公司风格层
+from ..interview_skills import SkillContext, default_registry  # v6.5 面试技能（有状态多轮）
+from ..difficulty import DifficultyScheduler  # v6.5 动态难度（轮内自适应）
 from ..output_sanitizer import (
     OUTPUT_CONSTRAINTS,
     contains_answer_leak,
@@ -108,7 +112,8 @@ class InterviewSession:
                  include_self_intro: bool = False,
                  question_type_mix: dict = None,
                  resume_points: dict | None = None,
-                 jd_gaps: list[str] | None = None):
+                 jd_gaps: list[str] | None = None,
+                 company_profile: dict | None = None):
         self.session_id = session_id
         self.resume_text = resume_text
         self.jd_text = jd_text
@@ -133,6 +138,33 @@ class InterviewSession:
         # 刻意不在会话内调用 analyze_gap：那是一次 LLM 往返，出题链路已有多次调用，
         # 叠加会显著拉长首题等待；且 gap 对整场不变，创建期算一次即可。
         self.jd_gaps: list[str] = [str(g).strip() for g in (jd_gaps or []) if str(g).strip()]
+
+        # v6.5: 目标公司风格（借鉴 interviewerAgent 的 companies/*.yaml 配置层）。
+        # 由 L4（main.py）解析后传入完整 profile dict（显式选择 > JD 关键词自动匹配），
+        # None = 不启用。会话层只消费不加载，保持 L3 不反向依赖 L2 的数据装配职责。
+        self.company_profile: dict = company_profile or {}
+
+        # v6.5: 面试技能（有状态多轮，借鉴 interviewerAgent internal/skill）。
+        # 与 mode 的区别：mode 是整场设定且无结束条件；skill 是临时插入的一段流程，
+        # 走完自动退回普通面试。技能轮**不进诊断**（测验答案是"B"，
+        # 拿去打五维分只会污染报告），因此单独维护一段对话历史。
+        self.skill_registry = default_registry()
+        self.active_skill = ""
+        self.skill_ctx: SkillContext | None = None
+        self.skill_history: list[dict] = []
+
+        # v6.5: 动态难度（只管"这道题出多难"，不管"该进哪个阶段"——
+        # 阶段推进归 v6.2 的轮次计数工程强控，难度信号不得反向干预）。
+        self.difficulty = DifficultyScheduler(
+            initial=config.DIFFICULTY_INITIAL_LEVEL,
+            min_level=config.DIFFICULTY_MIN_LEVEL,
+            max_level=config.DIFFICULTY_MAX_LEVEL,
+            up_score=config.DIFFICULTY_UP_SCORE,
+            down_score=config.DIFFICULTY_DOWN_SCORE,
+            consec=config.DIFFICULTY_CONSEC,
+        )
+        # 变档事件由 main.py 推送后清空（与 pending_follow_up 同款的一次性信号）
+        self.pending_difficulty: dict | None = None
 
         self.rounds = (config.TRADITIONAL_ROUNDS if mode == "traditional"
                        else config.INTERVIEW_ROUNDS)
@@ -193,6 +225,34 @@ class InterviewSession:
         # 之前的压力只在语气层，题目仍全来自简历/JD；压力题补的是内容层的不可预测性。
         # 整场限量，注入后登记进已问题目台账（与普通题共用去重机制）。
         self.pressure_injected = 0
+
+    # ===== v6.5: 动态难度（轮内自适应，不参与阶段推进）=====
+
+    def record_difficulty(self, score) -> None:
+        """按诊断加权总分演进难度档（诊断失败/缺分时不记录）。
+
+        为什么不放在 diagnosis_engine：难度是会话级状态，诊断引擎是无状态的一次调用。
+        """
+        if not config.DIFFICULTY_ENABLED:
+            return
+        changed, direction = self.difficulty.record(score)
+        if not changed:
+            return
+        level = self.difficulty.state.level
+        logger.info("[session] %s 难度变档 → %d（%s）",
+                    self.session_id[:8], level, "升" if direction > 0 else "降")
+        self.pending_difficulty = {
+            "type": "difficulty_change",
+            "level": level,
+            "direction": direction,
+            "message": f"难度已{'提升' if direction > 0 else '下调'}至 {level}/{self.difficulty.max_level} 档",
+        }
+
+    def difficulty_instruction(self) -> str:
+        """出题时注入的难度指令（未启用返回空串，与 closing_instruction 同注入通道）。"""
+        if not config.DIFFICULTY_ENABLED:
+            return ""
+        return self.difficulty.build_prompt()
 
     # ===== v2.6: JD 动态权重 =====
 
@@ -301,9 +361,23 @@ class InterviewSession:
           - perspective：正向描述模型会创造性发挥，视角独白才锚定"他在评判什么"；
           - followup_chain：决定"怎么问"，与薄弱维度（决定"问什么"）正交；
           - never_ask：负向清单划硬边界，防止角色失真（如友好型去聊宏观战略）。
+
+        v6.5: 公司风格块前置 —— 注入顺序为「公司人格 > 本轮公司指令 > 风格角色卡」。
+        公司是外层人格（评判标准、追问清单、行业语境），风格卡是内层语气（怎么说话），
+        两者正交；公司块放最前，避免风格卡的语气指令稀释公司特定的考察要求。
         """
+        parts: list[str] = []
+        if self.company_profile:
+            role_block = company_role_block(self.company_profile)
+            if role_block:
+                parts.append(role_block)
+            round_block = company_round_block(
+                self.company_profile, self.current_round_info().get("name", "")
+            )
+            if round_block:
+                parts.append(round_block)
         iv = self.current_interviewer()
-        parts = [iv.get("prompt_modifier", "")]
+        parts.append(iv.get("prompt_modifier", ""))  # v6.5: append 而非重建，保留前置的公司风格块
         if iv.get("perspective"):
             parts.append(
                 f"\n【你在评判什么】{iv['perspective']}"
@@ -559,6 +633,9 @@ class InterviewSession:
             tags = diagnosis.get("weakness_tags") or []
             if tags:
                 self.accumulate_weaknesses(tags)
+            # v6.5: 动态难度 —— 用诊断的加权总分（1-5）驱动，不是回复长度。
+            # 缺分/诊断失败时不记录：那不是"得了 0 分"，误记会把难度一路降到底档。
+            self.record_difficulty(diagnosis.get("overall_score"))
         else:
             self.pending_follow_up = ""
 
@@ -703,6 +780,125 @@ class InterviewSession:
             "message": f"面试模式已切换为「{new_mode}」，接下来我将按新模式进行",
             "applied_next_round": False,
         }
+
+    # ===== v6.5: 面试技能（有状态多轮，借鉴 interviewerAgent internal/skill）=====
+
+    def is_skill_active(self) -> bool:
+        return bool(self.active_skill) and self.skill_ctx is not None
+
+    def activate_skill(self, name: str) -> dict:
+        """显式激活一个技能（默认触发方式，不靠关键词猜测）。
+
+        返回前端可用事件；未知技能名 / 已有进行中技能 → 返回 error 事件，不改变状态。
+        """
+        skill = self.skill_registry.get(str(name or "").strip())
+        if skill is None:
+            return {
+                "type": "skill_start", "ok": False,
+                "message": f"未知技能：{name}。可用技能："
+                           + "、".join(s["name"] for s in self.skill_registry.list()),
+            }
+        if self.is_skill_active():
+            return {
+                "type": "skill_start", "ok": False,
+                "message": f"「{self.active_skill}」进行中，请先完成或退出。",
+            }
+
+        self.active_skill = skill.name
+        self.skill_ctx = SkillContext(
+            session_id=self.session_id,
+            mode=self.mode,
+            weak_tags=list(self.weakness_tags[:3]),
+        )
+        self.skill_history = []
+        logger.info("[session] %s 激活技能 %s", self.session_id[:8], skill.name)
+        return {
+            "type": "skill_start", "ok": True,
+            "skill": skill.name,
+            "description": skill.description,
+            "total_steps": skill.total_steps(),
+            "step": 1,
+            "message": skill.opening_message(self.skill_ctx),
+        }
+
+    def deactivate_skill(self, reason: str = "completed") -> dict:
+        """退出技能模式，回到普通面试。"""
+        if not self.is_skill_active():
+            return {"type": "skill_end", "ok": False, "message": "当前没有进行中的技能"}
+        skill = self.skill_registry.get(self.active_skill)
+        message = skill.closing_message(self.skill_ctx) if skill else "我们回到正式面试。"
+        name = self.active_skill
+        self.active_skill = ""
+        self.skill_ctx = None
+        self.skill_history = []
+        logger.info("[session] %s 退出技能 %s（%s）", self.session_id[:8], name, reason)
+        return {"type": "skill_end", "ok": True, "skill": name,
+                "reason": reason, "message": message}
+
+    def skill_prompt(self) -> str:
+        """当前步的技能 prompt（技能模式下优先级最高，覆盖普通面试官角色卡）。"""
+        if not self.is_skill_active():
+            return ""
+        skill = self.skill_registry.get(self.active_skill)
+        if skill is None:
+            return ""
+        return skill.build_prompt(self.skill_ctx)
+
+    def advance_skill(self, answer_text: str) -> dict:
+        """推进技能状态一步；完成则自动退出并返回结束事件。"""
+        if not self.is_skill_active():
+            return {"ok": False, "message": "当前没有进行中的技能"}
+        skill = self.skill_registry.get(self.active_skill)
+        ctx = self.skill_ctx
+
+        self.skill_history.append({"role": "user", "content": answer_text})
+        skill.on_turn_end(ctx, answer_text)
+
+        if skill.is_complete(ctx):
+            event = self.deactivate_skill(reason="completed")
+            return {
+                "ok": True, "completed": True,
+                "step": ctx.step, "total": skill.total_steps(),
+                "message": event.get("message", ""),
+            }
+        return {
+            "ok": True, "completed": False,
+            "step": ctx.step, "total": skill.total_steps(),
+        }
+
+    async def generate_skill_turn(self, answer_text: str = "") -> str:
+        """生成技能模式下面试官的下一句话。
+
+        刻意走独立的一段对话历史、不复用诊断链路：
+        技能轮的"回答"（如测验选项 B）不是面试作答，打五维分没有意义。
+        输出同样经过 output_sanitizer（与正式面试官话术同一净化标准）。
+        """
+        if not self.is_skill_active():
+            return ""
+        skill = self.skill_registry.get(self.active_skill)
+        prompt = self.skill_prompt()
+        if not prompt:
+            return ""
+        if answer_text:
+            self.skill_history.append({"role": "user", "content": answer_text})
+        try:
+            reply = await asyncio.to_thread(
+                self.llm.chat,
+                prompt,
+                "\n".join(f"{m['role']}: {m['content']}" for m in self.skill_history)
+                or "（请开始这个环节）",
+                0.7,
+                500,
+                None,
+                "interview",   # 任务级模型绑定：实时链路，禁推理模型
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.error(f"[session] 技能 {self.active_skill} 生成失败: {e}")
+            return ""
+        reply = sanitize_spoken_text(str(reply or "")).strip()
+        if reply:
+            self.skill_history.append({"role": "assistant", "content": reply})
+        return reply
 
     async def handle_answer(self, answer_text: str, from_voice: bool = False,
                             thinking_seconds: float = 0) -> dict:
@@ -949,6 +1145,51 @@ class InterviewSession:
         """
         return self.long_term_memory if self.current_round == 0 else []
 
+    # ===== v6.4: 出题依据透出（借鉴 MockFlow 面试页"本题依据"chip）=====
+
+    def _anchor_labels(self) -> list[str]:
+        """本场简历锚点覆盖的类别标签（按 ANCHOR_KEYS 固定顺序）。
+
+        复用 question_gen 同款合并逻辑（LLM 五类输出优先、规则分类兜底），
+        保证"本题依据"里说的锚点类别与出题 prompt 实际注入的一致。
+        """
+        raw = self.resume_points.get("anchors")
+        flat = (list(self.resume_points.get("deep_dive_points") or [])
+                + list(self.resume_points.get("vague_points") or []))
+        merged = merge_anchor_sources(raw, flat)
+        return [ANCHOR_META[k]["label"] for k in ANCHOR_KEYS if merged.get(k)]
+
+    def question_basis(self, q: dict) -> str:
+        """拼装"本题依据"说明，供前端在题目卡片上实时透出（v6.4）。
+
+        刻意用**确定性拼装**而非让 LLM 自报依据：模型自报会编造
+        （比如明明按锚点出题却说"根据 JD"），而压力题/破冰题/薄弱维度补强
+        都是工程侧已知的事实，不需要也不应该交给模型描述。
+
+        优先级：特殊题（压力/破冰/教练）> 薄弱维度补强 > JD 缺口 > 简历锚点。
+        返回空串表示该题无可靠依据可说（前端不渲染 chip，宁缺毋谎）。
+        """
+        if not isinstance(q, dict):
+            return ""
+        if q.get("is_pressure") or q.get("question_type") == "pressure":
+            topic = str(q.get("topic") or "").strip()
+            return f"压力题，不基于简历与 JD（{topic}）" if topic else "压力题，不基于简历与 JD"
+        qtype = str(q.get("question_type") or "")
+        if qtype == "self_intro":
+            return "固定破冰题"
+        if qtype == "coach_tip":
+            return "教练模式知识点讲解"
+        parts: list[str] = []
+        focus = str(q.get("focus_dimension_name") or "").strip()
+        if focus:
+            parts.append(f"薄弱维度补强：{focus}")
+        elif self.jd_gaps:
+            parts.append("优先考察 JD 缺口：" + "、".join(self.jd_gaps[:2]))
+        labels = self._anchor_labels()
+        if labels:
+            parts.append("结合简历锚点（" + "、".join(labels[:3]) + "）")
+        return "；".join(parts)
+
     async def generate_questions(self) -> list[dict]:
         info = self.current_round_info()
         questions = await generate_round_questions(
@@ -961,6 +1202,7 @@ class InterviewSession:
             mode=self.mode,
             type_mix=self.question_type_mix,
             closing_instruction=self.closing_instruction(),   # v6.2 收尾阶段强控
+            difficulty_instruction=self.difficulty_instruction(),  # v6.5 轮内难度自适应
             resume_points=self.resume_points,                 # v6.2 简历前置追问点
             avoid_questions=self.avoid_questions_payload(),   # v6.3 已问题目负向约束
             memory_points=self.long_term_memory_for_prompt(),  # v6.3 历史薄弱点回注入

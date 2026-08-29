@@ -98,7 +98,8 @@ class KnowledgeStore:
         if not r.chunks or top_k <= 0:
             return []
         terms = extract_terms(query or "")
-        ranked = r._score_chunks(terms)  # 同层复用评分（命中过滤 + 得分排序）
+        # v6.4: 同层复用双通道评分（关键词命中 + bigram 语义近似），见 resume_retriever
+        ranked = r._score_chunks(terms, query_text=query or None)
         results: list[dict] = []
         total_chars = 0
         for c in ranked:

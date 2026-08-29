@@ -131,8 +131,218 @@ def extract_interview_points(resume_text: str, llm_client=None, jd_text: str = "
     return points
 
 
+# ===== v6.5: PDF 文本两阶段修复（借鉴 interviewerAgent internal/extract/pdf.go）=====
+#
+# PDF 提取器吐出的文本没有语义换行信息，常见两类损伤：
+#   a) 被排版列宽切碎的软换行（一句完整的话断成多行，缩写/英文单词被截断）；
+#   b) 粘连（章节标题、条目与正文粘成一段）。
+# 修复策略与 Go 原版一致，单一阶段都不完整：
+#   Phase 1（rejoin）先把"除硬断信号外"的所有行拼回去 —— 硬断信号只有两种：
+#     编号列表项、≥6 字母的全大写标题（≥6 避免把 API/SQL 等缩写误判为标题）；
+#   Phase 2（restore）再把语义结构要求的断行插回去 —— 中文章节词表前后插空行、
+#     '·' 前换行、'-' 后紧跟 CJK 换行（日期区间 2023-09 与负数天然不含 CJK，不受影响）、
+#     嵌入正文中的编号项前换行（标点后紧跟数字如 3.14 不算编号）。
+
+_CHINESE_RESUME_HEADERS = (
+    "教育背景", "教育经历",
+    "专业技能", "技能特长", "核心技能", "技术技能", "技术栈",
+    "工作经历", "实习经历", "工作经验",
+    "项目经历", "项目经验",
+    "个人信息", "基本信息",
+    "自我评价", "个人评价",
+    "获奖情况", "荣誉奖项", "证书与荣誉",
+    "科研成果", "发表论文", "学术成果",
+    "社会实践", "课外活动",
+)
+
+
+def _is_numbered_item(s: str) -> bool:
+    """s 是否以编号列表项开头："1." "2、" "3)" "（4" "①" 等（≥3 字符防误判）。
+
+    对 "N." 点号形式额外排除小数（"3.5倍"）：点号后紧跟数字视为小数而非编号，
+    与 _split_embedded_numbered_items 的嵌入判定口径一致（Go 原版此处偏松）。
+    """
+    if len(s) < 3:
+        return False
+    first = s[0]
+    if "①" <= first <= "⑳":
+        return True
+    if "1" <= first <= "9":
+        second = s[1]
+        if second in "、)）":
+            return True
+        if second == ".":
+            return not ("0" <= s[2] <= "9")
+    if len(s) >= 4 and s[0] in "(（" and "1" <= s[1] <= "9":
+        return True
+    return False
+
+
+def _is_caps_heading(s: str) -> bool:
+    """全大写英文标题（如 EDUCATION）；字母数 ≥6，避免把 API/SQL 等缩写误判为标题。"""
+    s = s.strip()
+    letters = 0
+    for ch in s:
+        if ch.isalpha():
+            if not ch.isupper():
+                return False
+            letters += 1
+        elif not ch.isspace():
+            return False
+    return letters >= 6
+
+
+def _is_ascii_word_char(ch: str) -> bool:
+    return ch.isascii() and ch.isalnum()
+
+
+def _needs_space(prev: str, nxt: str) -> bool:
+    """拼接两行时是否需要补空格：仅 ASCII 单词相邻才补（中文直接拼接）。"""
+    if not prev or not nxt:
+        return False
+    last, first = prev[-1], nxt[0]
+    if last == "." and prev[:-1].isdigit():
+        return True   # "1." 结尾的编号项后接英文单词
+    return _is_ascii_word_char(last) and _is_ascii_word_char(first)
+
+
+def _should_break(prev: str, nxt: str) -> bool:
+    """Phase 1 的硬断信号：空行/编号项/全大写标题之外一律拼接。"""
+    if not prev or not nxt:
+        return True
+    if _is_numbered_item(nxt):
+        return True
+    if _is_caps_heading(prev) or _is_caps_heading(nxt):
+        return True
+    return False
+
+
+def _is_cjk(ch: str) -> bool:
+    return (
+        "\u4e00" <= ch <= "\u9fff"      # CJK 统一表意文字
+        or "\u3400" <= ch <= "\u4dbf"   # 扩展 A
+        or "\uf900" <= ch <= "\ufaff"   # 兼容表意文字
+    )
+
+
+def _rejoin_broken_lines(text: str) -> str:
+    """Phase 1：把被列宽切碎的软换行拼回去。"""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    out: list[str] = []
+    cur = ""
+
+    def _flush():
+        nonlocal cur
+        s = cur.strip()
+        if s:
+            out.append(s)
+        cur = ""
+
+    for raw in text.split("\n"):
+        trimmed = raw.strip()
+        if not trimmed:
+            _flush()
+            out.append("")
+            continue
+        if not cur:
+            cur = trimmed
+        elif _should_break(cur, trimmed):
+            _flush()
+            cur = trimmed
+        else:
+            if _needs_space(cur, trimmed):
+                cur += " "
+            cur += trimmed
+    _flush()
+
+    # 折叠连续空行为单个
+    result: list[str] = []
+    prev_blank = False
+    for ln in out:
+        if ln == "":
+            if not prev_blank:
+                result.append("")
+            prev_blank = True
+        else:
+            result.append(ln)
+            prev_blank = False
+    return "\n".join(result).strip()
+
+
+def _split_embedded_numbered_items(text: str) -> str:
+    """"...句子。1.下一条..." → "...句子。\\n1.下一条..."（编号项嵌入正文时前置换行）。
+
+    排除项：前字符是换行/数字/'-'/'~'（防 2023-09 拆散），编号标点后紧跟数字（防 3.14）。
+    """
+    buf: list[str] = []
+    n = len(text)
+    for i, ch in enumerate(text):
+        if "1" <= ch <= "9" and i > 0:
+            prev = text[i - 1]
+            if prev != "\n" and not ("0" <= prev <= "9") and prev not in "-~":
+                j = i
+                while j < n and "0" <= text[j] <= "9":
+                    j += 1
+                if j < n and text[j] in ".、":
+                    after = j + 1
+                    if after >= n or not ("0" <= text[after] <= "9"):
+                        buf.append("\n")
+        buf.append(ch)
+    return "".join(buf)
+
+
+def _restore_structure(text: str) -> str:
+    """Phase 2：把语义结构要求的断行/空行插回去。"""
+    # 1. 中文简历章节标题前后插空行
+    for h in _CHINESE_RESUME_HEADERS:
+        text = text.replace(h, "\n\n" + h + "\n")
+
+    # 2. '·' 前换行（行首的 · 不加）
+    buf: list[str] = []
+    prev = "\n"  # 文本开头视为行首
+    for ch in text:
+        if ch == "·" and prev != "\n":
+            buf.append("\n")
+        buf.append(ch)
+        prev = ch
+    text = "".join(buf)
+
+    # 3. '-' 后（允许隔空白）紧跟 CJK → 前置换行（"- 负责xx"是简历条目的常见写法）。
+    #    前字符不能是 '-'（排除 "--"）；日期区间 2023-09 与负数后是数字，天然不受影响。
+    buf = []
+    prev = ""
+    chars = list(text)
+    n = len(chars)
+    for i, ch in enumerate(chars):
+        if ch == "-" and prev and prev != "\n" and prev != "-":
+            j = i + 1
+            while j < n and chars[j] in " \t":
+                j += 1
+            if j < n and _is_cjk(chars[j]):
+                buf.append("\n")
+        buf.append(ch)
+        prev = ch
+    text = "".join(buf)
+
+    # 4. 嵌入正文中的编号项前换行
+    text = _split_embedded_numbered_items(text)
+
+    # 折叠 3+ 连续空行
+    while "\n\n\n" in text:
+        text = text.replace("\n\n\n", "\n\n")
+
+    return text.strip()
+
+
+def _repair_pdf_text(text: str) -> str:
+    """两阶段修复主入口：Phase 1 逆拼接 → Phase 2 复原断行。纯函数。"""
+    if not text or not text.strip():
+        return text
+    return _restore_structure(_rejoin_broken_lines(text))
+
+
 def parse_pdf(file_bytes: bytes) -> str:
-    """解析 PDF 文件，提取纯文本。"""
+    """解析 PDF 文件，提取纯文本（v6.5: 附带两阶段文本修复）。"""
     try:
         from PyPDF2 import PdfReader
         reader = PdfReader(io.BytesIO(file_bytes))
@@ -141,7 +351,7 @@ def parse_pdf(file_bytes: bytes) -> str:
             t = page.extract_text()
             if t:
                 text_parts.append(t)
-        return "\n".join(text_parts).strip()
+        return _repair_pdf_text("\n".join(text_parts))
     except Exception as e:
         logger.error(f"PDF 解析失败: {e}")
         return f"[PDF 解析失败: {e}]"

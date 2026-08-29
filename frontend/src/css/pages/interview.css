@@ -408,6 +408,49 @@
   color: var(--slate-400);
 }
 
+/* v6.6: 面试技能入口（临时插入的有状态多轮能力） */
+.session-skill-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 0 12px;
+  border-bottom: 1px dashed var(--slate-200);
+  margin-bottom: 8px;
+}
+
+.skill-bar-title {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.skill-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.skill-bar-actions .btn-sm {
+  padding: 4px 10px;
+  font-size: var(--text-xs);
+}
+
+.skill-bar-actions .btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.skill-bar-hint {
+  font-size: var(--text-xs);
+  color: var(--slate-400);
+  line-height: 1.5;
+}
+
+.skill-bar-hint a {
+  color: var(--color-primary, #2563eb);
+  text-decoration: underline;
+}
+
 /* 薄弱点面板 */
 .weakness-panel { margin-top: 0; }
 

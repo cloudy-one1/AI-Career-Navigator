@@ -75,6 +75,8 @@ class SessionCreateRequest(BaseModel):
     stage: InterviewStage = Field(default=InterviewStage.PHONE_SCREEN, description="面试阶段（v5.0 多阶段协议）")
     include_self_intro: bool = Field(default=False, description="是否包含自我介绍环节")
     question_type_mix: dict = Field(default={}, description="题型占比偏好: {knowledge: N, project: N, behavior: N}，0-100")
+    # v6.5: 目标公司风格（company_profiles 注册名；空 = 按 JD 关键词自动匹配，"none" = 明确不启用）
+    company_profile: str | None = Field(default=None, description="目标公司风格: bytedance/tencent/alibaba/none/None(自动匹配)")
 
 
 class WeaknessProfileItem(BaseModel):
@@ -90,6 +92,7 @@ class SessionCreateResponse(BaseModel):
     mode: str = "simulation"
     rounds: list[dict] = []
     research: dict | None = None  # v2.5: 岗位画像研究结果
+    company_profile: str | None = None  # v6.5: 实际生效的目标公司显示名（未启用为 None）
 
 
 # ========== 响应模型 ==========
