@@ -13,6 +13,11 @@ import { mountLiveRadar, updateLiveRadar, resetLiveRadar } from './liveRadar.js'
 let ws = null;
 let currentStyle = 'friendly';
 let currentMode = 'simulation';  // v2.4: 面试模式
+
+// v7.0: 从库选用的简历/岗位 id。
+// 语义约定：非空时才随会话提交，一旦用户手改文本框就置空（内容以编辑框为准）。
+let selectedResumeId = null;
+let selectedPositionId = null;
 let voiceStopFn = null;       // 当前录音停止函数
 let voiceState = 'idle';     // 'idle' | 'listening' | 'speaking'
 // v6.1: 最近一次输入来源（'text' | 'voice'），随 answer 上报；
@@ -107,18 +112,38 @@ export function initInterview() {
             }),
           ),
         ),
+        // v7.0: 简历来源 —— 库内选用 / 本地粘贴上传。
+        // 库只是"填充器"：选中后把文本写进下面同一个 textarea，之后仍可编辑。
+        el('div', { className: 'form-group' },
+          el('label', { className: 'form-label', textContent: '简历来源' }),
+          sourceSwitch('resume-src', [
+            { v: 'paste', label: '粘贴 / 上传' },
+            { v: 'library', label: '从简历库选择' },
+          ], v => onSourceChange('resume', v)),
+          el('div', { id: 'resume-library-picker', className: 'hidden' }),
+        ),
         el('div', { className: 'form-group' },
           el('label', { className: 'form-label', textContent: '简历文本（必填，可直接粘贴）' }),
           el('textarea', { id: 'resume-text', className: 'form-textarea',
             placeholder: '粘贴简历内容，或点击上方"解析文件"自动填入...',
-            onInput: updateSummary }),
+            // v7.0: 手改文本即脱离"库来源"——提交内容以编辑框为准，
+            // 避免"选了 A 简历却发出去手改后的内容且仍标记成 A"这种难以归因的情况。
+            onInput: () => { selectedResumeId = null; updateSummary(); } }),
+        ),
+        el('div', { className: 'form-group' },
+          el('label', { className: 'form-label', textContent: '岗位来源' }),
+          sourceSwitch('jd-src', [
+            { v: 'paste', label: '粘贴 JD' },
+            { v: 'library', label: '从岗位库选择' },
+          ], v => onSourceChange('jd', v)),
+          el('div', { id: 'jd-library-picker', className: 'hidden' }),
         ),
         el('div', { className: 'form-group' },
           el('label', { className: 'form-label', textContent: '岗位描述 JD（可选，让问题更贴合）' }),
           el('textarea', { id: 'jd-text', className: 'form-textarea',
             placeholder: '粘贴目标岗位描述...',
             style: 'min-height: 80px;',
-            onInput: updateSummary }),
+            onInput: () => { selectedPositionId = null; updateSummary(); } }),
         ),
       ),
 
@@ -268,6 +293,79 @@ export function initInterview() {
   loadCompanyProfiles();   // v6.5: 异步填充公司风格下拉（失败静默，保留兜底选项）
 }
 
+/* v7.0: 来源分段控件（与 mode-option / style-option 同构，不引入新组件） */
+function sourceSwitch(id, options, onPick) {
+  const box = el('div', { className: 'source-switch', id });
+  options.forEach((o, i) => {
+    box.appendChild(el('button', {
+      type: 'button',
+      className: `source-option${i === 0 ? ' selected' : ''}`,
+      'data-value': o.v,
+      textContent: o.label,
+      onClick: e => {
+        [...box.querySelectorAll('.source-option')].forEach(b => b.classList.remove('selected'));
+        e.currentTarget.classList.add('selected');
+        onPick(o.v);
+      },
+    }));
+  });
+  return box;
+}
+
+/* v7.0: 切换简历/岗位来源 —— 切到"库"时加载选择器 */
+async function onSourceChange(kind, value) {
+  const pickerId = kind === 'resume' ? '#resume-library-picker' : '#jd-library-picker';
+  const picker = $(pickerId);
+  if (!picker) return;
+  if (value !== 'library') {
+    picker.classList.add('hidden');
+    picker.replaceChildren();
+    return;
+  }
+  picker.classList.remove('hidden');
+  picker.replaceChildren(el('div', { className: 'library-hint', textContent: '加载中…' }));
+  try {
+    const path = kind === 'resume' ? '/api/resumes' : '/api/positions';
+    const data = await request('GET', path);
+    const rows = (kind === 'resume' ? data.resumes : data.positions) || [];
+    if (!rows.length) {
+      picker.replaceChildren(el('div', { className: 'library-hint' },
+        kind === 'resume' ? '简历库还是空的，可先到「简历库」上传一份。'
+                          : '岗位库还是空的，可先到「岗位库」添加一个。'));
+      return;
+    }
+    const sel = el('select', { className: 'form-input' },
+      el('option', { value: '', textContent: '— 请选择 —' }),
+      ...rows.map(r => el('option', { value: r.id, textContent: r.title || r.id })),
+    );
+    sel.addEventListener('change', () => applyFromLibrary(kind, sel.value));
+    picker.replaceChildren(sel);
+  } catch (err) {
+    picker.replaceChildren(el('div', { className: 'library-hint', textContent: err.message || '加载失败' }));
+  }
+}
+
+/* v7.0: 把库内资源填入编辑框（只做填充，不锁定 —— 用户仍可继续编辑） */
+async function applyFromLibrary(kind, id) {
+  if (!id) {
+    if (kind === 'resume') selectedResumeId = null; else selectedPositionId = null;
+    updateSummary();
+    return;
+  }
+  try {
+    const data = await request('GET', kind === 'resume' ? `/api/resumes/${id}` : `/api/positions/${id}`);
+    const item = kind === 'resume' ? data.resume : data.position;
+    if (!item) return;
+    const target = $(kind === 'resume' ? '#resume-text' : '#jd-text');
+    target.value = kind === 'resume' ? (item.raw_text || '') : (item.jd_text || '');
+    if (kind === 'resume') selectedResumeId = id; else selectedPositionId = id;
+    toast(kind === 'resume' ? '已填入简历' : '已填入岗位 JD', 'success');
+    updateSummary();
+  } catch (err) {
+    toast(err.message || '加载失败', 'error');
+  }
+}
+
 /* v6.5: 目标公司风格下拉（选项来自 GET /api/company-profiles） */
 async function loadCompanyProfiles() {
   const sel = $('#company-select');
@@ -314,8 +412,11 @@ function handleNextStep() {
 /* v4.0: 实时刷新右侧配置摘要 */
 function updateSummary() {
   const set = (id, text) => { const node = $(`#${id}`); if (node) node.textContent = text; };
-  set('summary-resume', $('#resume-text').value.trim() ? '已填写' : '未填写');
-  set('summary-jd', $('#jd-text').value.trim() ? '已填写' : '未填写');
+  // v7.0: 区分"手填"与"库内选用"，让用户在开始前能确认本场用的是哪份材料
+  set('summary-resume', $('#resume-text').value.trim()
+    ? (selectedResumeId ? '库内选用' : '已填写') : '未填写');
+  set('summary-jd', $('#jd-text').value.trim()
+    ? (selectedPositionId ? '库内选用' : '已填写') : '未填写');
   const modeNames = { simulation: '拟真模式', traditional: '传统模式', coach: '教练模式', hardcore: '拷打模式', interview_only: '只面试模式' };
   set('summary-mode', modeNames[currentMode] || currentMode);
   const styleNames = { friendly: '友好型', strict: '严格型', pressure: '压力型' };
@@ -424,7 +525,10 @@ async function startInterview() {
     const includeSelfIntro = $('#self-intro-cb')?.checked ?? false;
     const questionTypeMix = getQuestionTypeMix();
     const companyProfile = $('#company-select')?.value ?? '';   // v6.5: 目标公司风格
-    const result = await generateQuestions(resumeText, jdText, currentStyle, currentMode, includeSelfIntro, questionTypeMix, companyProfile);
+    // v7.0: 只在"确实来自库且未被手改"时带 id —— 编辑框内容始终是权威来源。
+    const result = await generateQuestions(
+      resumeText, jdText, currentStyle, currentMode, includeSelfIntro,
+      questionTypeMix, companyProfile, selectedResumeId, selectedPositionId);
     const sessionId = result.session_id;
 
     // v4.0: 进入实战态

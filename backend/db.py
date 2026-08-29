@@ -164,24 +164,163 @@ async def init_db():
             )
         """)
 
+        # ===== v7.0: 认证（users）+ 分享链接（share_links）+ 简历/岗位库 =====
+        # 新建表用 CREATE TABLE IF NOT EXISTS 即可（对老库自动生效）。
+        # 注意：不加 FOREIGN KEY —— 见 _ensure_owner_columns 注释（SQLite ALTER 限制）。
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                password_hash TEXT NOT NULL,
+                role TEXT NOT NULL DEFAULT 'jobseeker',
+                display_name TEXT,
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                last_login_at TEXT
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)"
+        )
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS share_links (
+                token TEXT PRIMARY KEY,
+                session_id TEXT NOT NULL,
+                created_by TEXT,
+                scope TEXT NOT NULL DEFAULT 'report_read',
+                include_detail INTEGER NOT NULL DEFAULT 0,
+                expires_at TEXT,
+                revoked INTEGER NOT NULL DEFAULT 0,
+                access_count INTEGER NOT NULL DEFAULT 0,
+                last_access_at TEXT,
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_share_session ON share_links(session_id)"
+        )
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_share_creator ON share_links(created_by)"
+        )
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS resumes (
+                id TEXT PRIMARY KEY,
+                owner_id TEXT,
+                title TEXT NOT NULL,
+                filename TEXT,
+                raw_text TEXT NOT NULL,
+                parsed_json TEXT,
+                char_count INTEGER DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_resumes_owner ON resumes(owner_id)"
+        )
+
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS positions (
+                id TEXT PRIMARY KEY,
+                owner_id TEXT,
+                title TEXT NOT NULL,
+                department TEXT,
+                jd_text TEXT NOT NULL,
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+            )
+        """)
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_positions_owner ON positions(owner_id)"
+        )
+
+        # v7.0: 老库升级（给已有表加列必须走 PRAGMA+ALTER 迁移，不能用 CREATE 覆盖）
+        await _ensure_owner_columns(db)
+
         await db.commit()
-        logger.info("数据库初始化完成（含 question_bank、diagnosis_feedback、weakness_profile、jd_weights_cache 表）")
+        logger.info("数据库初始化完成（含 question_bank、diagnosis_feedback、weakness_profile、jd_weights_cache、users、share_links、resumes、positions 表）")
     finally:
         await db.close()
 
 
 # ===== Sessions =====
 
+async def _ensure_owner_columns(db) -> None:
+    """v7.0 幂等迁移：为 sessions 补 owner_id / resume_id / position_id / flow_state 等列。
+
+    范式与 _ensure_weakness_columns 一致：老库上 CREATE TABLE IF NOT EXISTS 不生效，
+    必须 PRAGMA table_info 探测后按需 ALTER，否则所有新列查询报 "no such column"。
+
+    ⚠️ SQLite 限制：ALTER TABLE ADD COLUMN **不支持 REFERENCES**，
+    因此这三列都不带外键约束，引用完整性由应用层（auth.can_access_session 等）保证。
+    这是 SQLite 的硬限制，不是实现偷懒 —— 若将来迁移到 PostgreSQL 应补上外键。
+    """
+    async with db.execute("PRAGMA table_info(sessions)") as cur:
+        existing = {row[1] for row in await cur.fetchall()}
+    for col in ("owner_id", "resume_id", "position_id",
+                "flow_state", "flow_updated_at", "answered_count"):
+        if col in existing:
+            continue
+        if col == "answered_count":
+            await db.execute("ALTER TABLE sessions ADD COLUMN answered_count INTEGER DEFAULT 0")
+        else:
+            await db.execute(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
+        logger.info(f"[db] sessions 迁移：新增 {col} 列")
+
+
 async def save_session(session_id: str, style: str = "friendly",
                         resume_filename: str = "", jd_text: str = "",
-                        resume_text: str = "") -> None:
+                        resume_text: str = "",
+                        owner_id: str | None = None,
+                        resume_id: str | None = None,
+                        position_id: str | None = None) -> None:
+    """v7.0: 后三个参数为可选——不传时行为与 v6.x 完全一致（向后兼容）。"""
     db = await get_db()
     try:
         await db.execute(
-            "INSERT OR REPLACE INTO sessions (id, style, resume_filename, jd_text, resume_text) VALUES (?, ?, ?, ?, ?)",
-            (session_id, style, resume_filename, jd_text, resume_text),
+            """INSERT OR REPLACE INTO sessions
+               (id, style, resume_filename, jd_text, resume_text, owner_id, resume_id, position_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (session_id, style, resume_filename, jd_text, resume_text,
+             owner_id, resume_id, position_id),
         )
         await db.commit()
+    finally:
+        await db.close()
+
+
+async def update_session_flow(session_id: str, flow_state: str,
+                               answered_count: int | None = None) -> None:
+    """v7.0 D4：落库流程位置与已答题数（只落进度，不做断点续答）。"""
+    db = await get_db()
+    try:
+        if answered_count is None:
+            await db.execute(
+                """UPDATE sessions SET flow_state = ?,
+                   flow_updated_at = datetime('now', 'localtime') WHERE id = ?""",
+                (flow_state, session_id),
+            )
+        else:
+            await db.execute(
+                """UPDATE sessions SET flow_state = ?, answered_count = ?,
+                   flow_updated_at = datetime('now', 'localtime') WHERE id = ?""",
+                (flow_state, answered_count, session_id),
+            )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_session_owner(session_id: str) -> str | None:
+    """取会话 owner_id（不存在返回 None，无主返回 None —— 与"不存在"在同一分支处理）。"""
+    db = await get_db()
+    try:
+        async with db.execute(
+            "SELECT owner_id FROM sessions WHERE id = ?", (session_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        return row["owner_id"] if row else None
     finally:
         await db.close()
 
@@ -208,11 +347,22 @@ async def get_session(session_id: str) -> Optional[dict]:
         await db.close()
 
 
-async def list_sessions(limit: int = 50) -> list[dict]:
+async def list_sessions(limit: int = 50, owner_id: str | None = None) -> list[dict]:
+    """v7.0: owner_id 非空时按归属严格过滤；为 None 时不过滤（匿名模式，等同 v6.x）。
+
+    与 resumes/positions 的 list_* 保持同一约定：用「一个可空参数」同时表达
+    「按用户过滤」与「不过滤」两种语义，避免为匿名模式再写一套查询。
+    """
     db = await get_db()
     try:
+        if owner_id is None:
+            async with db.execute(
+                "SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?", (limit,)
+            ) as cur:
+                return [dict(row) for row in await cur.fetchall()]
         async with db.execute(
-            "SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?", (limit,)
+            "SELECT * FROM sessions WHERE owner_id = ? ORDER BY updated_at DESC LIMIT ?",
+            (owner_id, limit),
         ) as cur:
             return [dict(row) for row in await cur.fetchall()]
     finally:
@@ -715,6 +865,299 @@ async def upsert_weakness_memory(dimension: str, state: dict) -> None:
                 state.get("expires_at"),
                 state.get("updated_at"),
             ),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+# ===== v7.0: Users（认证层，L1 数据访问；业务规则在 L2 的 auth.py）=====
+
+async def create_user(user_id: str, username: str, password_hash: str,
+                      role: str = "jobseeker",
+                      display_name: str | None = None) -> None:
+    """新建用户。username 唯一，冲突抛 IntegrityError（由调用方转成 409）。"""
+    db = await get_db()
+    try:
+        await db.execute(
+            """INSERT INTO users (id, username, password_hash, role, display_name)
+               VALUES (?, ?, ?, ?, ?)""",
+            (user_id, username, password_hash, role, display_name),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_user_by_username(username: str) -> Optional[dict]:
+    db = await get_db()
+    try:
+        async with db.execute("SELECT * FROM users WHERE username = ?", (username,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def get_user_by_id(user_id: str) -> Optional[dict]:
+    db = await get_db()
+    try:
+        async with db.execute("SELECT * FROM users WHERE id = ?", (user_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+# ===== v7.0: 简历库 / 岗位库（可复用输入资产）=====
+#
+# 归属过滤沿用与 list_sessions 相同的约定：owner_id 非空时加 WHERE，为 None 时不过滤。
+# 列表类接口一律不返回大字段（raw_text / jd_text 可能上万字符），详情才返回 ——
+# 否则 N 条简历能把响应撑到几 MB。
+
+_RESUME_LIST_COLUMNS = "id, owner_id, title, filename, char_count, created_at, updated_at"
+_POSITION_LIST_COLUMNS = "id, owner_id, title, department, created_at, updated_at"
+
+
+async def save_resume(resume_id: str, title: str, raw_text: str,
+                      owner_id: str | None = None, filename: str | None = None,
+                      parsed_json: str | None = None) -> None:
+    db = await get_db()
+    try:
+        await db.execute(
+            """INSERT OR REPLACE INTO resumes
+               (id, owner_id, title, filename, raw_text, parsed_json, char_count, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
+            (resume_id, owner_id, title, filename, raw_text, parsed_json, len(raw_text or "")),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_resume(resume_id: str) -> Optional[dict]:
+    """详情（含 raw_text）。"""
+    db = await get_db()
+    try:
+        async with db.execute("SELECT * FROM resumes WHERE id = ?", (resume_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def list_resumes(owner_id: str | None = None, limit: int = 50) -> list[dict]:
+    """列表（不含 raw_text）。"""
+    db = await get_db()
+    try:
+        if owner_id is None:
+            async with db.execute(
+                f"SELECT {_RESUME_LIST_COLUMNS} FROM resumes ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ) as cur:
+                return [dict(row) for row in await cur.fetchall()]
+        async with db.execute(
+            f"SELECT {_RESUME_LIST_COLUMNS} FROM resumes WHERE owner_id = ? "
+            f"ORDER BY updated_at DESC LIMIT ?",
+            (owner_id, limit),
+        ) as cur:
+            return [dict(row) for row in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def update_resume(resume_id: str, title: str | None = None,
+                        parsed_json: str | None = None) -> None:
+    """改标题 / 写回解析结果。
+
+    刻意不提供改 raw_text：改内容应重新上传。半截文本比旧文本更难发现问题。
+    """
+    db = await get_db()
+    try:
+        if title is not None:
+            await db.execute(
+                "UPDATE resumes SET title = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
+                (title, resume_id),
+            )
+        if parsed_json is not None:
+            await db.execute(
+                "UPDATE resumes SET parsed_json = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
+                (parsed_json, resume_id),
+            )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def delete_resume(resume_id: str) -> None:
+    db = await get_db()
+    try:
+        await db.execute("DELETE FROM resumes WHERE id = ?", (resume_id,))
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def save_position(position_id: str, title: str, jd_text: str,
+                        owner_id: str | None = None,
+                        department: str | None = None) -> None:
+    db = await get_db()
+    try:
+        await db.execute(
+            """INSERT OR REPLACE INTO positions
+               (id, owner_id, title, department, jd_text, updated_at)
+               VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
+            (position_id, owner_id, title, department, jd_text),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_position(position_id: str) -> Optional[dict]:
+    db = await get_db()
+    try:
+        async with db.execute("SELECT * FROM positions WHERE id = ?", (position_id,)) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def list_positions(owner_id: str | None = None, limit: int = 50) -> list[dict]:
+    db = await get_db()
+    try:
+        if owner_id is None:
+            async with db.execute(
+                f"SELECT {_POSITION_LIST_COLUMNS} FROM positions ORDER BY updated_at DESC LIMIT ?",
+                (limit,),
+            ) as cur:
+                return [dict(row) for row in await cur.fetchall()]
+        async with db.execute(
+            f"SELECT {_POSITION_LIST_COLUMNS} FROM positions WHERE owner_id = ? "
+            f"ORDER BY updated_at DESC LIMIT ?",
+            (owner_id, limit),
+        ) as cur:
+            return [dict(row) for row in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def update_position(position_id: str, title: str | None = None,
+                          jd_text: str | None = None,
+                          department: str | None = None) -> None:
+    sets, params = [], []
+    for col, val in (("title", title), ("jd_text", jd_text), ("department", department)):
+        if val is not None:
+            sets.append(f"{col} = ?")
+            params.append(val)
+    if not sets:
+        return
+    db = await get_db()
+    try:
+        sets.append("updated_at = datetime('now', 'localtime')")
+        params.append(position_id)
+        await db.execute(
+            f"UPDATE positions SET {', '.join(sets)} WHERE id = ?", tuple(params)
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def delete_position(position_id: str) -> None:
+    db = await get_db()
+    try:
+        await db.execute("DELETE FROM positions WHERE id = ?", (position_id,))
+        await db.commit()
+    finally:
+        await db.close()
+
+
+# ===== v7.0: 分享链接（share_links）=====
+#
+# 注意：token 列存的是**摘要**而非明文（由 share_access.hash_token 生成）。
+# 明文只在签发的那一次响应里出现，之后无法再从库中还原。
+
+async def save_share_link(row: dict) -> None:
+    db = await get_db()
+    try:
+        await db.execute(
+            """INSERT OR REPLACE INTO share_links
+               (token, session_id, created_by, scope, include_detail,
+                expires_at, revoked, access_count, last_access_at, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                row.get("token"), row.get("session_id"), row.get("created_by"),
+                row.get("scope", "report_read"), int(row.get("include_detail") or 0),
+                row.get("expires_at"), int(row.get("revoked") or 0),
+                int(row.get("access_count") or 0), row.get("last_access_at"),
+                row.get("created_at"),
+            ),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_share_link(token_hash: str) -> Optional[dict]:
+    db = await get_db()
+    try:
+        async with db.execute(
+            "SELECT * FROM share_links WHERE token = ?", (token_hash,)
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def list_share_links(session_id: str) -> list[dict]:
+    db = await get_db()
+    try:
+        async with db.execute(
+            "SELECT * FROM share_links WHERE session_id = ? ORDER BY created_at DESC",
+            (session_id,),
+        ) as cur:
+            return [dict(row) for row in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def revoke_share_link(token_hash: str) -> None:
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE share_links SET revoked = 1 WHERE token = ?", (token_hash,)
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def touch_share_link(token_hash: str) -> None:
+    """访问计数 + 最后访问时间。"""
+    db = await get_db()
+    try:
+        await db.execute(
+            """UPDATE share_links
+               SET access_count = access_count + 1,
+                   last_access_at = datetime('now', 'localtime')
+               WHERE token = ?""",
+            (token_hash,),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def touch_user_login(user_id: str) -> None:
+    """更新最后登录时间（登录成功后调用；失败不影响登录流程）。"""
+    db = await get_db()
+    try:
+        await db.execute(
+            "UPDATE users SET last_login_at = datetime('now', 'localtime') WHERE id = ?",
+            (user_id,),
         )
         await db.commit()
     finally:

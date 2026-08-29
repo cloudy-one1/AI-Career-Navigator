@@ -1,8 +1,23 @@
 """
 API 端点综合测试：核心 HTTP 路由，使用真实 FastAPI app + 内存 DB。
+v7.0 新增 TestAuthIntegration：认证开关的端到端行为（含"关闭时必须等同旧版"的回归底线）。
 """
+import uuid
+
 import pytest
 from fastapi.testclient import TestClient
+
+from backend.config import config as cfg
+
+TEST_SECRET = "test-only-secret-not-for-production-0123456789abcdef"
+
+
+@pytest.fixture(autouse=True)
+def _restore_auth_config():
+    """保护全局 config：认证相关开关在部分测试里会被临时改掉。"""
+    original = (cfg.AUTH_ENABLED, cfg.AUTH_SECRET)
+    yield
+    cfg.AUTH_ENABLED, cfg.AUTH_SECRET = original
 
 
 @pytest.fixture
@@ -32,6 +47,89 @@ def client(tmp_path):
 
     from backend.main import app
     return TestClient(app)
+
+
+class TestAuthIntegration:
+    """v7.0 认证端到端。
+
+    最重要的一条是 test_disabled_matches_legacy_behavior —— DC-06 承诺
+    "AUTH_ENABLED=false 时行为与 v6.x 完全一致"，这条断言就是那个承诺的回归底线。
+    """
+
+    def _register(self, client, username):
+        return client.post("/api/auth/register", json={
+            "username": username,
+            "password": "password123",
+            "role": "jobseeker",
+        })
+
+    def test_disabled_matches_legacy_behavior(self, client: TestClient):
+        """认证关闭：列会话/建会话都无需 token，且不受归属限制。"""
+        cfg.AUTH_ENABLED = False
+        assert client.get("/api/sessions").status_code == 200
+        assert client.get("/api/auth/me").json()["is_anonymous"] is True
+
+    def test_register_returns_token(self, client: TestClient):
+        cfg.AUTH_ENABLED = True
+        cfg.AUTH_SECRET = TEST_SECRET
+        resp = self._register(client, "alice")
+        assert resp.status_code == 201
+        data = resp.json()
+        assert data["token_type"] == "bearer"
+        assert data["user"]["username"] == "alice"
+        assert data["user"]["is_anonymous"] is False
+
+    def test_register_duplicate_rejected(self, client: TestClient):
+        cfg.AUTH_ENABLED = True
+        cfg.AUTH_SECRET = TEST_SECRET
+        assert self._register(client, "alice").status_code == 201
+        dup = self._register(client, "alice")
+        assert dup.status_code == 400
+
+    def test_login_and_me(self, client: TestClient):
+        cfg.AUTH_ENABLED = True
+        cfg.AUTH_SECRET = TEST_SECRET
+        self._register(client, "alice")
+        resp = client.post("/api/auth/login", json={
+            "username": "alice", "password": "password123"})
+        assert resp.status_code == 200
+        token = resp.json()["access_token"]
+
+        me = client.get("/api/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert me.status_code == 200
+        assert me.json()["username"] == "alice"
+
+    def test_login_wrong_password_is_401(self, client: TestClient):
+        cfg.AUTH_ENABLED = True
+        cfg.AUTH_SECRET = TEST_SECRET
+        self._register(client, "alice")
+        resp = client.post("/api/auth/login", json={
+            "username": "alice", "password": "wrong-password"})
+        assert resp.status_code == 401
+
+    def test_protected_endpoint_requires_login(self, client: TestClient):
+        """认证开启后，未登录访问"我的会话列表"必须 401。"""
+        cfg.AUTH_ENABLED = True
+        cfg.AUTH_SECRET = TEST_SECRET
+        assert client.get("/api/sessions").status_code == 401
+
+    def test_foreign_session_is_404_not_403(self, client: TestClient):
+        """他人的会话返回 404 而非 403 —— 不暴露"该 id 存在"。
+
+        这是 assert_session_owner 的刻意设计：403 会让攻击者据此枚举有效会话 id。
+        """
+        cfg.AUTH_ENABLED = True
+        cfg.AUTH_SECRET = TEST_SECRET
+        self._register(client, "alice")
+        self._register(client, "bob")
+        bob_token = client.post("/api/auth/login", json={
+            "username": "bob", "password": "password123"}).json()["access_token"]
+
+        # 直接构造一个不属于 bob 的会话 id
+        foreign_id = uuid.uuid4().hex[:12]
+        resp = client.get(f"/api/sessions/{foreign_id}",
+                          headers={"Authorization": f"Bearer {bob_token}"})
+        assert resp.status_code == 404
 
 
 class TestBasicRoutes:

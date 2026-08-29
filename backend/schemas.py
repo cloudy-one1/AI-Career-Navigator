@@ -51,6 +51,42 @@ class RoundConfig(BaseModel):
     advance_threshold: float = 3.0  # 该轮平均分达此值才能推进
 
 
+# ========== v7.0: 认证与资源归属（CHARTER DC-06）==========
+
+class UserRole(str, Enum):
+    """角色。注意 recruiter 在认证层内**没有任何特权** ——
+    它的可见范围完全由 D3 的分享链接决定，这里只是身份标注。"""
+    JOBSEEKER = "jobseeker"      # 求职者（默认）
+    RECRUITER = "recruiter"      # 招聘者
+
+
+class RegisterRequest(BaseModel):
+    username: str = Field(..., description="用户名，3-32 位字母数字下划线连字符")
+    password: str = Field(..., description="密码，至少 8 位")
+    role: UserRole = UserRole.JOBSEEKER
+    display_name: Optional[str] = Field(default=None, description="展示名，可空")
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class UserInfo(BaseModel):
+    id: Optional[str] = Field(default=None, description="匿名身份为 None")
+    username: str = ""
+    role: str = "anonymous"
+    display_name: str = ""
+    is_anonymous: bool = True
+
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in_hours: int = Field(default=72, description="token 有效期（小时）")
+    user: UserInfo
+
+
 # ========== 请求模型 ==========
 
 class GenerateQuestionsRequest(BaseModel):
@@ -77,6 +113,48 @@ class SessionCreateRequest(BaseModel):
     question_type_mix: dict = Field(default={}, description="题型占比偏好: {knowledge: N, project: N, behavior: N}，0-100")
     # v6.5: 目标公司风格（company_profiles 注册名；空 = 按 JD 关键词自动匹配，"none" = 明确不启用）
     company_profile: str | None = Field(default=None, description="目标公司风格: bytedance/tencent/alibaba/none/None(自动匹配)")
+    # v7.0: 关联简历库/岗位库。传入时由后端从库中取文本填充；不传则保持
+    # "直接传 resume_text / jd_text" 的旧行为（向后兼容，前端不必改造）。
+    resume_id: str | None = Field(default=None, description="简历库 id（优先于 resume_text）")
+    position_id: str | None = Field(default=None, description="岗位库 id（优先于 jd_text）")
+
+
+# ========== v7.0: 简历库 / 岗位库 ==========
+
+class ResumeCreateRequest(BaseModel):
+    title: str = Field(..., description="显示名，默认可用文件名")
+    raw_text: str = Field(..., description="简历文本")
+    filename: str | None = None
+    parsed_json: str | None = None
+
+
+class ResumeUpdateRequest(BaseModel):
+    title: str | None = None
+    parsed_json: str | None = None
+
+
+class PositionCreateRequest(BaseModel):
+    title: str = Field(..., description="岗位名称")
+    jd_text: str = Field(..., description="岗位 JD 原文")
+    department: str | None = None
+
+
+class PositionUpdateRequest(BaseModel):
+    title: str | None = None
+    jd_text: str | None = None
+    department: str | None = None
+
+
+# ========== v7.0: 报告分享（招聘端只读入口）==========
+
+class ShareCreateRequest(BaseModel):
+    """生成分享链接。
+
+    include_detail 默认 False 是刻意的：逐字回答是夹带手机号/薪资/内部项目名
+    风险最高的部分，而候选人分享报告通常只想证明"水平如何"，不必把每句话公开。
+    """
+    include_detail: bool = Field(default=False, description="是否包含逐题问答明细")
+    expires_days: int | None = Field(default=30, description="有效期天数；0 或 None 表示永久")
 
 
 class WeaknessProfileItem(BaseModel):
@@ -111,6 +189,14 @@ class GenerateQuestionsResponse(BaseModel):
 class DimensionScore(BaseModel):
     score: int = Field(..., ge=1, le=5)
     comment: str = Field(..., description="诊断评语")
+    # v7.0: 原话引用——从候选人回答中原样摘录的支撑片段（≤30 字）。
+    # 把主观打分锚定到文本证据上，使诊断可复核，也让报告页能并排展示"分数 vs 原话"。
+    #
+    # 字段名用 quote 而非 evidence：项目里已有"简历证据包（evidence package）"概念
+    # （_build_evidence_block / EVIDENCE_USE_HARD_RULES，指注入给诊断的简历片段）。
+    # 两者都叫 evidence 会让"证据"一词同时指"输入给模型的素材"和"模型输出的依据"，
+    # 语义正好相反，后续改任何一边都要反复确认指的是哪个。
+    quote: str = Field(default="", description="v7.0: 候选人回答原话摘录，作为该维度评分的依据")
 
 
 class DiagnosisResult(BaseModel):

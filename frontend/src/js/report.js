@@ -254,12 +254,134 @@ function renderReport(report) {
     ));
   }
 
+  // v7.0: 分享给招聘者（生成只读链接）
+  content.appendChild(renderShareSection(sessionId));
+
   // v3.1: Gap 分析容器（异步加载）
   const gapContainer = el('div', { id: 'gap-analysis-container' });
   content.appendChild(gapContainer);
 
   // 自动触发 Gap 分析
   loadGapAnalysis(sessionId);
+}
+
+// ——— v7.0: 分享给招聘者 ———
+
+/**
+ * 分享区：生成 / 复制 / 撤销 / 查看访问次数。
+ *
+ * 默认不勾选"包含逐题问答"是有意的：逐字回答是夹带手机号、薪资、内部项目名
+ * 风险最高的部分，而分享报告通常只想证明"水平如何"。
+ */
+function renderShareSection(sessionId) {
+  const listBox = el('div', { id: 'share-list', className: 'share-manage-list' });
+  // 本次会话新生成的明文 token（按创建顺序）。列表接口不返回 token，
+  // 撤销必须靠这些明文 —— 见 renderShareList 的说明。
+  const revocable = [];
+  const includeDetail = el('input', { type: 'checkbox', id: 'share-include-detail' });
+  const expirySel = el('select', { id: 'share-expiry', className: 'form-input', style: 'max-width:150px;' },
+    el('option', { value: '7', textContent: '7 天有效' }),
+    el('option', { value: '30', textContent: '30 天有效', selected: true }),
+    el('option', { value: '0', textContent: '长期有效' }),
+  );
+
+  const generateBtn = el('button', {
+    className: 'btn btn-primary btn-sm', textContent: '🔗 生成分享链接',
+    onClick: async () => {
+      generateBtn.disabled = true;
+      try {
+        const res = await request('POST', `/api/sessions/${sessionId}/share`, {
+          include_detail: includeDetail.checked,
+          expires_days: parseInt(expirySel.value, 10),
+        });
+        const url = `${location.origin}${res.url}`;
+        revocable.unshift(res.share.token);
+        try {
+          await navigator.clipboard.writeText(url);
+          toast('分享链接已生成并复制到剪贴板', 'success');
+        } catch (_) {
+          // 剪贴板不可用（非 HTTPS / 无权限）时至少让用户能看到链接
+          toast('分享链接已生成（请手动复制下方链接）', 'success');
+        }
+        renderShareList(sessionId, listBox, revocable);
+        listBox.dataset.lastUrl = url;
+        renderLastUrl(listBox, url);
+      } catch (err) {
+        toast(err.message || '生成失败', 'error');
+      } finally {
+        generateBtn.disabled = false;
+      }
+    },
+  });
+
+  const box = el('div', { className: 'card share-manage' },
+    el('div', { className: 'card-title', textContent: '🔗 分享给招聘者' }),
+    el('div', { className: 'share-manage-desc' },
+      '生成一条只读链接发给招聘方。对方无需注册即可查看，你随时可以撤销。'),
+    el('div', { className: 'share-manage-controls' },
+      generateBtn,
+      expirySel,
+      el('label', { className: 'checkbox-label', style: 'margin:0;' },
+        includeDetail,
+        el('span', { className: 'checkbox-text', textContent: '包含逐题问答内容' }),
+      ),
+    ),
+    el('div', { className: 'share-manage-hint' },
+      '默认只分享结论（总分 / 五维 / 轮次概况）。勾选后会附上每道题的问答原文——' +
+      '后端会自动脱敏手机号、邮箱、身份证，但仍建议确认后再分享。'),
+    listBox,
+  );
+
+  renderShareList(sessionId, listBox, revocable);
+  return box;
+}
+
+function renderLastUrl(listBox, url) {
+  const old = listBox.parentElement?.querySelector('.share-last-url');
+  if (old) old.remove();
+  listBox.insertAdjacentElement('afterend', el('div', { className: 'share-last-url' },
+    el('span', { className: 'share-last-url-label', textContent: '最新链接：' }),
+    el('code', { textContent: url }),
+  ));
+}
+
+async function renderShareList(sessionId, listBox, revocable = []) {
+  listBox.replaceChildren(el('div', { className: 'share-empty', textContent: '加载中…' }));
+  try {
+    const data = await request('GET', `/api/sessions/${sessionId}/shares`);
+    const rows = data.shares || [];
+    if (!rows.length) {
+      listBox.replaceChildren(el('div', { className: 'share-empty', textContent: '还没有分享链接' }));
+      return;
+    }
+    // 列表接口按创建时间倒序返回，与 revocable（本次会话新生成的明文 token）
+    // 一一对应。只有本次生成的链接带明文 token，因此也只有它们可撤销 ——
+    // 这不是限制，而是凭据该有的样子：库里和列表里都只有摘要，
+    // 明文只在签发那一刻出现一次。
+    listBox.replaceChildren(...rows.map((r, i) => {
+      const token = revocable[i];
+      return el('div', { className: 'share-manage-row' },
+        el('span', { className: `lib-badge${r.revoked ? '' : ' ok'}`,
+                     textContent: r.revoked ? '已撤销' : '生效中' }),
+        el('span', { className: 'share-manage-meta',
+          textContent: `浏览 ${r.access_count || 0} 次 · ${r.include_detail ? '含逐题' : '仅结论'} · ${r.expires_at ? ('到期 ' + String(r.expires_at).slice(0, 10)) : '长期'}` }),
+        (token && !r.revoked) ? el('button', {
+          className: 'btn btn-sm btn-danger', textContent: '撤销',
+          onClick: async () => {
+            try {
+              await request('DELETE', `/api/shares/${encodeURIComponent(token)}`);
+              toast('已撤销，该链接立即失效', 'success');
+              renderShareList(sessionId, listBox, revocable);
+            } catch (err) {
+              toast(err.message || '撤销失败', 'error');
+            }
+          },
+        }) : null,
+      );
+    }));
+  } catch (err) {
+    listBox.replaceChildren(el('div', { className: 'share-empty', textContent: err.message || '加载失败' }));
+  }
 }
 
 // ——— v6.2: 逐题拆解渲染 ———
@@ -297,6 +419,7 @@ function renderQaItem(qa) {
       qa.weakest_dimension_name ? el('span', { textContent: `最薄弱：${qa.weakest_dimension_name}` }) : '',
       qa.thinking_seconds > 0 ? el('span', { textContent: `⏱ 思考 ${qa.thinking_seconds}s` }) : '',
       qa.has_rewrite ? el('span', { textContent: '✍️ 含改写示范' }) : '',
+      qa.assisted ? el('span', { textContent: '🆘 借助引导完成' }) : '',
     ),
   ];
   if (qa.real_interview_impact) {

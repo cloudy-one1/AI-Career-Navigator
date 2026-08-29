@@ -1,6 +1,7 @@
 // ===================================================
 // app.js — 主入口：导航切换 + 模块初始化（v4.0 框架）
 // 兼容桌面侧边导航 / 平板图标栏 / 移动端底部导航（统一 .nav-item[data-tab]）
+// v7.0: 接入账户面板 + 401 全局处理 + 启动时拉取登录态
 // ===================================================
 
 import { $, $$ } from './utils.js';
@@ -11,6 +12,9 @@ import { initQuestionBank } from './questionBank.js';
 import { initCareerPlan } from './careerPlan.js';
 import { initMarketData } from './marketData.js';
 import { initMemory } from './memoryGraph.js';   // v6.3 长期记忆
+import { initAuth, refreshAuthStatus, updateHeaderUser, isLoggedIn } from './auth.js';  // v7.0 认证
+import { initResumeLibrary } from './resumeLibrary.js';       // v7.0 简历库
+import { initPositionLibrary } from './positionLibrary.js';   // v7.0 岗位库
 
 function switchTab(tabName) {
   // 更新导航项（侧边栏 + 底部栏共用）
@@ -34,6 +38,9 @@ function switchTab(tabName) {
   else if (tabName === 'career-plan') initCareerPlan();
   else if (tabName === 'market-data') initMarketData();
   else if (tabName === 'memory') initMemory();
+  else if (tabName === 'resume-library') initResumeLibrary();
+  else if (tabName === 'position-library') initPositionLibrary();
+  else if (tabName === 'account') initAuth();
 
   updateInterviewStatus(tabName);
 }
@@ -57,6 +64,28 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('#interview-status')?.addEventListener('click', () => switchTab('interview'));
 
+  // v7.0: 顶部账户按钮 → 跳到账户面板
+  $('#user-btn')?.addEventListener('click', () => switchTab('account'));
+
+  // v7.0: 登录态变化（登录/退出）后同步顶部显示，并让历史等面板感知归属变化
+  window.addEventListener('auth:changed', () => {
+    updateHeaderUser();
+  });
+
+  // v7.0: 任意请求被 401（token 过期/被吊销）→ 清登录态并引导到账户页。
+  // 只在"原本是登录态"时提示，避免每次匿名访问都弹一个没意义的 toast。
+  window.addEventListener('auth:unauthorized', () => {
+    const wasLoggedIn = isLoggedIn();
+    refreshAuthStatus().then(() => {
+      if (wasLoggedIn && !isLoggedIn()) {
+        switchTab('account');
+      }
+    });
+  });
+
   // 默认显示面试 Tab
   switchTab('interview');
+
+  // v7.0: 启动时拉取一次登录态（失败静默降级为未登录，不阻断首屏）
+  refreshAuthStatus().catch(() => {});
 });

@@ -13,6 +13,7 @@
   <link rel="stylesheet" href="/src/css/pages/dark.css">
   <link rel="stylesheet" href="/src/css/pages/market.css">
   <link rel="stylesheet" href="/src/css/pages/memory.css">
+  <link rel="stylesheet" href="/src/css/pages/auth.css">
   <link rel="stylesheet" href="/src/css/style.css">
 </head>
 <body>
@@ -30,6 +31,11 @@
     <button id="interview-status" class="status-light hidden" type="button" aria-label="返回面试中">
       <span class="status-dot" aria-hidden="true"></span>
       <span>面试中 · 返回</span>
+    </button>
+    <!-- v7.0: 账户入口。不登录也能正常使用，因此这里是"状态指示"而非强制门禁。 -->
+    <button id="user-btn" class="user-btn hidden" type="button" aria-label="账户">
+      <span class="user-btn-avatar" aria-hidden="true">?</span>
+      <span class="user-btn-label">未登录</span>
     </button>
   </div>
 </header>
@@ -65,6 +71,20 @@
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="4.5" cy="7" r="2"/><circle cx="19.5" cy="7" r="2"/><circle cx="4.5" cy="17" r="2"/><circle cx="19.5" cy="17" r="2"/><line x1="6.3" y1="8.2" x2="9.6" y2="10.6"/><line x1="17.7" y1="8.2" x2="14.4" y2="10.6"/><line x1="6.3" y1="15.8" x2="9.6" y2="13.4"/><line x1="17.7" y1="15.8" x2="14.4" y2="13.4"/></svg>
       <span class="nav-label">长期记忆</span>
     </button>
+    <!-- v7.0: 简历库 / 岗位库（可复用输入资产） -->
+    <button class="nav-item" data-tab="resume-library">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+      <span class="nav-label">简历库</span>
+    </button>
+    <button class="nav-item" data-tab="position-library">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+      <span class="nav-label">岗位库</span>
+    </button>
+    <!-- v7.0: 账户（登录/注册） -->
+    <button class="nav-item" data-tab="account">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span class="nav-label">账户</span>
+    </button>
   </nav>
 
   <!-- 主内容 -->
@@ -76,6 +96,11 @@
     <section id="career-plan-panel" class="panel"></section>
     <section id="market-data-panel" class="panel"></section>
     <section id="memory-panel" class="panel"></section>
+    <!-- v7.0: 简历库 / 岗位库 -->
+    <section id="resume-library-panel" class="panel"></section>
+    <section id="position-library-panel" class="panel"></section>
+    <!-- v7.0: 账户（登录/注册）面板 -->
+    <section id="account-panel" class="panel"></section>
   </main>
 </div>
 
@@ -108,6 +133,20 @@
   <button class="nav-item" data-tab="memory">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="4.5" cy="7" r="2"/><circle cx="19.5" cy="7" r="2"/><circle cx="4.5" cy="17" r="2"/><circle cx="19.5" cy="17" r="2"/><line x1="6.3" y1="8.2" x2="9.6" y2="10.6"/><line x1="17.7" y1="8.2" x2="14.4" y2="10.6"/><line x1="6.3" y1="15.8" x2="9.6" y2="13.4"/><line x1="17.7" y1="15.8" x2="14.4" y2="13.4"/></svg>
     <span>记忆</span>
+  </button>
+  <!-- v7.0: 简历库 / 岗位库 -->
+  <button class="nav-item" data-tab="resume-library">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
+    <span>简历</span>
+  </button>
+  <button class="nav-item" data-tab="position-library">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
+    <span>岗位</span>
+  </button>
+  <!-- v7.0: 账户 -->
+  <button class="nav-item" data-tab="account">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+    <span>账户</span>
   </button>
 </nav>
 

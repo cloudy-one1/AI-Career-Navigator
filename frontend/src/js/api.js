@@ -4,16 +4,43 @@
 
 const BASE = '';
 
+/**
+ * v7.0: 401 全局事件。
+ *
+ * 为什么用事件而不是在 request() 里直接跳转：api.js 是最底层模块，
+ * 让它去 import 上层的 auth.js / app.js 会造成循环依赖。
+ * 这里只"广播一个事实"（有请求被 401 了），由 app.js 决定怎么响应。
+ */
+export const AUTH_UNAUTHORIZED_EVENT = 'auth:unauthorized';
+
+function notifyUnauthorized() {
+  window.dispatchEvent(new CustomEvent(AUTH_UNAUTHORIZED_EVENT));
+}
+
 /** 通用 HTTP 请求 */
 export async function request(method, path, body, isForm) {
   const opts = { method };
+  const headers = {};
   if (body && !isForm) {
-    opts.headers = { 'Content-Type': 'application/json' };
+    headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
   } else if (body && isForm) {
     opts.body = body;
   }
+  // v7.0: 全站唯一出口，token 在这里统一注入，各调用点无需感知认证。
+  try {
+    const { getToken } = await import('./auth.js');
+    const token = getToken();
+    if (token) headers.Authorization = `Bearer ${token}`;
+  } catch {
+    // auth.js 不可用（如被单独引用）时静默降级为无 token 请求
+  }
+  if (Object.keys(headers).length) opts.headers = headers;
+
   const res = await fetch(BASE + path, opts);
+  if (res.status === 401) {
+    notifyUnauthorized();
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || err.detail || res.statusText);
@@ -21,15 +48,23 @@ export async function request(method, path, body, isForm) {
   return res.json();
 }
 
-/** 上传简历文件 */
+/** 上传简历文件（临时使用，不入简历库）
+ *  注意：后端会把文本截断到 5000 字（历史兼容行为，勿改）。 */
 export async function uploadResume(file) {
   const form = new FormData();
   form.append('file', file);
   return request('POST', '/api/sessions/upload', form, true);
 }
 
+/** v7.0: 上传简历并入库（返回完整文本长度，不截断 —— 截断会让后续出题看到不完整的简历） */
+export async function uploadResumeToLibrary(file) {
+  const form = new FormData();
+  form.append('file', file);
+  return request('POST', '/api/resumes/upload', form, true);
+}
+
 /** 生成问题（获取 session_id）v2.4: 支持 mode。v2.7: 支持自我介绍 + 题型占比。v6.5: 支持目标公司风格 */
-export async function generateQuestions(resumeText, jdText, style = 'friendly', mode = 'simulation', includeSelfIntro = false, questionTypeMix = {}, companyProfile = '') {
+export async function generateQuestions(resumeText, jdText, style = 'friendly', mode = 'simulation', includeSelfIntro = false, questionTypeMix = {}, companyProfile = '', resumeId = null, positionId = null) {
   return request('POST', '/api/sessions', {
     resume_text: resumeText,
     jd_text: jdText,
@@ -38,6 +73,9 @@ export async function generateQuestions(resumeText, jdText, style = 'friendly', 
     include_self_intro: includeSelfIntro,
     question_type_mix: questionTypeMix,
     company_profile: companyProfile || null,   // 空串 = 后端按 JD 自动匹配
+    // v7.0: 简历/岗位库关联。为 null 时后端忽略，行为与旧版完全一致。
+    resume_id: resumeId || null,
+    position_id: positionId || null,
   });
 }
 
@@ -251,7 +289,7 @@ export async function callCareerPlan({ resumeText, targetRole, jdText = '', time
 export function createInterviewWS(sessionId, handlers) {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
   const host = location.host;
-  const url = `${protocol}//${host}/ws/interview/${sessionId}`;
+  const baseUrl = `${protocol}//${host}/ws/interview/${sessionId}`;
 
   let ws = null;
   let _intentionalClose = false;
@@ -262,6 +300,16 @@ export function createInterviewWS(sessionId, handlers) {
   const _maxDelay = 30000;  // 30s
 
   function _connect() {
+    // v7.0: token 走 query 参数 —— 浏览器 WebSocket API 不支持自定义请求头。
+    // 每次重连都重新读取，保证"登录后重连"能带上最新 token（登录发生在会话创建之后也无害）。
+    const token = (() => {
+      try {
+        return localStorage.getItem('aims_token') || '';
+      } catch {
+        return '';
+      }
+    })();
+    const url = token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
     ws = new WebSocket(url);
 
     ws.onopen = () => {
@@ -307,6 +355,15 @@ export function createInterviewWS(sessionId, handlers) {
         _sessionExpired = true;
         _intentionalClose = true;
         console.error('[WS] 会话已失效，停止重连');
+      }
+      // v7.0: 4001 = 未授权（token 无效 / 会话不属于当前用户）。
+      // 这是"重试必然再次被拒"的错误，继续指数退避重连只会刷屏日志并耗尽重试次数，
+      // 因此与 session_not_found 同等处理：停止重连，交回界面层提示用户。
+      if (!_sessionExpired && e.code === 4001) {
+        _sessionExpired = true;
+        _intentionalClose = true;
+        console.error('[WS] 连接未授权（4001），停止重连');
+        if (handlers.onUnauthorized) handlers.onUnauthorized();
       }
       if (_sessionExpired || _intentionalClose) {
         if (handlers.onClose) handlers.onClose();

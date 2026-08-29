@@ -29,6 +29,47 @@ BASE_SCORES = {
 }
 
 
+class TestQuoteEvidence:
+    """v7.0: 每维度评分依据（候选人原话摘录）的解析与容错。
+
+    引入动机：没有依据的分数等于感觉，无法复核。quote 把打分锚到文本证据上，
+    也让报告页能并排展示"分数 vs 原话"。
+    """
+
+    def test_quote_preserved(self):
+        diag = _build_diagnosis(BASE_SCORES)
+        diag["quantification"]["quote"] = "把响应时间从 800ms 降到 200ms"
+        res = normalize_result(diag, {}, weights=None)
+        assert res["dimension_details"]["quantification"]["quote"] == "把响应时间从 800ms 降到 200ms"
+
+    def test_missing_quote_defaults_to_empty(self):
+        """模型没返回 quote（老 prompt 缓存/降级模型）时补空串，不阻断诊断。
+
+        这是向后兼容的底线：quote 是增强项，缺失不应影响任何既有流程。
+        """
+        diag = _build_diagnosis(BASE_SCORES)   # 辅助函数不带 quote
+        res = normalize_result(diag, {}, weights=None)
+        for key in DIM_KEYS:
+            assert res["dimension_details"][key]["quote"] == ""
+
+    def test_numeric_dimension_also_gets_quote_key(self):
+        """LLM 直接给数字（不给字典）时，quote 键仍需存在且为空。"""
+        diag = {k: 3.0 for k in DIM_KEYS}
+        diag["weakest_dimension"] = ""
+        diag["follow_up_question"] = ""
+        res = normalize_result(diag, {}, weights=None)
+        assert res["dimension_details"]["logic_coherence"]["quote"] == ""
+
+    def test_non_string_quote_coerced(self):
+        """模型返回非字符串（如数字/null）时强制转字符串，不让后续渲染崩。"""
+        diag = _build_diagnosis(BASE_SCORES)
+        diag["logic_coherence"]["quote"] = None
+        diag["job_relevance"]["quote"] = 123
+        res = normalize_result(diag, {}, weights=None)
+        assert res["dimension_details"]["logic_coherence"]["quote"] == ""
+        assert res["dimension_details"]["job_relevance"]["quote"] == "123"
+
+
 class TestWeakestCrossCheck:
     """normalize_result 必须对模型自报的最薄弱维度与真实分数做交叉校验。"""
 

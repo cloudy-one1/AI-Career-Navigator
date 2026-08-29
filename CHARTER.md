@@ -32,7 +32,7 @@ Diagnostician + Rewriter 是两个独立 Agent，**禁止合并为单一 Agent**
 | 层级 | 模块 | 允许依赖 |
 |---|---|---|
 | L1 基础设施 | `config.py` `logger.py` `llm_client.py` `db.py` | 仅标准库 / 三方库，**无项目内 import**（config 除外） |
-| L2 领域模型/数据 | `schemas.py` `security.py` `resume_parser.py` `resume_retriever.py`（v5.0） `dimension_weights.py` `gap_analyzer.py` `knowledge_store.py`（v6.0） `voice_service.py`（v4.2） `market/*` `company_profiles.py`（v6.5） `weakness_memory.py`（v6.6） `difficulty.py`（v6.6） | 仅 L1（`from .config import ...` `from .db import ...`） |
+| L2 领域模型/数据 | `schemas.py` `security.py` `auth.py`（v7.0） `share_access.py`（v7.0） `resume_parser.py` `resume_retriever.py`（v5.0） `dimension_weights.py` `gap_analyzer.py` `knowledge_store.py`（v6.0） `voice_service.py`（v4.2） `market/*` `company_profiles.py`（v6.5） `weakness_memory.py`（v6.6） `difficulty.py`（v6.6） | 仅 L1（`from .config import ...` `from .db import ...`） |
 | L3 业务逻辑 | `question_gen.py` `diagnosis_engine.py` `interview_engine/*` `web_research.py` `question_bank.py` `data_support.py` `career_planner.py` `interview_skills.py`（v6.6） | L1 + L2，禁止 import L4 |
 | L4 应用入口 | `main.py` | 所有层 |
 
@@ -99,6 +99,13 @@ Diagnostician + Rewriter 是两个独立 Agent，**禁止合并为单一 Agent**
 - **判断依据**：用户在 q-整合档次 明确选择 B 档（子包内嵌 + 进度界面 + 保留 job-crawler 采集/列表界面设计），q-采集方案 明确本轮接入 Playwright 实时采集；"课程项目"定位下，独立 Flask 服务与 SPA 主应用技术栈割裂（两套前端/两套部署/两套端口），B 档单一框架最像"真子模块"，且采集结果直接回灌 market.db 供 Gap 分析/跨岗位对比/报告市场基准联动，数据链路最短。DC-02 已披露"数据资产≠代码复现"论证站不住，本轮以真实采集工作量补足该缺陷。
 - **若错代价**：若 Playwright 在部署环境不稳定或 51job 反爬升级，实时采集可用性下降——已保留导入管道兜底。代价指标：playwright+chromium 体积 ~200MB（曾因该原因在 DC-02 被移除）；采集任务为内存态（服务重启丢失任务状态）。何时推翻：若 51job 持续 WAF 拦截导致采集长期不可用，或本机无法安装 chromium，应回退依赖导入管道。
 
+### DC-06 引入认证与资源归属，从课程项目定位转向工程化平台（2026-08-29，v7.0）
+
+- **决策**：新增轻量认证层（用户表 + bcrypt 哈希 + JWT），为简历/会话/报告建立 owner 归属，WebSocket 握手校验连接者身份；引入"岗位/简历库/题库"实体与分享链接机制，使同一套面试诊断内核同时服务求职者（自我提升）与招聘者（**只读**查看报告）。
+- **放弃的替代方案**：(a) 维持无认证，仅靠随机 session_id；(b) 照搬招聘方平台模型（招聘者建会话、候选人被邀请进入），完全重写流程；(c) 只做前端角色切换的演示外壳，不做真认证。
+- **判断依据**：多角色场景下"无访问控制"不再是取舍而是缺陷——求职者上传的是真实简历，泄露后果与练习数据不同量级；(b) 的数据流与现有 `InterviewSession`（求职者自主发起）方向相反，改动面等于重写，且会推翻产品命题第一节；(c) 是演示而非工程。选 **A 模型**（求职者自主发起 + 分享链接给招聘端只读）因此同时保住产品命题与最小改动面。
+- **若错代价**：若认证层或数据迁移引入回归而核心诊断未充分验证，"更丰富"反而削弱核心卖点。缓解：认证做成可关闭开关（`AUTH_ENABLED=false` 行为与 v6.x 完全一致，有回归测试钉住）；诊断链路零改动。何时推翻：若课程答辩评分明确以"范围收敛"而非"工程完整度"为准，应回退。
+
 ### DC-05 落地小米 MiMo 云端语音，从"未来优化方向"转为已实现（2026-08-28，v4.2）
 
 - **决策**：将范围纪律"未来优化方向"中的**语音升级（云端 TTS/STT）**提前落地为 v4.2 功能：后端新增 `voice_service.py` 代理 mimo-v2.5-tts（合成）与 mimo-v2.5-asr（识别，TTS/ASR 均走官方 `chat/completions` 协议，认证头 `api-key`，域名 `api.xiaomimimo.com`），前端 `voice.js` 改为"MiMo 云端优先 + 浏览器原生降级"双引擎。语音仍为输入/输出替代层，诊断内核零变更。
@@ -112,8 +119,8 @@ Diagnostician + Rewriter 是两个独立 Agent，**禁止合并为单一 Agent**
 
 > 本系统定位为**课程项目**。以下局限是已知且刻意的取舍，不是待修复的 bug；自 2026-08 起，README 与本文档不再使用"生产级加固""5 层安全体系"等夸大定性。
 
-- **无认证/授权**：`session_id` 为随机串，防猜测但**不是访问控制**；拿到链接可读他人简历/诊断/报告。认证属"未来优化方向（课程项目阶段不做）"。
-- **WebSocket 无连接身份校验（2026-08）**：`/ws/interview/{session_id}` 仅校验会话是否存在于 `active_sessions`，不校验连接者身份；任何持有 session_id 的客户端均可接管该会话流程，与"无认证/授权"同源。根因是系统无认证层，非单点代码缺陷。v3.1 已为 `switch_provider` 的全局单例重赋值加 `asyncio.Lock` 消除重赋值竞态，但**运行中多会话共用同一全局 `llm_client`/`diagnosis_engine` 实例、无按会话隔离**仍属已知架构局限，不在此阶段引入认证/隔离。
+- **~~无认证/授权~~（v7.0 已解决）**：v7.0 起引入轻量认证层与资源归属（见 DC-06）。`AUTH_ENABLED=true` 时：会话/简历/岗位按 owner 归属、越权一律 404、WebSocket 握手校验身份；`AUTH_ENABLED=false`（默认）时回退 v6.x 行为——**开关关闭期间"无认证"仍成立**，部署方需自行知晓这一前提。
+- **~~WebSocket 无连接身份校验~~（v7.0 已解决）**：`/ws/interview/{session_id}` 现于握手阶段校验 token（query 参数），失败 `close(4001)`；认证关闭时回退旧行为（仅校验会话存在）。v3.1 已为 `switch_provider` 的全局单例重赋值加 `asyncio.Lock` 消除重赋值竞态，但**运行中多会话共用同一全局 `llm_client`/`diagnosis_engine` 实例、无按会话隔离**仍属已知架构局限（与认证无关，单租户场景影响有限）。
 - **全局单例可变状态（2026-08）**：`llm_client` 与 `diagnosis_engine` 为模块级单例；`switch_provider` 重赋值已加锁，但运行中这些单例被所有会话共享、无按会话隔离，多后端高频切换或并发导入场景下内部 provider 状态存在理论竞态。该局限与"WebSocket 无身份校验"同源（无认证/多租户隔离层），课程项目阶段不做隔离，仅以文档披露。
 - **双 Agent 成本**：Diagnostician + Rewriter 每题至少 2 次 LLM 调用，流式下延迟与 token 成本翻倍；"优于单 Agent + 结构化输出"缺乏量化对比实验，属先验架构偏好而非被验证的选择（见 DC-01）。
 - **SQLite 扩展性**：单文件库；多 Worker 下 WebSocket 需 sticky session，水平扩展受限。
@@ -133,7 +140,7 @@ Diagnostician + Rewriter 是两个独立 Agent，**禁止合并为单一 Agent**
 - **禁止**在未经用户明确批准的情况下新增功能模块
 - 如认为某功能确有必要，只能以建议形式提出并等待用户批准，不得直接实现
 - 已批准范围按版本记录在 [CHANGELOG.md](CHANGELOG.md)（"范围纪律"清单）
-- **未来优化方向（课程项目阶段不做）**：用户认证系统、HTTPS / 局域网安全访问。两者经第一性原理评估均不提升诊断内核质量，属产品化 / 上云阶段事项。（语音升级已在 v4.2 落地为 MiMo 云端 TTS/STT，见 DC-05。）
+- **未来优化方向（现阶段不做）**：HTTPS / 局域网安全访问、按会话隔离全局 LLM 单例、断点续答（v7.0 只落库流程位置，不重建会话）。用户认证系统已在 v7.0 落地（DC-06）；语音升级已在 v4.2 落地（DC-05）。
 
 ---
 

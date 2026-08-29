@@ -257,6 +257,27 @@ class Config:
     # 静态数据文件
     SKILLS_DATA_PATH = os.path.join(BASE_DIR, "backend", "skills_data.json")
 
+    # ===== v7.0: 认证与资源归属（CHARTER DC-06）=====
+    # 默认关闭：AUTH_ENABLED=false 时所有鉴权与归属过滤跳过，行为与 v6.x 完全一致。
+    # 这是 DC-06 承诺的回滚手段——认证层出问题时可一键退回现状，不必改代码。
+    AUTH_ENABLED = os.getenv(
+        "AUTH_ENABLED", "false"
+    ).strip().lower() in ("1", "true", "yes", "on")
+    # JWT 签名密钥。为空时不随机生成（否则每次重启所有 token 失效），
+    # 而是生成后持久化到 data/.auth_secret（该文件须进 .gitignore）。
+    AUTH_SECRET = os.getenv("AUTH_SECRET", "")
+    AUTH_SECRET_FILE = os.path.join(BASE_DIR, "data", ".auth_secret")
+    # token 有效期（小时）。注册/登录签发，过期后需重新登录。
+    AUTH_TOKEN_TTL_HOURS = int(os.getenv("AUTH_TOKEN_TTL_HOURS", "72"))
+    # 密码策略（注册时校验，不做复杂度正则——长度是唯一被验证有效的策略）
+    AUTH_PASSWORD_MIN_LENGTH = int(os.getenv("AUTH_PASSWORD_MIN_LENGTH", "8"))
+    # 用户名长度区间，字符集限定为字母数字下划线连字符（避免空格/中文造成歧义）
+    AUTH_USERNAME_MIN_LENGTH = 3
+    AUTH_USERNAME_MAX_LENGTH = 32
+    # 可选角色：求职者（默认）/ 招聘者。
+    # 注意 recruiter 在本模块内无任何特权——其可见范围由 D3 的分享链接决定。
+    AUTH_ROLES = ("jobseeker", "recruiter")
+
     # ===== v3.1: Web 安全配置 =====
     # CORS: 允许的前端来源（逗号分隔），空字符串 = 允许所有（开发模式）
     CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:8000,http://127.0.0.1:8000,http://localhost:3000")

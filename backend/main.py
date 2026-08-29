@@ -12,7 +12,7 @@ import time
 import uuid
 from typing import List, Optional
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Query, HTTPException, Response, Request
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, Query, HTTPException, Response, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
@@ -30,7 +30,14 @@ from .db import (
     save_weakness_profile, get_weakness_profile, get_global_weakness_profile,
     list_weakness_points, list_unresolved_weaknesses,   # v6.3 长期记忆
     mark_weakness_resolved, delete_weakness,
+    # v7.0 简历库 / 岗位库（可复用输入资产）
+    save_resume, get_resume, list_resumes, update_resume, delete_resume,
+    save_position, get_position, list_positions, update_position, delete_position,
+    update_session_flow,   # v7.0 流程位置落库
 )
+from .interview_engine.flow import FlowState  # v7.0 流程状态枚举（纯数据）
+from . import auth  # v7.0 认证与资源归属（L2，登记进 .importlinter）
+from . import share_access  # v7.0 分享访问与脱敏（L2）
 from .db import save_feedback as db_save_feedback, get_feedback_stats
 from .llm_client import LLMClient, _api_key_issue
 from .diagnosis_engine import DiagnosisEngine
@@ -51,6 +58,10 @@ from .schemas import (
     CareerPlanRequest, CareerPlanResponse,  # v3.2 职业规划
     ModeSwitchRequest, ModeSwitchResponse,  # v5.0 面试模式切换
     WeaknessResolveRequest,  # v6.3 长期记忆
+    RegisterRequest, LoginRequest, TokenResponse, UserInfo,  # v7.0 认证
+    ResumeCreateRequest, ResumeUpdateRequest,                # v7.0 简历库
+    PositionCreateRequest, PositionUpdateRequest,            # v7.0 岗位库
+    ShareCreateRequest,                                      # v7.0 报告分享
 )
 from .security import full_check, check_output
 from .web_research import enrich_jd_with_research
@@ -131,6 +142,36 @@ app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
     status_code=429,
     content={"detail": f"请求过于频繁，请稍后再试。限制：{config.RATE_LIMIT_GLOBAL}"},
 ))
+
+# ===== v7.0: 认证依赖（组合发生在 L4；auth.py 本身不感知 HTTP）=====
+
+async def get_current_user(http_request: Request) -> "auth.UserContext":
+    """解析当前用户。AUTH_ENABLED=false 时恒返回匿名（行为等同 v6.x）。"""
+    return await auth.get_current_user(http_request.headers.get("authorization"))
+
+
+async def require_user(user: "auth.UserContext" = Depends(get_current_user)) -> "auth.UserContext":
+    """要求登录。认证关闭时不拦截（保持开关语义一致）。"""
+    if config.AUTH_ENABLED and user.is_anonymous:
+        raise HTTPException(status_code=401, detail="需要登录后操作")
+    return user
+
+
+# 允许上传的简历扩展名（两处上传端点共用，避免一边改了另一边漏）
+_ALLOWED_UPLOAD_EXT = (".pdf", ".docx", ".txt")
+
+
+async def assert_session_owner(session_id: str, user: "auth.UserContext") -> None:
+    """会话归属断言。
+
+    **一律返回 404 而非 403**：403 会暴露"这个 session_id 存在，只是你没权限"，
+    攻击者可据此枚举有效会话 id。404 让"不存在"与"无权访问"无法区分。
+    """
+    if not config.AUTH_ENABLED:
+        return
+    if not await auth.can_access_session(user, session_id):
+        raise HTTPException(status_code=404, detail="会话不存在或无权访问")
+
 
 # ===== 全局服务状态 =====
 llm_client = LLMClient(provider=config.AI_PROVIDER)
@@ -243,10 +284,79 @@ async def voice_asr(request: Request, file: UploadFile = File(...)):
 
 # ===== 会话管理 =====
 
+# ===== v7.0: 认证端点 =====
+
+@app.post("/api/auth/register", response_model=TokenResponse, status_code=201)
+@limiter.limit(config.RATE_LIMIT_SESSION)
+async def register(req: RegisterRequest, request: Request = None):
+    """注册并直接签发 token。
+
+    注意参数名必须是 `request`：slowapi 的限流装饰器靠参数名注入请求对象，
+    改名（如 http_request）会让它抛 `No "request" argument`。
+
+    认证关闭时仍可用（行为与开启时一致）：开关只影响"是否强制要求登录"，
+    不影响认证功能本身，前端因此无需为两种模式写两套代码。
+    """
+    user, err = await auth.register_user(
+        req.username, req.password,
+        role=req.role.value if hasattr(req.role, "value") else str(req.role),
+        display_name=req.display_name,
+    )
+    if err:
+        raise HTTPException(status_code=400, detail=err)
+    return TokenResponse(
+        access_token=auth.create_access_token(user.id, user.role, user.username),
+        expires_in_hours=config.AUTH_TOKEN_TTL_HOURS,
+        user=UserInfo(id=user.id, username=user.username, role=user.role,
+                      display_name=user.display_name, is_anonymous=False),
+    )
+
+
+@app.post("/api/auth/login", response_model=TokenResponse)
+@limiter.limit(config.RATE_LIMIT_SESSION)
+async def login(req: LoginRequest, request: Request = None):
+    """登录。用户名不存在与密码错误返回同一条消息（防用户名枚举）。"""
+    user = await auth.authenticate(req.username, req.password)
+    if not user:
+        raise HTTPException(status_code=401, detail="用户名或密码错误")
+    return TokenResponse(
+        access_token=auth.create_access_token(user.id, user.role, user.username),
+        expires_in_hours=config.AUTH_TOKEN_TTL_HOURS,
+        user=UserInfo(id=user.id, username=user.username, role=user.role,
+                      display_name=user.display_name, is_anonymous=False),
+    )
+
+
+@app.get("/api/auth/me", response_model=UserInfo)
+async def me(user: "auth.UserContext" = Depends(get_current_user)):
+    """当前身份。匿名模式（AUTH_ENABLED=false）返回 is_anonymous=true。"""
+    return UserInfo(id=user.id, username=user.username, role=user.role,
+                    display_name=user.display_name, is_anonymous=user.is_anonymous)
+
+
 @app.post("/api/sessions", response_model=SessionCreateResponse)
 @limiter.limit(config.RATE_LIMIT_SESSION)
-async def create_session(req: SessionCreateRequest, request: Request = None):
+async def create_session(req: SessionCreateRequest,
+                         user: "auth.UserContext" = Depends(require_user),
+                         request: Request = None):
     session_id = uuid.uuid4().hex[:12]
+
+    # v7.0: 简历/岗位优先从库中取（传入 id 时），未传 id 则沿用"直接传文本"的旧行为。
+    # 库内资源不存在 / 不属于当前用户 → 404（与会话归属同一口径，不泄露资源存在性）。
+    if req.resume_id:
+        row = await get_resume(req.resume_id)
+        if not row:
+            raise HTTPException(404, "简历不存在或无权访问")
+        if config.AUTH_ENABLED and not user.is_anonymous and row.get("owner_id") != user.id:
+            raise HTTPException(404, "简历不存在或无权访问")
+        req.resume_text = row.get("raw_text") or ""
+    if req.position_id:
+        row = await get_position(req.position_id)
+        if not row:
+            raise HTTPException(404, "岗位不存在或无权访问")
+        if config.AUTH_ENABLED and not user.is_anonymous and row.get("owner_id") != user.id:
+            raise HTTPException(404, "岗位不存在或无权访问")
+        req.jd_text = row.get("jd_text") or ""
 
     # 解析简历
     resume_text = ""
@@ -321,7 +431,10 @@ async def create_session(req: SessionCreateRequest, request: Request = None):
 
     await save_session(session_id, style=req.style or "friendly",
                        resume_filename="inline", jd_text=jd_final,
-                       resume_text=resume_text)
+                       resume_text=resume_text,
+                       owner_id=user.id,              # v7.0 归属（匿名模式下为 None）
+                       resume_id=req.resume_id,       # v7.0 关联简历库（可空）
+                       position_id=req.position_id)   # v7.0 关联岗位库（可空）
 
     # v6.5: 公司风格层 —— 显式选择 > JD 关键词自动匹配 > 不启用。
     # "none" 为前端明确不启用的哨兵值（与空串的"自动匹配"区分）；
@@ -397,25 +510,157 @@ async def upload_resume(request: Request, file: UploadFile = File(...)):
     if len(content) > config.MAX_UPLOAD_BYTES:
         raise HTTPException(413, f"文件过大，上限 {config.MAX_UPLOAD_BYTES // 1024 // 1024}MB")
 
-    allowed_ext = (".pdf", ".docx", ".txt")
     if not file.filename:
         raise HTTPException(400, "缺少文件名")
     ext = file.filename.lower().rsplit(".", 1)[-1]
-    if f".{ext}" not in allowed_ext:
-        raise HTTPException(400, f"不支持的文件格式: {ext}。支持 {allowed_ext}")
+    if f".{ext}" not in _ALLOWED_UPLOAD_EXT:
+        raise HTTPException(400, f"不支持的文件格式: {ext}。支持 {_ALLOWED_UPLOAD_EXT}")
 
     text = parse_resume(content, filename=file.filename)
     return {"filename": file.filename, "text": text[:5000], "length": len(text)}
 
 
+# ===== v7.0: 简历库 / 岗位库（可复用输入资产）=====
+#
+# 这两个实体的意义在"跨会话复用"：同一份简历想练第二场不用重新上传、重新解析
+# （解析要调 LLM）。岗位同理——JD 不必每次粘贴。
+
+def _assert_owner(row: Optional[dict], user: "auth.UserContext") -> None:
+    """归属断言：他人的资源一律 404（不泄露存在性），老数据 owner=NULL 时同样拒绝。"""
+    if not row:
+        raise HTTPException(404, "资源不存在或无权访问")
+    if config.AUTH_ENABLED and not user.is_anonymous and row.get("owner_id") != user.id:
+        raise HTTPException(404, "资源不存在或无权访问")
+
+
+@app.get("/api/resumes")
+async def api_list_resumes(user: "auth.UserContext" = Depends(require_user)):
+    """列表不含 raw_text（可能上万字符，N 条会把响应撑到几 MB）。"""
+    return {"resumes": await list_resumes(owner_id=auth.ownership_filter(user))}
+
+
+@app.post("/api/resumes/upload", status_code=201)
+@limiter.limit(config.RATE_LIMIT_UPLOAD)
+async def upload_resume_to_library(file: UploadFile = File(...),
+                                  user: "auth.UserContext" = Depends(require_user),
+                                  request: Request = None):
+    """上传简历并写入简历库。
+
+    为什么不复用 /api/sessions/upload：那个接口为兼容既有前端把文本截断到 5000 字。
+    截断用于"临时上传后立刻开练"尚可，用于**入库**则不可接受 —— 截断是静默的，
+    用户下次选用这份简历时看不到任何异常，但 LLM 看到的简历是不完整的，
+    出题质量随之下降且无从归因。
+    """
+    content = await file.read()
+    if len(content) > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"文件过大，上限 {config.MAX_UPLOAD_BYTES // 1024 // 1024}MB")
+    if not file.filename:
+        raise HTTPException(400, "缺少文件名")
+    ext = file.filename.lower().rsplit(".", 1)[-1]
+    if f".{ext}" not in _ALLOWED_UPLOAD_EXT:
+        raise HTTPException(400, f"不支持的文件格式: {ext}。支持 {_ALLOWED_UPLOAD_EXT}")
+
+    raw_text = parse_resume(content, filename=file.filename)
+    if not raw_text or not raw_text.strip():
+        raise HTTPException(400, "未能从文件中提取到文本，请确认文件内容")
+    resume_id = uuid.uuid4().hex[:12]
+    title = file.filename.rsplit(".", 1)[0] or "未命名简历"
+    await save_resume(resume_id, title=title, raw_text=raw_text,
+                      owner_id=user.id, filename=file.filename)
+    row = await get_resume(resume_id)
+    row.pop("raw_text", None)   # 回执不需要回传全文
+    return {"resume": row}
+
+
+@app.post("/api/resumes", status_code=201)
+async def api_create_resume(req: ResumeCreateRequest,
+                            user: "auth.UserContext" = Depends(require_user)):
+    resume_id = uuid.uuid4().hex[:12]
+    await save_resume(
+        resume_id, title=req.title.strip() or "未命名简历", raw_text=req.raw_text,
+        owner_id=user.id, filename=req.filename, parsed_json=req.parsed_json,
+    )
+    row = await get_resume(resume_id)
+    row.pop("raw_text", None)
+    return {"resume": row}
+
+
+@app.get("/api/resumes/{resume_id}")
+async def api_get_resume(resume_id: str,
+                         user: "auth.UserContext" = Depends(require_user)):
+    _assert_owner(await get_resume(resume_id), user)
+    return {"resume": await get_resume(resume_id)}
+
+
+@app.patch("/api/resumes/{resume_id}")
+async def api_update_resume(resume_id: str, req: ResumeUpdateRequest,
+                            user: "auth.UserContext" = Depends(require_user)):
+    _assert_owner(await get_resume(resume_id), user)
+    await update_resume(resume_id, title=req.title, parsed_json=req.parsed_json)
+    row = await get_resume(resume_id)
+    row.pop("raw_text", None)
+    return {"resume": row}
+
+
+@app.delete("/api/resumes/{resume_id}")
+async def api_delete_resume(resume_id: str,
+                            user: "auth.UserContext" = Depends(require_user)):
+    _assert_owner(await get_resume(resume_id), user)
+    await delete_resume(resume_id)
+    return {"ok": True}
+
+
+@app.get("/api/positions")
+async def api_list_positions(user: "auth.UserContext" = Depends(require_user)):
+    return {"positions": await list_positions(owner_id=auth.ownership_filter(user))}
+
+
+@app.post("/api/positions", status_code=201)
+async def api_create_position(req: PositionCreateRequest,
+                              user: "auth.UserContext" = Depends(require_user)):
+    position_id = uuid.uuid4().hex[:12]
+    await save_position(
+        position_id, title=req.title.strip() or "未命名岗位", jd_text=req.jd_text,
+        owner_id=user.id, department=req.department,
+    )
+    return {"position": await get_position(position_id)}
+
+
+@app.get("/api/positions/{position_id}")
+async def api_get_position(position_id: str,
+                           user: "auth.UserContext" = Depends(require_user)):
+    _assert_owner(await get_position(position_id), user)
+    return {"position": await get_position(position_id)}
+
+
+@app.patch("/api/positions/{position_id}")
+async def api_update_position(position_id: str, req: PositionUpdateRequest,
+                              user: "auth.UserContext" = Depends(require_user)):
+    _assert_owner(await get_position(position_id), user)
+    await update_position(position_id, title=req.title, jd_text=req.jd_text,
+                          department=req.department)
+    return {"position": await get_position(position_id)}
+
+
+@app.delete("/api/positions/{position_id}")
+async def api_delete_position(position_id: str,
+                              user: "auth.UserContext" = Depends(require_user)):
+    _assert_owner(await get_position(position_id), user)
+    await delete_position(position_id)
+    return {"ok": True}
+
+
 @app.get("/api/sessions")
-async def api_list_sessions():
-    sessions = await list_sessions()
+async def api_list_sessions(user: "auth.UserContext" = Depends(require_user)):
+    """v7.0: 按归属过滤。匿名模式（AUTH_ENABLED=false）返回全部，等同 v6.x。"""
+    sessions = await list_sessions(owner_id=auth.ownership_filter(user))
     return {"sessions": sessions}
 
 
 @app.get("/api/sessions/{session_id}")
-async def api_get_session(session_id: str):
+async def api_get_session(session_id: str,
+                          user: "auth.UserContext" = Depends(require_user)):
+    await assert_session_owner(session_id, user)   # 越权/不存在一律 404
     session = await get_session(session_id)
     if not session:
         raise HTTPException(404, "会话不存在")
@@ -429,7 +674,10 @@ async def api_get_session(session_id: str):
 
 @app.post("/api/interview/{session_id}/mode", response_model=ModeSwitchResponse)
 @limiter.limit(config.RATE_LIMIT_SESSION)
-async def switch_interview_mode(session_id: str, req: ModeSwitchRequest, request: Request = None):
+async def switch_interview_mode(session_id: str, req: ModeSwitchRequest,
+                                 user: "auth.UserContext" = Depends(require_user),
+                                 request: Request = None):
+    await assert_session_owner(session_id, user)
     async with _session_lock:
         session = active_sessions.get(session_id)
     if not session:
@@ -446,8 +694,68 @@ async def switch_interview_mode(session_id: str, req: ModeSwitchRequest, request
     )
 
 
+# ===== v7.0: 报告分享（招聘端只读入口）=====
+#
+# 三个端点的权限口径：
+#   POST   /api/sessions/{id}/share    需登录 + 会话归属（只有本人能分享自己的报告）
+#   GET    /api/sessions/{id}/shares   需登录 + 会话归属
+#   DELETE /api/shares/{token}         需登录 + 创建者匹配
+#   GET    /api/shared/{token}         **免登录** —— 拿链接的是外部 HR，不该被要求注册
+# 免登录读取的安全性由"高熵随机 token + 只存摘要 + 可撤销 + 可过期"保证，
+# 而不是靠"知道链接的人是谁"。
+
+@app.post("/api/sessions/{session_id}/share", status_code=201)
+async def create_share(session_id: str, req: ShareCreateRequest,
+                       user: "auth.UserContext" = Depends(require_user)):
+    await assert_session_owner(session_id, user)
+    # 先判会话存在（404，与归属同一口径），再判报告存在（400，属用法错误）。
+    # 顺序不能反，否则"会话不存在"会被报成 400，泄露了与越权场景不同的响应特征。
+    if not await get_session(session_id):
+        raise HTTPException(404, "会话不存在或无权访问")
+    if not await get_report(session_id):
+        raise HTTPException(400, "该会话还没有生成报告，无法分享")
+    link = await share_access.create_share_link(
+        session_id, created_by=user.id, include_detail=req.include_detail,
+        expires_days=req.expires_days)
+    # 明文 token 只在这一次响应中出现，之后无法再从库中还原
+    return {"share": link, "url": f"/share/{link['token']}"}
+
+
+@app.get("/api/sessions/{session_id}/shares")
+async def list_shares(session_id: str,
+                      user: "auth.UserContext" = Depends(require_user)):
+    await assert_session_owner(session_id, user)
+    return {"shares": await share_access.list_share_links(session_id)}
+
+
+@app.delete("/api/shares/{token}")
+async def revoke_share(token: str,
+                       user: "auth.UserContext" = Depends(require_user)):
+    try:
+        await share_access.revoke_share_link(token, user.id)
+    except share_access.ShareAccessError as e:
+        raise HTTPException(e.status_code, str(e))
+    return {"ok": True}
+
+
+@app.get("/api/shared/{token}")
+async def read_shared_report(token: str):
+    """免登录只读。任何不合法情况统一 404 —— 不区分"不存在/已撤销/已过期"。
+
+    统一措辞是有意的：若三者的响应不同，攻击者就能用响应差异枚举有效令牌。
+    """
+    try:
+        payload = await share_access.resolve_shared_report(token)
+    except share_access.ShareAccessError as e:
+        raise HTTPException(e.status_code, str(e))
+    return payload
+
+
 @app.get("/api/reports/{session_id}")
-async def api_get_report(session_id: str):
+async def api_get_report(session_id: str,
+                         user: "auth.UserContext" = Depends(require_user)):
+    """报告含完整的简历事实与逐题诊断，是隐私敏感度最高的端点，必须校验归属。"""
+    await assert_session_owner(session_id, user)
     report = await get_report(session_id)
     if not report:
         raise HTTPException(404, "报告不存在")
@@ -727,8 +1035,10 @@ _REPORT_HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 @app.get("/api/reports/{session_id}/export.html")
-async def export_report_html(session_id: str):
+async def export_report_html(session_id: str,
+                             user: "auth.UserContext" = Depends(require_user)):
     """导出复盘报告 HTML（Markdown 渲染 + 打印样式，浏览器打印即得 PDF）"""
+    await assert_session_owner(session_id, user)
     try:
         try:
             import markdown as _md
@@ -1165,8 +1475,41 @@ def _answer_texts(session) -> list[str]:
     return texts
 
 
+async def _mark_flow(session_id: str, session, state: "FlowState") -> None:
+    """v7.0: 记录流程位置并落库。
+
+    为什么单独封装：落库是"锦上添花"的能力，绝不能因为它失败而中断面试。
+    所以这里吞掉所有异常，只记 debug 日志 —— 面试可用性优先于进度可观测性。
+
+    为什么不做断点续答：那需要把 InterviewSession 的全部字段（轮次配置、
+    诊断历史、追问状态、难度调度器……）序列化并从 DB 重建，改动面与风险都
+    远大于收益。当前只保证"流程位置可追溯、答题进度不因重启归零"。
+    """
+    try:
+        session.set_flow_state(state)
+        await update_session_flow(session_id, state.value, session.answered_count)
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"[flow] 流程状态落库失败 session={session_id} state={state}: {e}")
+
+
 @app.websocket("/ws/interview/{session_id}")
-async def ws_interview(websocket: WebSocket, session_id: str):
+async def ws_interview(websocket: WebSocket, session_id: str,
+                       token: str = Query(default="")):
+    """v7.0: 握手阶段校验连接者身份。
+
+    为什么 token 走 query 参数：浏览器的 WebSocket API 不支持自定义请求头，
+    Sec-WebSocket-Protocol 子协议又要求服务端回显，这里用它反而更绕。
+
+    为什么在 accept() 之前校验：`close()` 必须在握手未完成时调用才能带上
+    自定义关闭码；一旦 accept 过再 close，浏览器只收得到 1000（正常关闭），
+    前端就无法区分"会话不存在"与"没有权限"。
+    """
+    user = await auth.resolve_ws_user(token)
+    if not await auth.can_access_session(user, session_id):
+        logger.warning(f"[ws] 拒绝未授权连接 session={session_id} user={user.id}")
+        await websocket.close(code=4001, reason="unauthorized")
+        return
+
     await websocket.accept()
     async with _session_lock:
         session = active_sessions.get(session_id)
@@ -1253,6 +1596,9 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                 q = session.current_question
                 if not isinstance(q, dict):
                     break
+                # v7.0: 出题即标记"等待回答"并落库 —— 让进程重启后仍能看出
+                # 这场面试停在哪一题（注意：只落进度，不做断点续答）。
+                _mark_flow(session_id, session, FlowState.WAITING_ANSWER)
                 await websocket.send_json({
                     "type": "question",
                     "data": {
@@ -1452,6 +1798,7 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                     # v2.6: 追问已由诊断一次性产出，无需二次 LLM 调用
                     if session.should_follow_up(answer_text, diag):
                         follow_up_q = await session.generate_follow_up(diag)
+                        _mark_flow(session_id, session, FlowState.GENERATING_FOLLOW_UP)
                         await websocket.send_json({
                             "type": "follow_up",
                             "data": {
@@ -1492,6 +1839,7 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                                 fu_text,
                                 (fu_msg.get("data", {}) or {}).get("thinking_seconds", 0) or 0,
                             )
+                            _mark_flow(session_id, session, FlowState.DECIDING_NEXT)
                             await websocket.send_json({
                                 "type": "follow_up_received",
                                 "data": {"message": "补充回答已记录"}
@@ -1550,8 +1898,10 @@ async def ws_interview(websocket: WebSocket, session_id: str):
 
             # 推进到下一轮
             session.advance_round()
+            _mark_flow(session_id, session, FlowState.ADVANCING_ROUND)
 
         # 3. 生成报告
+        _mark_flow(session_id, session, FlowState.FINISHED)
         report = session.build_report()
         await save_report(session_id, report)
         await update_session_status(session_id, "completed")
@@ -1607,6 +1957,27 @@ async def ws_interview(websocket: WebSocket, session_id: str):
         # v3.1 整改：WS 结束（正常完成/断开/异常）一律清理会话引用，避免 active_sessions 内存泄漏
         async with _session_lock:
             active_sessions.pop(session_id, None)
+
+
+# ===== v7.0: 招聘端分享页（独立入口）=====
+# 必须注册在静态挂载之前：/share/{token} 是业务路由，不是静态文件，
+# 若被 StaticFiles 先接管就会 404。
+@app.get("/share/{token}")
+async def share_page(token: str):
+    """返回分享页 HTML。
+
+    页面本身不含任何报告数据 —— 数据由前端拿 token 再去请求 /api/shared/{token}。
+    这样"页面"与"数据"的权限口径可以各自独立演进：
+    页面谁都能拿，数据过不过得了关由接口决定。
+    """
+    dist_html = os.path.join("frontend", "dist", "share.html")
+    src_html = os.path.join("frontend", "share.html")
+    path = dist_html if os.path.isfile(dist_html) else src_html
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return Response(content=f.read(), media_type="text/html; charset=utf-8")
+    except OSError:
+        raise HTTPException(500, "分享页模板缺失")
 
 
 # ===== 静态文件 =====

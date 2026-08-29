@@ -1,6 +1,62 @@
 # 变更日志（CHANGELOG）
 
-> 记录 v2 → v6.6 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+> 记录 v2 → v7.0 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+
+---
+
+## v7.0 双端平台化：认证与资源归属 + 三实体 + 报告分享 + 流程状态显式化（2026-08-29）
+
+> 本轮把项目定位从"单端课程项目"转向"工程化平台"（DC-06）：求职者自主练习的产品命题**不变**，在外围加一层"身份与归属"，让同一套诊断内核可以服务"招聘者只读查看报告"这第二端。诊断链路（五维/双 Agent/追问）零改动。设计依据来自对 Gua-AI-interview 的深度研读（`docs/Gua-AI-interview-深度研读.md`）。
+
+### 1. 认证与资源归属（`backend/auth.py`，L2 新增）
+
+- **分层落点**：认证刻意独立成 `auth.py` 而非塞进 `security.py`——后者定性是"面试回答内容的启发式检查"，与"密码哈希/JWT"是两种职责，混用会让 "security" 一词指两件事。已登记 `.importlinter` L2 行，`run.py lint` 强制。
+- **可关闭开关（回滚承诺）**：`AUTH_ENABLED=false`（默认）时 `get_current_user` 恒返回匿名身份、所有归属过滤跳过，**行为与 v6.x 完全一致**——`tests/test_api.py::TestAuthIntegration::test_disabled_matches_legacy_behavior` 是这条承诺的回归底线。
+- **安全设计**：bcrypt 哈希（自带盐，同密码两次哈希必不同）；JWT HS256，密钥优先取 `AUTH_SECRET` 环境变量，缺省生成并持久化到 `data/.auth_secret`（避免重启后所有 token 失效）；登录失败不区分"用户名不存在"与"密码错误"（防枚举），用户不存在时也执行一次哈希校验（防计时侧信道）；**越权一律 404 而非 403**——403 会暴露"该 id 存在"。
+- **WebSocket 握手校验**：token 走 query 参数（浏览器 WS API 不支持自定义请求头），在 `accept()` **之前**校验，失败 `close(4001)`——消除 CHARTER 披露的"WS 无身份校验"局限。前端 `createInterviewWS` 在每次重连时重新读 token，收到 4001 停止重连。
+- **归属语义**：会话/简历/岗位按 `owner_id` 归属；存量数据（owner=NULL）在认证开启后对任何登录者不可见，但**数据未丢**（关掉开关仍可查看）。
+- **遗留坑记录**：slowapi 的 `@limiter.limit` 靠**参数名** `request` 注入请求对象——改名（如 `http_request`）会让全部限流端点在启动期抛 `No "request" argument`。
+
+### 2. 简历库 / 岗位库（可复用输入资产）
+
+- 简历此前**不落库**（每次开练重新上传、重新调 LLM 解析）；岗位 JD 每次重新粘贴。新增 `resumes` / `positions` 两张表（`CREATE TABLE IF NOT EXISTS`，老库自动生效），CRUD + 归属过滤沿用"一个可空 owner_id 参数"的统一约定。
+- `sessions` 表加列走 `_ensure_owner_columns`（照抄 `_ensure_weakness_columns` 的 PRAGMA+ALTER 范式）。**SQLite 的 `ALTER TABLE ADD COLUMN` 不支持 `REFERENCES`**，owner_id 不带外键，完整性由应用层保证——这是硬限制，已在注释中写明。
+- 上传入库走**新端点** `POST /api/resumes/upload`（不截断）：旧的 `/api/sessions/upload` 为兼容前端截断到 5000 字，入库场景沿用会静默丢失内容，且截断发生在用户看不见的地方。旧端点行为原样保留（有回归测试钉住）。
+- 面试面板新增"来源切换"：库内选用 / 粘贴上传。**库只是填充器**——选中后把文本写进同一个编辑框，用户手改即脱离库关联（提交内容以编辑框为准，避免"选了 A 简历却发出去手改内容且仍标记成 A"）。
+
+### 3. 报告分享（招聘端只读入口）
+
+- **凭据模型**：token 为随机高熵串（`secrets.token_urlsafe`），**库里只存 SHA-256 摘要**——库泄露不等于链接泄露。明文只在签发响应中出现一次。
+- **免登录只读**：`GET /api/shared/{token}` 无需鉴权（拿链接的是外部 HR）。"不存在 / 已撤销 / 已过期"对外**统一 404 与统一措辞**——响应差异会让攻击者枚举有效令牌。`share.html` 为独立入口（不套主应用外壳，HR 不应看到求职者的私人面板），页面带 `noindex`。
+- **输出侧脱敏**：手机号/邮箱/身份证/QQ 微信号在**构建分享载荷时**打码（不可逆，故只能在给外人看的那一刻做；原始回答仍完整保留给本人复盘）。逐题问答**默认不公开**（`include_detail=False`）——逐字答案是夹带隐私风险最高的部分。
+- **诚实标注**：分享载荷逐题明细带 `assisted` 标记（该题是否借助引导完成），让读者自己判断分数成色。
+- **列表不含 token**（哪怕是摘要）：凭据不进列表接口；撤销只对"本次生成的链接"开放（持有明文的场景）。
+
+### 4. 面试流程状态显式化（`backend/interview_engine/flow.py`，L3 新增）
+
+- 把"接下来该做什么"从六个分散的实例方法（should_follow_up / has_more_questions_in_round / check_round_quality / should_add_extra_question / is_closing_round / advance_round）收敛为**纯函数 `decide_next(FlowSnapshot) -> FlowDecision`**：决策输入是不可变快照，输出是动作+目标状态+理由。分支判定第一次可以被纯函数级单测覆盖（`tests/test_flow.py`），不依赖会话对象/LLM 桩。
+- 判定顺序即优先级，其中两条"看似显而易见实则踩过坑"的顺序被显式固化：连续不会答的保护性干预**排在追问上限之前**（否则恰好被第三次追问拦掉）；收尾轮强控**排在追问信号之前**。
+- `InterviewSession.snapshot(**overrides)` 支持"预演"——临时改输入看会怎么决策，不动会话状态。
+- **流程位置落库**：出题→`waiting_answer`、追问→`generating_follow_up`、推进→`advancing_round`、结束→`finished`，由 `_mark_flow` 统一封装（**吞异常只记日志**——进度可观测是锦上添花，绝不能因落库失败中断面试）。
+- **明确不做断点续答**：那需要把 InterviewSession 全部字段序列化并从 DB 重建，改动面与风险远大于收益。当前保证"流程位置可追溯、答题进度不因重启归零"，恢复能力列入 README 已知局限。
+- **顺手修正一处语义缺陷**：`check_round_quality` 的 passed 是纯数值比较，未答题时 avg=0 而部分轮次（破冰环节）threshold 也是 0，会得到"未答一题却判定通过"。快照里补上"必须有答题记录"的前提（只影响新决策，旧 `advance_round` 走另一条路径）。
+
+### 5. 诊断评分强制引用原话（evidence 引用）
+
+- 借鉴 Gua-AI-interview 的 evidenceQuote：每个维度除 score/comment 外，必须输出 `quote`——从候选人回答中**原样摘录**的支撑片段（≤30 字，不得改写/概括/编造）。把主观打分锚定到文本证据，让"分数怎么来的"可复核。
+- 字段名用 `quote` 而非 `evidence`：项目里已有"简历证据包（evidence package）"概念（注入给模型的素材），两者方向相反，同名会造成"证据"一词指两件事。
+- 容错：模型未返回 quote 一律补空串——引用是增强项，缺失不阻断诊断（`tests/test_diagnosis_engine.py::TestQuoteEvidence`）。
+
+### 6. 测试与文档
+
+- 测试 **559 → 963**（+404）：test_auth（哈希/JWT/开关回退/归属隔离）、test_entities（三实体 CRUD/归属/上传完整性）、test_share（令牌/过期/撤销/脱敏/只读）、test_flow（纯函数分支 + 与既有逻辑一致性守护）。
+- 全量 963 passed；`run.py lint` 分层契约通过。
+- CHARTER：写入 DC-06；"无认证/WS 无身份校验"两条已知局限从"刻意取舍"改为"已解决"；范围纪律同步修订。
+
+### 范围纪律
+
+- 本轮新增：认证层、三实体（简历/岗位；题库已存在不动）、分享链接、流程状态化、quote 引用。
+- 明确不做（与 DC-06 一致）：PostgreSQL / Kafka 异步评估 / 防作弊（切屏/眼神，与"自主练习"定位冲突）/ Python 版 LangGraph / 断点续答。
 
 ---
 

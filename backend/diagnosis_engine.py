@@ -73,13 +73,23 @@ DIAGNOSTICIAN_SYSTEM_PROMPT = """你是一位严格的面试回答诊断师。
 - "next_question"：回答合格或无需深挖，可直接进入下一题（follow_up_question 为空）；
 - "complete"：回答已达标且当前议题可以收束（follow_up_question 为空）。
 
+【原话引用要求（v7.0）】
+每个维度除 score/comment 外，必须给出 quote —— 从候选人回答中**原样摘录**
+支撑你这一维度评分的一小段原话（不超过 30 字，不得改写、不得概括、不得编造）。
+- 这是把主观打分锚定到文本证据上的手段：没有依据的分数等于感觉，无法复核。
+- 若该维度确实在回答中找不到任何对应内容（例如回答完全没提数据），quote 输出空字符串，
+  并在 comment 里说明"回答中未涉及"，此时 score 应显著偏低（≤2 分）。
+- 严禁摘录候选人回答之外的任何内容（不要从问题、JD 或你自己的评语里取词）。
+- 字段名用 quote 而非 evidence：本系统另有"简历证据包"（注入给你的简历片段），
+  quote 专指**你输出的评分依据**，二者方向相反，不要混淆。
+
 输出必须是严格的 JSON 格式：
 {{
-  "star_completeness": {{"score": 1-5, "comment": "评语"}},
-  "quantification": {{"score": 1-5, "comment": "评语"}},
-  "logic_coherence": {{"score": 1-5, "comment": "评语"}},
-  "job_relevance": {{"score": 1-5, "comment": "评语"}},
-  "professional_depth": {{"score": 1-5, "comment": "评语"}},
+  "star_completeness": {{"score": 1-5, "comment": "评语", "quote": "候选人原话摘录（≤30字，无则空串）"}},
+  "quantification": {{"score": 1-5, "comment": "评语", "quote": "..."}},
+  "logic_coherence": {{"score": 1-5, "comment": "评语", "quote": "..."}},
+  "job_relevance": {{"score": 1-5, "comment": "评语", "quote": "..."}},
+  "professional_depth": {{"score": 1-5, "comment": "评语", "quote": "..."}},
   "weakest_dimension": "五个维度 key 中得分最低的那个",
   "follow_up_question": "针对薄弱点的追问，无需追问时为空字符串",
   "next_action": "follow_up / next_question / complete 三选一",
@@ -325,11 +335,11 @@ def _extract_json(raw: str) -> dict | None:
 def _parse_diagnosis_fallback(raw_text: str) -> dict:
     """当 JSON 解析失败时，返回可识别的降级结构。"""
     return {
-        "star_completeness": {"score": 0, "comment": "无法解析"},
-        "quantification": {"score": 0, "comment": "无法解析"},
-        "logic_coherence": {"score": 0, "comment": "无法解析"},
-        "job_relevance": {"score": 0, "comment": "无法解析"},
-        "professional_depth": {"score": 0, "comment": "无法解析"},
+        "star_completeness": {"score": 0, "comment": "无法解析", "quote": ""},
+        "quantification": {"score": 0, "comment": "无法解析", "quote": ""},
+        "logic_coherence": {"score": 0, "comment": "无法解析", "quote": ""},
+        "job_relevance": {"score": 0, "comment": "无法解析", "quote": ""},
+        "professional_depth": {"score": 0, "comment": "无法解析", "quote": ""},
         "weakest_dimension": "",
         "follow_up_question": "",
         "overall_score": 0,
@@ -360,6 +370,9 @@ def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None,
             except (TypeError, ValueError):
                 score = 0.0
             comment = str(item.get("comment", ""))
+            # v7.0 quote：模型输出的评分依据（候选人原话摘录）。
+            # 缺失一律填空串——引用是增强项，不该因此阻断整份诊断。
+            quote = str(item.get("quote", "") or "")
         else:
             # 兼容 LLM 直接给数字的情况
             try:
@@ -367,8 +380,9 @@ def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None,
             except (TypeError, ValueError):
                 score = 0.0
             comment = ""
+            quote = ""
         dimensions[key] = score
-        details[key] = {"score": score, "comment": comment}
+        details[key] = {"score": score, "comment": comment, "quote": quote}
 
     # v6.3: 规则化加减分项 —— 在模型分之上叠加确定性行为信号修正。
     # 顺序：先修正维度分，再算加权总分，保证 overall 与最终 dimensions 口径一致。

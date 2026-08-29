@@ -33,6 +33,14 @@ from ..dimension_weights import (
     weighted_score,
 )
 from ..resume_retriever import build_evidence_package, content_hash, ResumeRetriever
+from .flow import (                      # v7.0 流程状态与推进决策（纯逻辑，无 IO）
+    FlowDecision,
+    FlowSnapshot,
+    FlowState,
+    NextAction,
+    decide_next,
+    with_overrides,
+)
 from ..company_profiles import company_role_block, company_round_block  # v6.5 公司风格层
 from ..interview_skills import SkillContext, default_registry  # v6.5 面试技能（有状态多轮）
 from ..difficulty import DifficultyScheduler  # v6.5 动态难度（轮内自适应）
@@ -152,6 +160,12 @@ class InterviewSession:
         self.active_skill = ""
         self.skill_ctx: SkillContext | None = None
         self.skill_history: list[dict] = []
+
+        # v7.0: 流程位置（显式"程序计数器"）。
+        # 价值不在"多一个字段"，而在：面试进行到哪一步不再需要从
+        # "最后一题有没有答""本轮第几题"反推，可以直接读出，也能落库供重启后追溯。
+        self.flow_state: FlowState = FlowState.INIT
+        self.answered_count: int = 0
 
         # v6.5: 动态难度（只管"这道题出多难"，不管"该进哪个阶段"——
         # 阶段推进归 v6.2 的轮次计数工程强控，难度信号不得反向干预）。
@@ -321,6 +335,85 @@ class InterviewSession:
             return True
         info = self.current_round_info()
         return bool(info.get("closing")) or self.current_round >= len(self.rounds) - 1
+
+    # ===== v7.0: 流程位置（显式状态机）=====
+
+    def snapshot(self, **overrides) -> FlowSnapshot:
+        """构造推进决策所需的纯数据快照。
+
+        为什么是方法而不是直接读 self：快照是**决策输入**的边界，
+        把它显式化之后，decide_next 才可能脱离会话对象被单测。
+
+        overrides 用于"预演"——调用方可以临时改某个输入（例如把诊断结果传进来），
+        而不必真的改动会话状态。
+        """
+        cfg = self.current_round_info()
+        diag = self.round_diagnoses[-1] if self.round_diagnoses else None
+        quality = self.check_round_quality()
+
+        # check_round_quality 的 passed 是纯数值比较（avg >= threshold）。
+        # 当本轮还没答过题时 avg=0，而部分轮次的 advance_threshold 也是 0
+        # （例如"破冰环节"不设门槛），此时会得到"未答一题却判定通过"。
+        # 这里补上"必须有答题记录"的前提 —— 语义上"通过"只能建立在答题之上。
+        # 该修正只影响新的纯函数决策，旧的 advance_round 走的是另一条路径。
+        answered = len(self.round_answers)
+        round_passed = bool(quality.get("passed")) and answered > 0
+        avg_below = round_passed is False
+
+        snap = FlowSnapshot(
+            flow_state=self.flow_state,
+            current_round=self.current_round,
+            total_rounds=len(self.rounds),
+            is_closing_round=self.is_closing_round(),
+            question_idx=self.current_question_idx,
+            questions_in_round=len(self.round_questions),
+            answered_in_round=len(self.round_answers),
+            extra_added=self.extra_questions_added,
+            max_extra=int(cfg.get("max_extra_questions", 0) or 0),
+            round_passed=round_passed,
+            below_min_questions=(
+                answered < int(cfg.get("min_questions", 1) or 1)
+            ),
+            follow_up_count=self.follow_up_count,
+            follow_up_max=config.FOLLOW_UP_MAX_COUNT,
+            has_follow_up_question=bool(
+                diag and str(diag.get("follow_up_question", "") or "").strip()
+            ),
+            next_action=(diag or {}).get("next_action"),
+            answer_too_short=(
+                len((self.last_answer_text or "").strip()) < config.FOLLOW_UP_MIN_LENGTH
+            ),
+            round_avg_below_threshold=avg_below,
+            recovery_streak=self.recovery_streak,
+            recovery_skip_threshold=RECOVERY_SKIP_THRESHOLD,
+            recovery_advice_done=self._recovery_advice_done,
+        )
+        return snap if not overrides else with_overrides(snap, **overrides)
+
+    def decide(self, **overrides) -> FlowDecision:
+        """判定下一步动作（委托给纯函数 decide_next）。"""
+        return decide_next(self.snapshot(**overrides))
+
+    def set_flow_state(self, state: FlowState, answered: int | None = None) -> None:
+        """更新流程位置。只改内存字段 —— 落库由 L4（main.py）在异步上下文中完成。
+
+        为什么不在会话内写库：session 的方法大多是同步的（供流式链路调用），
+        在这里 await 会把整个调用链都变成异步，改动面远大于收益。
+        """
+        self.flow_state = state
+        if answered is not None:
+            self.answered_count = answered
+
+    def flow_payload(self) -> dict:
+        """供接口/落库使用的流程状态摘要。"""
+        return {
+            "flow_state": self.flow_state.value
+            if isinstance(self.flow_state, FlowState) else str(self.flow_state),
+            "answered_count": self.answered_count,
+            "current_round": self.current_round,
+            "question_idx": self.current_question_idx,
+            "follow_up_count": self.follow_up_count,
+        }
 
     def closing_instruction(self) -> str:
         """返回注入出题 prompt 的内部收尾指令（非收尾阶段返回空串）。"""
@@ -604,6 +697,7 @@ class InterviewSession:
         self.round_answers.append(answer_text)
         self.last_answer_text = answer_text
         self.follow_up_count = 0  # 新题目，重置追问计数
+        self.answered_count += 1  # v7.0: 累计答题数（落库供重启后追溯）
 
         q = self.current_question
         question_text = q.get("question", "") if isinstance(q, dict) else str(q or "")
