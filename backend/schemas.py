@@ -155,6 +155,9 @@ class ShareCreateRequest(BaseModel):
     """
     include_detail: bool = Field(default=False, description="是否包含逐题问答明细")
     expires_days: int | None = Field(default=30, description="有效期天数；0 或 None 表示永久")
+    # v7.0.1: 可选，指定收件招聘者的用户名——指定后报告进入对方登录后的收件箱。
+    # 不指定则仍是无主链接（凭链接可看，不进任何收件箱）。
+    shared_with: str | None = Field(default=None, description="收件招聘者用户名（可选）")
 
 
 class WeaknessProfileItem(BaseModel):

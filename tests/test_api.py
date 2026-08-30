@@ -239,3 +239,30 @@ class TestSecurityMeasures:
         resp = client.post("/api/sessions/upload", data=huge_body,
                            headers={"content-type": "application/x-www-form-urlencoded"})
         assert resp.status_code == 413
+
+
+class TestJdUpload:
+    """v7.0.2: JD 文件上传解析（测评问题 #2，复用简历解析链路）。"""
+
+    def test_upload_jd_txt(self, client: TestClient):
+        resp = client.post("/api/upload-jd",
+                           files={"file": ("jd.txt",
+                                           "岗位：Python 后端工程师\n要求：精通 FastAPI".encode("utf-8"),
+                                           "text/plain")})
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["filename"] == "jd.txt"
+        assert "Python" in data["text"]
+        assert "FastAPI" in data["text"]
+        assert data["length"] > 0
+
+    def test_upload_jd_rejects_bad_ext(self, client: TestClient):
+        resp = client.post("/api/upload-jd",
+                           files={"file": ("jd.exe", b"x", "application/octet-stream")})
+        assert resp.status_code == 400
+        assert "不支持的文件格式" in resp.json()["detail"]
+
+    def test_upload_jd_empty_text_rejected(self, client: TestClient):
+        resp = client.post("/api/upload-jd",
+                           files={"file": ("jd.txt", b"", "text/plain")})
+        assert resp.status_code == 400

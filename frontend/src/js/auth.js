@@ -52,7 +52,9 @@ export function logout() {
     localStorage.removeItem(USER_KEY);
   } catch { /* 忽略存储异常 */ }
   renderPanel();
-  window.dispatchEvent(new CustomEvent('auth:changed'));
+  window.dispatchEvent(new CustomEvent('auth:changed', {
+    detail: { user: null, justLoggedOut: true },
+  }));
 }
 
 // ===== 与后端通信 =====
@@ -192,7 +194,11 @@ function renderAuthForm(defaultMode = 'login') {
         _user = data.user;
         toast(isLogin ? '登录成功' : '注册成功', 'success');
         renderPanel();
-        window.dispatchEvent(new CustomEvent('auth:changed'));
+        // v7.0.1: 携带身份与"刚登录"标记——app.js 据此按角色分流
+        // （招聘者 → 收件箱；求职者 → 留在原处）
+        window.dispatchEvent(new CustomEvent('auth:changed', {
+          detail: { user: _user, justLoggedIn: true },
+        }));
       } catch (err) {
         errBox.textContent = err.message || '操作失败，请重试';
         errBox.classList.remove('hidden');
@@ -276,4 +282,7 @@ export async function refreshAuthStatus() {
   await fetchMe();
   renderPanel();
   updateHeaderUser();
+  // v7.0.1: 启动时也要让 app.js 按身份分流（已登录的招聘者刷新页面后
+  // 仍应看到收件箱而不是求职者面板）。不带 justLoggedIn——刷新不算登录动作。
+  window.dispatchEvent(new CustomEvent('auth:changed', { detail: { user: _user } }));
 }

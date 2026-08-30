@@ -101,14 +101,26 @@ def _expires_at(days: Optional[int]) -> Optional[str]:
 async def create_share_link(session_id: str, created_by: Optional[str] = None,
                             include_detail: bool = False,
                             expires_days: Optional[int] = 30,
+                            shared_with: Optional[str] = None,
                             scope: str = SCOPE_REPORT_READ) -> dict:
     """签发一条分享链接。
 
     返回值里的 `token` 是明文 —— 这是**唯一一次**能拿到明文的机会（库里只存摘要），
     调用方必须当次回给前端。
+
+    shared_with（v7.0.1）：可选，指定收件招聘者的用户名。指定后该报告出现在
+    对方的收件箱里；不指定则仍是无主链接（凭链接即可看，不进任何收件箱）。
     """
     if scope not in VALID_SCOPES:
         raise ShareAccessError("不支持的分享范围", 400)
+
+    if shared_with:
+        shared_with = shared_with.strip()
+        target = await db.get_user_by_username(shared_with)
+        # 校验三点：存在 / 是招聘者。错误信息刻意不区分"不存在"与"不是招聘者"
+        # ——两者都回同一句，避免用分享接口探测哪些用户名已注册。
+        if (not target or target.get("role") != "recruiter"):
+            raise ShareAccessError("招聘者用户名不存在", 400)
 
     token = generate_token()
     row = {
@@ -117,6 +129,7 @@ async def create_share_link(session_id: str, created_by: Optional[str] = None,
         "created_by": created_by,
         "scope": scope,
         "include_detail": 1 if include_detail else 0,
+        "shared_with": shared_with or None,
         "expires_at": _expires_at(expires_days),
         "revoked": 0,
         "access_count": 0,
@@ -125,6 +138,66 @@ async def create_share_link(session_id: str, created_by: Optional[str] = None,
     }
     await db.save_share_link(row)
     return {**row, "token": token}      # 明文只出现在这一次回执里
+
+
+# ===== 招聘者收件箱（v7.0.1）=====
+
+async def recruiter_inbox(recruiter_username: str) -> list[dict]:
+    """招聘者登录后看到的"收到的报告"列表（摘要层）。
+
+    每条带 token 摘要（token_hash）——不是明文。招聘者打开报告走
+    /api/recruiter/reports/{token_hash}（需登录+归属校验），不经过
+    免登录的 /api/shared/{token}：收件箱是"登录态下的受控读取"，
+    与"凭明文链接的免登录读取"是两条独立通道，互不放大对方的风险面。
+    """
+    rows = await db.list_inbox_shares(recruiter_username)
+    out = []
+    for r in rows:
+        report_row = await db.get_report(r["session_id"])
+        if not report_row:
+            continue          # 报告还没生成（理论上分享时已校验，防御脏数据）
+        try:
+            data = _json.loads(report_row["report_json"]) if isinstance(
+                report_row.get("report_json"), str) else (report_row.get("report_json") or {})
+        except (ValueError, TypeError):
+            continue
+        session = await db.get_session(r["session_id"]) or {}
+        out.append({
+            "token_hash": r["token"],
+            "session_id": r["session_id"],
+            "shared_at": r.get("created_at"),
+            "include_detail": bool(r.get("include_detail")),
+            "access_count": r.get("access_count") or 0,
+            "overall_score": data.get("overall_avg") or 0,
+            "completed_at": report_row.get("created_at") or session.get("updated_at"),
+        })
+    return out
+
+
+async def open_inbox_report(token_hash: str, recruiter_username: str) -> dict:
+    """招聘者从收件箱打开一份报告（完整脱敏载荷）。
+
+    与 resolve_shared_report 的区别：走登录态+归属校验（shared_with=我），
+    不做"过期即拒"——收件箱里的报告是"发给我的"，过期只应限制免登录链接，
+    不应把已投递的报告从收件箱里抽走（类比：邮件链接过期了，邮件还在收件箱）。
+    """
+    row = await db.get_inbox_share(token_hash, recruiter_username)
+    if not row:
+        raise ShareAccessError()
+
+    try:
+        payload = await build_shared_payload(
+            row["session_id"], include_detail=bool(row.get("include_detail")))
+    except ShareAccessError:
+        raise
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"[share] 收件箱报告读取失败 session={row.get('session_id')}: {e}")
+        raise ShareAccessError("报告内容不可用")
+
+    payload["token_hash"] = token_hash
+    payload["shared_at"] = row.get("created_at")
+    payload["access_count"] = row.get("access_count") or 0
+    return payload
 
 
 async def get_share_link(token: str) -> Optional[dict]:
@@ -283,6 +356,8 @@ def _qa_details(qa_breakdown) -> list[dict]:
             "risk_points": [redact_pii(str(x)) for x in (q.get("risk_points") or [])],
             "real_interview_impact": redact_pii(str(q.get("real_interview_impact") or "")),
             "assisted": bool(q.get("assisted")),   # 诚实标注：这题是否借助引导完成
+            # v7.0.2: 追问回避 —— 面试官追问过但候选人跳过，分享给招聘者时同样如实披露
+            "follow_up_skipped": bool(q.get("follow_up_skipped")),
         })
     return out
 

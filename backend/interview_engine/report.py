@@ -193,6 +193,11 @@ def build_report(session) -> dict:
             # v6.3: 本题是否借助恢复/教练引导 —— 分数照记但必须标注，
             # 让读者自己判断这个分数的成色（比悄悄改分数诚实）。
             "assisted": bool(d.get("assisted", False)),
+            # v7.0.2: 追问回避标记 —— 本题面试官追问过但候选人跳过了。
+            # 不扣分（评分口径不变），但报告如实披露：真实面试中回避追问
+            # 本身就是负面信号，比"答错"更值得在复盘中看见。
+            "follow_up_skipped": bool(d.get("follow_up_skipped", False)),
+            "skipped_follow_up": d.get("skipped_follow_up", ""),
             # v6.3: 规则化加减分项（可解释：每条都带命中的原文证据）
             "score_adjustments": d.get("score_adjustments", []) or [],
         })
@@ -207,6 +212,26 @@ def build_report(session) -> dict:
                            if qa_breakdown else 0),
         "assisted_questions": [q.get("question", "") for q in assisted_items],
     }
+
+    # v7.0.2: 追问回避统计 —— 与 assistance_stats 同构。
+    # 被跳过的追问数与题单本身就是复盘信号：占比过高说明候选人在
+    # 压力性追问面前系统性退缩（真实面试里这比"答偏"更伤印象）。
+    fu_skipped_items = [q for q in qa_breakdown if q.get("follow_up_skipped")]
+    follow_up_stats = {
+        "total": len(qa_breakdown),
+        "skipped_count": len(fu_skipped_items),
+        "skipped_ratio": (round(len(fu_skipped_items) / len(qa_breakdown), 2)
+                          if qa_breakdown else 0),
+        "skipped_questions": [q.get("question", "") for q in fu_skipped_items],
+    }
+
+    # v7.0.2: 追问回避作为独立的复盘信号补进建议（不混入打分链路）。
+    if follow_up_stats["skipped_count"]:
+        suggestions = (
+            f"{suggestions}\n\n⚠️ 本场有 {follow_up_stats['skipped_count']} 次追问被跳过"
+            "：真实面试中回避追问会被视为负面信号（面试官追问通常指向薄弱处），"
+            "下次遇到追问建议先试着说点什么，哪怕不完整。"
+        )
 
     # v6.2: 思考时长统计（真实面试里"想太久"和"不假思索"都是风险信号）
     thinking_stats = {
@@ -255,6 +280,8 @@ def build_report(session) -> dict:
         "weakness_tag_summary": weakness_tag_summary,
         # v6.3: 借助引导统计 + 压力题注入情况（复盘时解释"分数是怎么来的"）
         "assistance_stats": assistance_stats,
+        # v7.0.2: 追问回避统计（跳过追问的题数 / 题单，供前端如实披露）
+        "follow_up_stats": follow_up_stats,
         "pressure_questions_injected": getattr(session, "pressure_injected", 0),
         # v6.5: 公司评估量表（session 携带目标公司风格时输出；
         # getattr 双保险：mock session / 老会话对象没有该属性时不崩）

@@ -101,7 +101,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 # ─── 请求体大小限制中间件 ───
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    _UPLOAD_PATHS = ("/api/sessions/upload", "/api/market/import")
+    _UPLOAD_PATHS = ("/api/sessions/upload", "/api/market/import", "/api/upload-jd")
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -520,6 +520,30 @@ async def upload_resume(request: Request, file: UploadFile = File(...)):
     return {"filename": file.filename, "text": text[:5000], "length": len(text)}
 
 
+@app.post("/api/upload-jd")
+@limiter.limit(config.RATE_LIMIT_UPLOAD)
+async def upload_jd(request: Request, file: UploadFile = File(...)):
+    """v7.0.2: JD 文件上传解析（测评问题 #2）。
+
+    复用简历解析链路（resume_parser 支持 PDF/TXT/DOCX），与 /api/sessions/upload
+    同款防护（限流 / 大小硬限制 / 扩展名白名单）。解析结果只回填前端 JD 文本框，
+    不入岗位库 —— 与"临时上传即开练"的简历上传同一语义。
+    """
+    content = await file.read()
+    if len(content) > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(413, f"文件过大，上限 {config.MAX_UPLOAD_BYTES // 1024 // 1024}MB")
+    if not file.filename:
+        raise HTTPException(400, "缺少文件名")
+    ext = file.filename.lower().rsplit(".", 1)[-1]
+    if f".{ext}" not in _ALLOWED_UPLOAD_EXT:
+        raise HTTPException(400, f"不支持的文件格式: {ext}。支持 {_ALLOWED_UPLOAD_EXT}")
+
+    text = parse_resume(content, filename=file.filename)
+    if not text or not text.strip():
+        raise HTTPException(400, "未能从文件中提取到文本，请确认文件内容")
+    return {"filename": file.filename, "text": text[:20000], "length": len(text)}
+
+
 # ===== v7.0: 简历库 / 岗位库（可复用输入资产）=====
 #
 # 这两个实体的意义在"跨会话复用"：同一份简历想练第二场不用重新上传、重新解析
@@ -714,11 +738,41 @@ async def create_share(session_id: str, req: ShareCreateRequest,
         raise HTTPException(404, "会话不存在或无权访问")
     if not await get_report(session_id):
         raise HTTPException(400, "该会话还没有生成报告，无法分享")
-    link = await share_access.create_share_link(
-        session_id, created_by=user.id, include_detail=req.include_detail,
-        expires_days=req.expires_days)
+    try:
+        link = await share_access.create_share_link(
+            session_id, created_by=user.id, include_detail=req.include_detail,
+            expires_days=req.expires_days, shared_with=req.shared_with)
+    except share_access.ShareAccessError as e:
+        raise HTTPException(e.status_code, str(e))
     # 明文 token 只在这一次响应中出现，之后无法再从库中还原
     return {"share": link, "url": f"/share/{link['token']}"}
+
+
+# ===== v7.0.1: 招聘者收件箱（登录态下的受控读取）=====
+#
+# 与免登录的 /api/shared/{token} 是两条独立通道：收件箱按登录身份
+# （shared_with=当前招聘者用户名）过滤，报告数据直接随接口返回，
+# 不经过"凭明文 token"的免登录端点——两条通道互不放大对方的风险面。
+
+@app.get("/api/recruiter/inbox")
+async def recruiter_inbox(user: "auth.UserContext" = Depends(require_user)):
+    """招聘者的"收到的报告"列表（摘要层）。仅 recruiter 角色可用。"""
+    if config.AUTH_ENABLED and user.role != "recruiter":
+        raise HTTPException(403, "仅招聘者账户可访问收件箱")
+    return {"reports": await share_access.recruiter_inbox(user.username)}
+
+
+@app.get("/api/recruiter/reports/{token_hash}")
+async def recruiter_open_report(token_hash: str,
+                                user: "auth.UserContext" = Depends(require_user)):
+    """招聘者打开收件箱中的一份报告（完整脱敏载荷）。仅发件指定的本人可见。"""
+    if config.AUTH_ENABLED and user.role != "recruiter":
+        raise HTTPException(403, "仅招聘者账户可访问收件箱")
+    try:
+        payload = await share_access.open_inbox_report(token_hash, user.username)
+    except share_access.ShareAccessError as e:
+        raise HTTPException(e.status_code, str(e))
+    return payload
 
 
 @app.get("/api/sessions/{session_id}/shares")
@@ -1816,7 +1870,9 @@ async def ws_interview(websocket: WebSocket, session_id: str,
                                 continue
 
                             if fu_type == "skip_follow_up":
-                                session.pending_follow_up = ""
+                                # v7.0.2: 跳过追问留痕 —— 显式标记进本题诊断，
+                                # 报告如实披露（真实面试中回避追问本身是负面信号）
+                                session.mark_follow_up_skipped(follow_up_q)
                                 await websocket.send_json({
                                     "type": "follow_up_received",
                                     "data": {"message": "已跳过追问"}

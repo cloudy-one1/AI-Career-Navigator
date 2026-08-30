@@ -20,6 +20,9 @@ from backend import share_access
 from backend.config import config as cfg
 from backend.db import get_report, init_db, save_report, save_session
 
+# 长度 ≥32 字节，满足 PyJWT 对 HS256 密钥的最低要求（RFC 7518 §3.2）
+TEST_SECRET = "test-only-secret-not-for-production-0123456789abcdef"
+
 SAMPLE_REPORT = {
     "session_id": "sess1",
     "overall_avg": 3.8,
@@ -180,6 +183,16 @@ class TestAccess:
         with pytest.raises(share_access.ShareAccessError):
             await share_access.resolve_shared_report(link["token"])
 
+    def test_qa_details_carries_follow_up_skipped(self):
+        """v7.0.2: 分享逐题明细如实带出"跳过追问"标记（与 assisted 同口径）。"""
+        details = share_access._qa_details([
+            {"index": 1, "question": "介绍一下项目", "overall_score": 3.0,
+             "follow_up_skipped": True},
+            {"index": 2, "question": "讲一个困难", "overall_score": 4.0},
+        ])
+        assert details[0]["follow_up_skipped"] is True
+        assert details[1]["follow_up_skipped"] is False
+
 
 # ===== 3. 脱敏 =====
 
@@ -310,3 +323,102 @@ class TestShareEndpoints:
         assert client.post(f"/api/shared/{token}", json={}).status_code == 405
         assert client.patch(f"/api/shared/{token}", json={}).status_code == 405
         assert client.delete(f"/api/shared/{token}").status_code == 405
+
+
+# ===== 6. 招聘者收件箱（v7.0.1 统一登录 + 身份分流）=====
+
+class TestRecruiterInbox:
+    @pytest.mark.asyncio
+    async def _make_recruiter(self, username="hr_one"):
+        from backend import auth
+        user, err = await auth.register_user(username, "password123", role="recruiter")
+        assert err is None
+        return user
+
+    @pytest.mark.asyncio
+    async def test_shared_with_valid_recruiter_enters_inbox(self):
+        await self._make_recruiter()
+        link = await share_access.create_share_link("sess1", shared_with="hr_one")
+        inbox = await share_access.recruiter_inbox("hr_one")
+        assert len(inbox) == 1
+        assert inbox[0]["token_hash"] == share_access.hash_token(link["token"])  # 摘要，非明文
+        assert inbox[0]["overall_score"] == 3.8
+        assert "token" not in inbox[0] or inbox[0].get("token") != link["token"]
+
+    @pytest.mark.asyncio
+    async def test_shared_with_unknown_username_rejected(self):
+        with pytest.raises(share_access.ShareAccessError) as e:
+            await share_access.create_share_link("sess1", shared_with="ghost_hr")
+        assert e.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_shared_with_jobseeker_rejected(self):
+        """收件人必须是招聘者——分享接口不能被用来探测/骚扰普通用户。"""
+        from backend import auth
+        await auth.register_user("plain_user", "password123")
+        with pytest.raises(share_access.ShareAccessError):
+            await share_access.create_share_link("sess1", shared_with="plain_user")
+
+    @pytest.mark.asyncio
+    async def test_inbox_is_private_to_recipient(self):
+        """收件箱按登录身份隔离：发给 A 的不出现在 B 的收件箱里。"""
+        await self._make_recruiter("hr_a")
+        await self._make_recruiter("hr_b")
+        await share_access.create_share_link("sess1", shared_with="hr_a")
+        assert len(await share_access.recruiter_inbox("hr_a")) == 1
+        assert len(await share_access.recruiter_inbox("hr_b")) == 0
+
+    @pytest.mark.asyncio
+    async def test_revoked_share_leaves_inbox(self):
+        await self._make_recruiter()
+        link = await share_access.create_share_link("sess1", shared_with="hr_one")
+        await share_access.revoke_share_link(link["token"], None)
+        assert len(await share_access.recruiter_inbox("hr_one")) == 0
+
+    @pytest.mark.asyncio
+    async def test_open_inbox_report_requires_recipient(self):
+        """打开收件箱报告必须是指定收件人本人——他人一律 404。"""
+        await self._make_recruiter("hr_a")
+        await self._make_recruiter("hr_b")
+        link = await share_access.create_share_link("sess1", shared_with="hr_a")
+
+        payload = await share_access.open_inbox_report(
+            share_access.hash_token(link["token"]), "hr_a")
+        assert payload["overall_score"] == 3.8
+
+        with pytest.raises(share_access.ShareAccessError):
+            await share_access.open_inbox_report(
+                share_access.hash_token(link["token"]), "hr_b")
+
+    @pytest.mark.asyncio
+    async def test_open_inbox_works_after_link_expiry(self):
+        """链接过期不应把已投递的报告从收件箱抽走。
+
+        过期限制的是"免登录链接"这条通道；收件箱是登录态受控读取，
+        类比：邮件链接过期了，邮件还在收件箱里。
+        """
+        await self._make_recruiter()
+        link = await share_access.create_share_link(
+            "sess1", shared_with="hr_one", expires_days=-1)
+        # 免登录通道：已过期，拒绝
+        with pytest.raises(share_access.ShareAccessError):
+            await share_access.resolve_shared_report(link["token"])
+        # 收件箱通道：正常可读
+        payload = await share_access.open_inbox_report(
+            share_access.hash_token(link["token"]), "hr_one")
+        assert payload["overall_score"] == 3.8
+
+    def test_inbox_endpoint_requires_recruiter_role(self, client):
+        """HTTP 层：jobseeker/匿名访问收件箱被拒（403/401）。"""
+        cfg.AUTH_ENABLED = True
+        cfg.AUTH_SECRET = TEST_SECRET
+        # 未登录
+        assert client.get("/api/recruiter/inbox").status_code == 401
+
+        # 求职者登录
+        client.post("/api/auth/register", json={
+            "username": "js_user", "password": "password123", "role": "jobseeker"})
+        js_token = client.post("/api/auth/login", json={
+            "username": "js_user", "password": "password123"}).json()["access_token"]
+        assert client.get("/api/recruiter/inbox",
+                          headers={"Authorization": f"Bearer {js_token}"}).status_code == 403

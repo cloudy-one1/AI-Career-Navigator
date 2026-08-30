@@ -83,13 +83,7 @@ function renderReport(data) {
   if (data.overall_score) parts.push(`总评 ${Number(data.overall_score).toFixed(1)} / 5.0`);
   $('#share-subtitle').textContent = parts.join(' · ');
 
-  const content = $('#share-content');
-  content.replaceChildren(
-    scoreCard(data),
-    dimensionCard(data),
-    strengthsCard(data),
-    data.include_detail ? qaCard(data) : detailHiddenCard(),
-  );
+  renderReportInto($('#share-content'), data);
 
   const footer = $('#share-footer');
   footer.classList.remove('hidden');
@@ -97,8 +91,24 @@ function renderReport(data) {
   expiry.textContent = data.expires_at
     ? `本链接有效期至 ${fmtDate(data.expires_at)}`
     : '本链接未设置有效期（分享者可随时撤销）';
+}
 
-  mountRadar(data);
+/**
+ * v7.0.1: 把报告主体渲染进任意容器（供招聘端收件箱复用）。
+ *
+ * 与 initSharedReport 的分工：本函数只负责"内容区"（评分/五维/摘要/逐题），
+ * 不碰分享页特有的 header/footer DOM——那些元素在主应用里不存在。
+ * 调用方需保证容器内有 id="share-radar" 的 canvas（dimensionCard 会创建）。
+ */
+export function renderReportInto(container, data) {
+  if (!container) return;
+  container.replaceChildren(
+    scoreCard(data),
+    dimensionCard(data),
+    strengthsCard(data),
+    data.include_detail ? qaCard(data) : detailHiddenCard(),
+  );
+  mountRadar(container);
 }
 
 function scoreCard(data) {
@@ -204,6 +214,10 @@ function qaCard(data) {
               ? el('div', { className: 'share-qa-assisted',
                             textContent: '本题在提示/引导下完成' })
               : null,
+            q.follow_up_skipped
+              ? el('div', { className: 'share-qa-assisted',
+                            textContent: '本题面试官追问后未补充作答（跳过追问）' })
+              : null,
           )))
       : el('div', { className: 'share-empty', textContent: '无逐题明细' }),
   );
@@ -219,8 +233,8 @@ function detailHiddenCard() {
 
 // ===== 雷达图 =====
 
-function mountRadar(data) {
-  const canvas = $('#share-radar');
+function mountRadar(scope) {
+  const canvas = scope.querySelector('#share-radar');
   if (!canvas || !window.Chart) return;
   const dims = data.dimensions || [];
   if (!dims.length) return;

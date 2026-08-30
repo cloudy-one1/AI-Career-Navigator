@@ -234,6 +234,49 @@ class TestFollowUp:
         llm.chat = MagicMock(side_effect=Exception("llm down"))
         assert await s.generate_follow_up({}) == "能否再详细说说？"
 
+    def test_mark_follow_up_skipped_marks_diagnosis(self):
+        """v7.0.2: 跳过追问 → 本题诊断打上 follow_up_skipped 并留存追问文本。"""
+        s, _, _ = _make_session()
+        _load_question(s)
+        s.record_answer("第一版回答", {"overall_score": 3, "follow_up_question": "追问?"})
+        s.mark_follow_up_skipped("追问?")
+        d = s.all_diagnoses[-1]
+        assert d["follow_up_skipped"] is True
+        assert d["skipped_follow_up"] == "追问?"
+        assert s.pending_follow_up == ""
+
+    def test_mark_follow_up_skipped_fallback_to_pending(self):
+        """v7.0.2: 未传追问文本时回退取 pending_follow_up（防御性兼容）。"""
+        s, _, _ = _make_session()
+        _load_question(s)
+        s.record_answer("第一版回答", {"overall_score": 3, "follow_up_question": "追问?"})
+        s.pending_follow_up = "待推送的追问"
+        s.mark_follow_up_skipped()
+        d = s.all_diagnoses[-1]
+        assert d["follow_up_skipped"] is True
+        assert d["skipped_follow_up"] == "待推送的追问"
+        assert s.pending_follow_up == ""
+
+    def test_mark_follow_up_skipped_without_diagnosis(self):
+        """v7.0.2: 无诊断记录时调用不报错、只清空 pending。"""
+        s, _, _ = _make_session()
+        s.pending_follow_up = "追问?"
+        s.mark_follow_up_skipped("追问?")
+        assert s.pending_follow_up == ""
+
+    def test_build_report_exposes_skipped_follow_up(self):
+        """v7.0.2: 跳过追问进入 qa_breakdown 标记与 follow_up_stats 统计。"""
+        s, _, _ = _make_session()
+        _load_question(s)
+        s.record_answer("第一版回答", {"overall_score": 3})
+        s.mark_follow_up_skipped("再具体说说？")
+        report = s.build_report()
+        assert report["follow_up_stats"]["skipped_count"] == 1
+        item = report["qa_breakdown"][0]
+        assert item["follow_up_skipped"] is True
+        assert item["skipped_follow_up"] == "再具体说说？"
+        assert "追问被跳过" in report["suggestions"]
+
 
 class TestRoundNavigation:
     def test_has_more_questions_in_round(self):

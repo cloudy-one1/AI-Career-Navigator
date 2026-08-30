@@ -241,9 +241,14 @@ function renderReport(report) {
   // v6.2: 逐题拆解 —— 真实面试影响 + 思考时长（借鉴 GrillMind 的 qaBreakdown）
   if (report.qa_breakdown?.length) {
     const st = report.thinking_stats || {};
-    const statLine = st.tracked_count
+    let statLine = st.tracked_count
       ? `⏱ 平均思考 ${st.avg_seconds}s（最长 ${st.max_seconds}s / 最短 ${st.min_seconds}s），共 ${st.answered_count} 题`
       : `共 ${st.answered_count || 0} 题（未采集到思考时长）`;
+    // v7.0.2: 追问回避统计（测评问题 #1 —— 跳过追问不再零痕迹）
+    const fuStats = report.follow_up_stats || {};
+    if (fuStats.skipped_count) {
+      statLine += ` · ⏭️ 跳过追问 ${fuStats.skipped_count} 次`;
+    }
     content.appendChild(el('div', { className: 'card', style: 'margin-top:12px;' },
       el('div', { className: 'card-title', textContent: '📊 逐题拆解' }),
       el('div', {
@@ -278,6 +283,12 @@ function renderShareSection(sessionId) {
   // 本次会话新生成的明文 token（按创建顺序）。列表接口不返回 token，
   // 撤销必须靠这些明文 —— 见 renderShareList 的说明。
   const revocable = [];
+  // v7.0.1: 可选——填了招聘者用户名，报告会进入对方登录后的收件箱
+  const recruiterInput = el('input', {
+    className: 'form-input', id: 'share-recruiter',
+    placeholder: '招聘者用户名（选填，填了进对方收件箱）',
+    style: 'max-width:260px;',
+  });
   const includeDetail = el('input', { type: 'checkbox', id: 'share-include-detail' });
   const expirySel = el('select', { id: 'share-expiry', className: 'form-input', style: 'max-width:150px;' },
     el('option', { value: '7', textContent: '7 天有效' }),
@@ -293,6 +304,8 @@ function renderShareSection(sessionId) {
         const res = await request('POST', `/api/sessions/${sessionId}/share`, {
           include_detail: includeDetail.checked,
           expires_days: parseInt(expirySel.value, 10),
+          // v7.0.1: 选填。后端校验存在且 role=recruiter，错误会以 400 返回
+          shared_with: recruiterInput.value.trim() || null,
         });
         const url = `${location.origin}${res.url}`;
         revocable.unshift(res.share.token);
@@ -325,6 +338,11 @@ function renderShareSection(sessionId) {
         includeDetail,
         el('span', { className: 'checkbox-text', textContent: '包含逐题问答内容' }),
       ),
+    ),
+    el('div', { className: 'share-manage-controls' },
+      recruiterInput,
+      el('span', { className: 'share-manage-meta', style: 'flex:0 1 auto;min-width:0;',
+        textContent: '填了用户名：报告直接出现在对方登录后的收件箱；留空：仅生成链接，对方凭链接查看' }),
     ),
     el('div', { className: 'share-manage-hint' },
       '默认只分享结论（总分 / 五维 / 轮次概况）。勾选后会附上每道题的问答原文——' +
@@ -420,6 +438,8 @@ function renderQaItem(qa) {
       qa.thinking_seconds > 0 ? el('span', { textContent: `⏱ 思考 ${qa.thinking_seconds}s` }) : '',
       qa.has_rewrite ? el('span', { textContent: '✍️ 含改写示范' }) : '',
       qa.assisted ? el('span', { textContent: '🆘 借助引导完成' }) : '',
+      // v7.0.2: 追问回避标记 —— 报告如实披露"面试官追问了、候选人没接"
+      qa.follow_up_skipped ? el('span', { textContent: '⏭️ 跳过追问' }) : '',
     ),
   ];
   if (qa.real_interview_impact) {

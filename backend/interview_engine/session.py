@@ -1092,6 +1092,27 @@ class InterviewSession:
             self.round_answers[-1] = f"{self.round_answers[-1]}\n[追问补充] {answer_text}"
         self.pending_follow_up = ""
 
+    def mark_follow_up_skipped(self, follow_up_question: str = "") -> None:
+        """
+        v7.0.2: 记录"追问被跳过"（测评问题 #1，方案 C：跳过留痕）。
+
+        真实面试里"被追问却回避"本身就是负面信号。这里不扣分（评分口径
+        保持"追问补充不重评"的既有设计），但把"面试官追问了、候选人没接"
+        这一事实**显式落进本题诊断记录**，综合报告与分享页据此如实披露，
+        让"回避"不再零成本、零痕迹。
+
+        follow_up_question：被跳过的追问文本。追问推送时 generate_follow_up
+        已清空 pending_follow_up，故由调用方（main.py 的 skip 分支）传入。
+        """
+        skipped_q = str(follow_up_question or "").strip() or str(self.pending_follow_up or "").strip()
+        self.pending_follow_up = ""
+        if not self.all_diagnoses:
+            return
+        d = self.all_diagnoses[-1]
+        d["follow_up_skipped"] = True
+        if skipped_q:
+            d["skipped_follow_up"] = skipped_q
+
     # ===== 追问判断 =====
 
     def should_follow_up(self, answer_text: str = "", diagnosis: dict | None = None) -> bool:

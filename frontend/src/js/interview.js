@@ -140,8 +140,17 @@ export function initInterview() {
         ),
         el('div', { className: 'form-group' },
           el('label', { className: 'form-label', textContent: '岗位描述 JD（可选，让问题更贴合）' }),
+          // v7.0.2: JD 支持文件上传解析（PDF/TXT/DOCX），解析结果回填文本框
+          el('div', { className: 'form-upload' },
+            el('input', { id: 'jd-file', type: 'file', accept: '.pdf,.txt,.docx' }),
+            el('button', {
+              id: 'upload-jd-btn', className: 'btn btn-secondary btn-sm',
+              textContent: '解析文件',
+              onClick: handleJdUpload,
+            }),
+          ),
           el('textarea', { id: 'jd-text', className: 'form-textarea',
-            placeholder: '粘贴目标岗位描述...',
+            placeholder: '粘贴目标岗位描述，或点击上方"解析文件"自动填入...',
             style: 'min-height: 80px;',
             onInput: () => { selectedPositionId = null; updateSummary(); } }),
         ),
@@ -503,6 +512,31 @@ async function handleUpload() {
     const res = await uploadResume(file);
     $('#resume-text').value = res.text;
     toast('简历解析成功', 'success');
+  } catch (e) {
+    toast('解析失败: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '解析文件';
+  }
+}
+
+// v7.0.2: JD 文件上传解析（测评问题 #2）—— 与 handleUpload 同款交互
+async function handleJdUpload() {
+  const fileInput = $('#jd-file');
+  const file = fileInput.files[0];
+  if (!file) { toast('请先选择文件', 'warning'); return; }
+
+  const btn = $('#upload-jd-btn');
+  btn.disabled = true;
+  btn.textContent = '解析中...';
+
+  try {
+    const { uploadJd } = await import('./api.js');
+    const res = await uploadJd(file);
+    $('#jd-text').value = res.text;
+    selectedPositionId = null;   // 上传内容以编辑框为准，脱离岗位库关联
+    toast('JD 解析成功', 'success');
+    updateSummary();
   } catch (e) {
     toast('解析失败: ' + e.message, 'error');
   } finally {

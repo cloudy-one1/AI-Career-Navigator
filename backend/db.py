@@ -189,6 +189,7 @@ async def init_db():
                 created_by TEXT,
                 scope TEXT NOT NULL DEFAULT 'report_read',
                 include_detail INTEGER NOT NULL DEFAULT 0,
+                shared_with TEXT,
                 expires_at TEXT,
                 revoked INTEGER NOT NULL DEFAULT 0,
                 access_count INTEGER NOT NULL DEFAULT 0,
@@ -267,6 +268,18 @@ async def _ensure_owner_columns(db) -> None:
         else:
             await db.execute(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
         logger.info(f"[db] sessions 迁移：新增 {col} 列")
+
+    # v7.0.1: share_links 加 shared_with（招聘者收件箱）。
+    # share_links 虽是 v7.0 新表，但已有部署跑过 v7.0 初版建表语句，
+    # 老表不会自动获得新列 —— 同样走 PRAGMA+ALTER。
+    async with db.execute("PRAGMA table_info(share_links)") as cur:
+        share_cols = {row[1] for row in await cur.fetchall()}
+    if "shared_with" not in share_cols:
+        await db.execute("ALTER TABLE share_links ADD COLUMN shared_with TEXT")
+        logger.info("[db] share_links 迁移：新增 shared_with 列")
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_share_shared_with ON share_links(shared_with)"
+        )
 
 
 async def save_session(session_id: str, style: str = "friendly",
@@ -1084,12 +1097,13 @@ async def save_share_link(row: dict) -> None:
     try:
         await db.execute(
             """INSERT OR REPLACE INTO share_links
-               (token, session_id, created_by, scope, include_detail,
+               (token, session_id, created_by, scope, include_detail, shared_with,
                 expires_at, revoked, access_count, last_access_at, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (
                 row.get("token"), row.get("session_id"), row.get("created_by"),
                 row.get("scope", "report_read"), int(row.get("include_detail") or 0),
+                row.get("shared_with"),
                 row.get("expires_at"), int(row.get("revoked") or 0),
                 int(row.get("access_count") or 0), row.get("last_access_at"),
                 row.get("created_at"),
@@ -1147,6 +1161,40 @@ async def touch_share_link(token_hash: str) -> None:
             (token_hash,),
         )
         await db.commit()
+    finally:
+        await db.close()
+
+
+async def list_inbox_shares(recruiter_username: str) -> list[dict]:
+    """v7.0.1: 招聘者收件箱——指定发给该招聘者（shared_with）且未撤销的分享。
+
+    shared_with 存**用户名**而非 id：分享者（求职者）只知道对方用户名，
+    输入即存储；本系统用户名唯一且无改名功能，故等价于 id 且省一次联表。
+    """
+    db = await get_db()
+    try:
+        async with db.execute(
+            """SELECT * FROM share_links
+               WHERE shared_with = ? AND revoked = 0
+               ORDER BY created_at DESC""",
+            (recruiter_username,),
+        ) as cur:
+            return [dict(row) for row in await cur.fetchall()]
+    finally:
+        await db.close()
+
+
+async def get_inbox_share(token_hash: str, recruiter_username: str) -> Optional[dict]:
+    """取收件箱中指定的一条（校验归属：不是发给我的看不到）。"""
+    db = await get_db()
+    try:
+        async with db.execute(
+            """SELECT * FROM share_links
+               WHERE token = ? AND shared_with = ? AND revoked = 0""",
+            (token_hash, recruiter_username),
+        ) as cur:
+            row = await cur.fetchone()
+            return dict(row) if row else None
     finally:
         await db.close()
 

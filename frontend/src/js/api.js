@@ -63,6 +63,13 @@ export async function uploadResumeToLibrary(file) {
   return request('POST', '/api/resumes/upload', form, true);
 }
 
+/** v7.0.2: 上传 JD 文件（PDF/TXT/DOCX），解析结果回填 JD 文本框（不入岗位库） */
+export async function uploadJd(file) {
+  const form = new FormData();
+  form.append('file', file);
+  return request('POST', '/api/upload-jd', form, true);
+}
+
 /** 生成问题（获取 session_id）v2.4: 支持 mode。v2.7: 支持自我介绍 + 题型占比。v6.5: 支持目标公司风格 */
 export async function generateQuestions(resumeText, jdText, style = 'friendly', mode = 'simulation', includeSelfIntro = false, questionTypeMix = {}, companyProfile = '', resumeId = null, positionId = null) {
   return request('POST', '/api/sessions', {
