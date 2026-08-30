@@ -1,0 +1,246 @@
+/* ===================================================
+   motion.css — v7.2 动效基建层（全站统一编排）
+   ---------------------------------------------------
+   原则：
+   1. 只新增能力，不覆盖 pages/*.css 既有组件样式；
+   2. 全部动效挂 prefers-reduced-motion 降级；
+   3. 时长/缓动全部引用 token，页面不得私写数值。
+   用法：
+   - 面板过渡：app.js 在 switchTab 里加 .panel-enter（或走
+     View Transitions API），入场后 animationend 自动清理；
+   - 骨架屏：utils.js skeletonBlock() → .skeleton-line；
+   - 盖章：utils.js stampIn(el) → .stamp-in；
+   - 数字滚动：utils.js countUp(el, to)；
+   - 表单错误：utils.js shake(el) → .shake。
+   =================================================== */
+
+:root {
+  /* ── 动效 token 扩展（承接 tokens.css 三档基础档）── */
+  --dur-gesture: 200ms;            /* 微手势：按压/涟漪/shake */
+  --dur-reveal: 500ms;             /* 仪式感揭晓：评分环/盖段落定 */
+  --ease-emphasized: cubic-bezier(0.2, 0, 0, 1);  /* 有停顿感的强调入场 */
+  --stagger: 60ms;                 /* 同屏错峰间隔 */
+}
+
+/* ===================================================
+   1. 面板切换过渡
+   =================================================== */
+
+/* View Transitions API：Chromium 111+ 走原生过渡（旧页淡出 + 新页上滑入场） */
+::view-transition-old(root) {
+  animation: vt-fade-out var(--dur-gesture) var(--ease-standard) both;
+}
+::view-transition-new(root) {
+  animation: vt-fade-in var(--dur-base) var(--ease-out) both;
+}
+@keyframes vt-fade-out {
+  to { opacity: 0; transform: translateY(-6px); }
+}
+@keyframes vt-fade-in {
+  from { opacity: 0; transform: translateY(10px); }
+}
+
+/* 降级路径（无 View Transitions 的浏览器）：app.js 给新面板挂 .panel-enter */
+.panel-enter {
+  animation: panel-in var(--dur-base) var(--ease-out) both;
+}
+@keyframes panel-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* 新面板同屏子元素 stagger 错峰入场（最多编排前 10 个直接子元素） */
+.panel-enter > * {
+  animation: stagger-in var(--dur-base) var(--ease-out) both;
+}
+.panel-enter > *:nth-child(1)  { animation-delay: calc(var(--stagger) * 0); }
+.panel-enter > *:nth-child(2)  { animation-delay: calc(var(--stagger) * 1); }
+.panel-enter > *:nth-child(3)  { animation-delay: calc(var(--stagger) * 2); }
+.panel-enter > *:nth-child(4)  { animation-delay: calc(var(--stagger) * 3); }
+.panel-enter > *:nth-child(5)  { animation-delay: calc(var(--stagger) * 4); }
+.panel-enter > *:nth-child(6)  { animation-delay: calc(var(--stagger) * 5); }
+.panel-enter > *:nth-child(7)  { animation-delay: calc(var(--stagger) * 6); }
+.panel-enter > *:nth-child(8)  { animation-delay: calc(var(--stagger) * 7); }
+.panel-enter > *:nth-child(9)  { animation-delay: calc(var(--stagger) * 8); }
+.panel-enter > *:nth-child(10) { animation-delay: calc(var(--stagger) * 9); }
+@keyframes stagger-in {
+  from { opacity: 0; transform: translateY(12px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ===================================================
+   2. 骨架屏（纸纹 shimmer 扫光）
+   =================================================== */
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  padding: var(--space-4) 0;
+}
+.skeleton-line {
+  height: 14px;
+  border-radius: var(--radius-sm);
+  background:
+    linear-gradient(100deg,
+      var(--slate-100) 30%,
+      rgba(var(--ink-rgb), 0.06) 50%,
+      var(--slate-100) 70%)
+    var(--slate-100);
+  background-size: 220% 100%;
+  animation: skeleton-sweep 1.4s ease-in-out infinite;
+}
+.skeleton-line.title  { height: 22px; width: 42%; }
+.skeleton-line.w60    { width: 60%; }
+.skeleton-line.w80    { width: 80%; }
+.skeleton-line.w100   { width: 100%; }
+@keyframes skeleton-sweep {
+  from { background-position: 120% 0; }
+  to   { background-position: -100% 0; }
+}
+
+/* ===================================================
+   3. 印章「盖章」仪式感（scale 落定 + 墨晕扩散）
+   =================================================== */
+
+.stamp-in {
+  position: relative;
+  animation: stamp-land var(--dur-reveal) var(--ease-emphasized) both;
+}
+@keyframes stamp-land {
+  0%   { opacity: 0; transform: scale(1.7) rotate(-14deg); }
+  55%  { opacity: 1; transform: scale(0.94) rotate(-4deg); }
+  75%  { transform: scale(1.03) rotate(-6deg); }
+  100% { opacity: 1; transform: scale(1) rotate(-6deg); }
+}
+/* 印章落定瞬间的墨晕（由 JS 在目标元素上同步挂 .stamp-ripple 触发一次） */
+.stamp-ripple {
+  position: absolute;
+  inset: -10px;
+  border-radius: 50%;
+  border: 2px solid rgba(var(--primary-rgb), 0.45);
+  pointer-events: none;
+  animation: stamp-ink var(--dur-reveal) var(--ease-out) both;
+}
+@keyframes stamp-ink {
+  from { opacity: 0.8; transform: scale(0.6); }
+  to   { opacity: 0; transform: scale(1.6); }
+}
+
+/* ===================================================
+   4. 数字滚动 / 环形描边（评分环揭晓）
+   =================================================== */
+
+/* ring-fill 初始隐藏描边，JS 挂 .ring-draw 后过渡到目标 dashoffset */
+.ring-draw .ring-fill {
+  animation: ring-draw var(--dur-reveal) var(--ease-emphasized) both;
+}
+@keyframes ring-draw {
+  from { stroke-dashoffset: 326.7; }
+}
+
+/* ===================================================
+   5. 表单错误 shake + 按钮墨点涟漪
+   =================================================== */
+
+.shake {
+  animation: shake-x var(--dur-gesture) var(--ease-standard) 2;
+}
+@keyframes shake-x {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-5px); }
+  75% { transform: translateX(5px); }
+}
+
+/* 按压时的墨点扩散（纯 CSS：active 触发，松开自动复位） */
+.btn-press {
+  position: relative;
+  overflow: hidden;
+}
+.btn-press::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(circle at center, rgba(var(--ink-rgb), 0.14) 0%, transparent 60%);
+  opacity: 0;
+  transform: scale(0.4);
+  pointer-events: none;
+}
+.btn-press:active::after {
+  animation: btn-ink var(--dur-gesture) var(--ease-out) both;
+}
+@keyframes btn-ink {
+  from { opacity: 1; transform: scale(0.4); }
+  to   { opacity: 0; transform: scale(1.3); }
+}
+
+/* ===================================================
+   6. 进度条流光（诊断进度 / 加载条复用）
+   =================================================== */
+
+.shimmer-bar {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer-bar::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg,
+    transparent 20%,
+    rgba(var(--ink-rgb), 0.10) 50%,
+    transparent 80%);
+  background-size: 220% 100%;
+  animation: skeleton-sweep 1.6s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* 骨架屏说明文字（history.js 等场景保留语境） */
+.skeleton-caption {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+}
+
+/* v7.2: 面试流式诊断框——左侧朱砂描边上叠加缓慢流光，表达「正在思考」 */
+.stream-box {
+  position: relative;
+  overflow: hidden;
+}
+.stream-box::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 4px;
+  background: linear-gradient(180deg,
+    transparent 0%, rgba(var(--primary-rgb), 0.55) 50%, transparent 100%);
+  background-size: 100% 220%;
+  animation: stream-glow 1.8s ease-in-out infinite;
+  pointer-events: none;
+}
+@keyframes stream-glow {
+  from { background-position: 0 120%; }
+  to   { background-position: 0 -120%; }
+}
+
+/* ===================================================
+   7. 降级：偏好减弱动效时全站静默（承接 base.css 全局机制）
+   =================================================== */
+@media (prefers-reduced-motion: reduce) {
+  .panel-enter,
+  .panel-enter > *,
+  .stamp-in,
+  .stamp-ripple,
+  .ring-draw .ring-fill,
+  .shake,
+  .skeleton-line,
+  .shimmer-bar::after,
+  .stream-box::before,
+  .btn-press::after {
+    animation: none !important;
+  }
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none !important;
+  }
+}

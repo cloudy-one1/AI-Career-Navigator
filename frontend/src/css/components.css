@@ -27,7 +27,8 @@
   color: var(--color-text);
 }
 
-/* v5.0 纸墨：品牌标识改为圆形印章（对齐 job-crawler .navbar-brand::before） */
+/* v5.0 纸墨：品牌标识改为圆形印章（对齐 job-crawler .navbar-brand::before）
+   v7.2: hover 轻微回正放大，呼应「盖章」母题 */
 .brand-logo {
   width: 30px;
   height: 30px;
@@ -40,7 +41,20 @@
   font-weight: 900;
   transform: rotate(-6deg);
   flex-shrink: 0;
+  transition: transform var(--dur-base) var(--ease-spring);
 }
+.brand-logo:hover { transform: rotate(0deg) scale(1.08); }
+
+/* v7.2: 侧边栏分组小标题（面试域 / 资产域 / 洞察域 / 招聘端 / 账户） */
+.nav-group-label {
+  margin: 14px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--slate-400);
+  user-select: none;
+}
+.nav-group-label:first-child { margin-top: 2px; }
 
 .version-badge {
   font-size: var(--text-xs);
@@ -191,6 +205,11 @@
   }
 
   .nav-item .nav-label {
+    display: none;
+  }
+
+  /* 平板图标栏不显示分组标题（空间不足） */
+  .nav-group-label {
     display: none;
   }
 

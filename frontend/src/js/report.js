@@ -2,8 +2,8 @@
 // report.js — 综合报告 + Chart.js 雷达图
 // ===================================================
 
-import { $, el, toast, DIM_NAMES, escHtml } from './utils.js';
-import { getReport, exportReview, getGapAnalysis, crossJobCompare } from './api.js';
+import { $, el, toast, DIM_NAMES, escHtml, countUp, skeletonBlock } from './utils.js';
+import { getReport, exportReview, getGapAnalysis, crossJobCompare, request } from './api.js';
 
 let chartInstance = null;
 
@@ -51,6 +51,10 @@ async function loadReport() {
   const sessionId = $('#report-session-id')?.value.trim();
   if (!sessionId) { toast('请输入 Session ID', 'warning'); return; }
 
+  // v7.2: 加载期间用骨架屏占位（纸纹 shimmer），替代空白等待
+  const loading = $('#report-content');
+  if (loading) loading.replaceChildren(skeletonBlock({ lines: 4 }));
+
   try {
     const data = await getReport(sessionId);
     if (data.report) {
@@ -89,10 +93,10 @@ function renderReport(report) {
     el('div', {
       className: 'report-hero-ring',
       innerHTML: `
-        <svg class="score-ring" viewBox="0 0 120 120" width="110" height="110" role="img" aria-label="综合评分 ${oAvg.toFixed(1)} 分（满分 5 分）">
+        <svg class="score-ring ring-draw" viewBox="0 0 120 120" width="110" height="110" role="img" aria-label="综合评分 ${oAvg.toFixed(1)} 分（满分 5 分）">
           <circle class="ring-track" cx="60" cy="60" r="52"></circle>
           <circle class="ring-fill" cx="60" cy="60" r="52" stroke-dasharray="326.7" stroke-dashoffset="${ringOffset}"></circle>
-          <text class="ring-text" x="60" y="60" text-anchor="middle" dominant-baseline="central">${oAvg.toFixed(1)}</text>
+          <text class="ring-text" x="60" y="60" text-anchor="middle" dominant-baseline="central">0.0</text>
         </svg>`,
     }),
     el('div', { className: 'report-hero-info' },
@@ -117,6 +121,9 @@ function renderReport(report) {
       }) : '',
     ),
   ));
+
+  // v7.2: 评分揭晓仪式感——环形描边绘制 + 分数滚动（motion.css ring-draw）
+  countUp(content.querySelector('.report-hero-ring .ring-text'), oAvg, { decimals: 1, duration: 900 });
 
   // v4.0: 关键指标条
   const totalQ = (report.rounds || []).reduce((a, r) => a + (r.questions_count || 0), 0);

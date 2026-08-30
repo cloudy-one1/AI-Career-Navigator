@@ -6,7 +6,7 @@
 // 登录态 + 归属校验（发件指定的本人才能打开）。
 // ===================================================
 
-import { $, el, toast, fmtDate, emptyState } from './utils.js';
+import { $, el, toast, fmtDate, emptyState, skeletonBlock } from './utils.js';
 import { request } from './api.js';
 import { renderReportInto } from './shareReport.js';
 
@@ -100,8 +100,9 @@ async function openReport(tokenHash) {
   const list = $('#ri-list');
   if (!detail) return;
 
+  // v7.2: 骨架屏替代 spinner（纸纹 shimmer）
   detail.replaceChildren(el('div', { className: 'card share-loading' },
-    el('div', { className: 'loading-spinner' }),
+    skeletonBlock({ lines: 4 }),
     el('span', { textContent: '正在加载报告…' })));
   list.classList.add('hidden');
 

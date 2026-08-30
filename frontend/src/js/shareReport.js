@@ -9,7 +9,7 @@
 //    否则"看到的内容"与"实际发出的内容"可能不一致，反而更难审计。
 // ===================================================
 
-import { $, el, fmtDate } from './utils.js';
+import { $, el, fmtDate, skeletonBlock } from './utils.js';
 
 const DIM_LABEL_FALLBACK = {
   star_completeness: 'STAR 完整度',
@@ -59,7 +59,7 @@ export async function initSharedReport() {
 
 function loadingBlock() {
   return el('div', { className: 'card share-loading' },
-    el('div', { className: 'loading-spinner' }),
+    skeletonBlock({ lines: 4 }),
     el('span', { textContent: '正在加载报告…' }),
   );
 }
@@ -108,7 +108,7 @@ export function renderReportInto(container, data) {
     strengthsCard(data),
     data.include_detail ? qaCard(data) : detailHiddenCard(),
   );
-  mountRadar(container);
+  mountRadar(container, data);
 }
 
 function scoreCard(data) {
@@ -233,7 +233,7 @@ function detailHiddenCard() {
 
 // ===== 雷达图 =====
 
-function mountRadar(scope) {
+function mountRadar(scope, data) {
   const canvas = scope.querySelector('#share-radar');
   if (!canvas || !window.Chart) return;
   const dims = data.dimensions || [];
@@ -246,9 +246,9 @@ function mountRadar(scope) {
       datasets: [{
         label: '得分',
         data: dims.map(d => Number(d.score || 0)),
-        backgroundColor: 'rgba(37, 99, 235, 0.15)',
-        borderColor: 'rgba(37, 99, 235, 0.9)',
-        pointBackgroundColor: 'rgba(37, 99, 235, 1)',
+        backgroundColor: 'rgba(196, 79, 58, 0.15)',
+        borderColor: 'rgba(196, 79, 58, 0.9)',
+        pointBackgroundColor: 'rgba(196, 79, 58, 1)',
         borderWidth: 2,
       }],
     },

@@ -2,11 +2,13 @@
    market.css — 市场数据 Tab（v3.3）纸墨印章设计系统
    还原 job-crawler 的采集页 + 岗位列表页设计语言：
    米色纸张 / 衬线字体 / 印章红 / data-no 编号档案感。
-   全部样式作用域限定 #market-panel 内，不影响其余 5 个 Tab。
+   全部样式作用域限定 #market-data-panel 内，不影响其余 Tab。
+   （v7.2 修复：作用域 id 原误写为 #market-panel——该元素
+   并不存在，导致整套 mkt 设计系统与深色覆盖从未生效）
    =================================================== */
 
 /* ── 局部设计 Token：浅色公文风（默认） ── */
-#market-panel {
+#market-data-panel {
   /* v5.0：本地 Token 全部指向全局纸墨 Token，深浅双主题自动跟随 */
   --mkt-paper: var(--paper);             /* 米色纸张底 */
   --mkt-paper-card: var(--card);         /* 卡片纸 */
@@ -31,12 +33,12 @@
 /* ===================================================
    【v5.0 组件复刻】job-crawler 组件级 1:1
    基线：docs/job-crawler-UI设计系统规格.md
-   作用域严格限定 #market-panel（特异性高于全局 style.css
+   作用域严格限定 #market-data-panel（特异性高于全局 style.css
    的同名类，故不会被全局组件样式覆盖）
    =================================================== */
 
 /* ── eyebrow：JetBrains Mono 大写小标 ── */
-#market-panel .eyebrow {
+#market-data-panel .eyebrow {
   font-family: var(--font-mono);
   font-size: 13px;
   letter-spacing: .12em;
@@ -46,9 +48,9 @@
 }
 
 /* ── Hero（对齐 input.html .home-hero）── */
-#market-panel .home-wrap { max-width: 900px; margin: 0 auto; }
-#market-panel .home-hero { text-align: center; padding: 16px 0 8px; }
-#market-panel .home-hero h1 {
+#market-data-panel .home-wrap { max-width: 900px; margin: 0 auto; }
+#market-data-panel .home-hero { text-align: center; padding: 16px 0 8px; }
+#market-data-panel .home-hero h1 {
   font-family: var(--mkt-serif);
   font-size: 34px;
   letter-spacing: -.01em;
@@ -56,7 +58,7 @@
   margin: 0;
   color: var(--mkt-ink);
 }
-#market-panel .home-hero .subtitle {
+#market-data-panel .home-hero .subtitle {
   color: var(--mkt-ink-muted);
   font-size: 15px;
   max-width: 560px;
@@ -65,7 +67,7 @@
 }
 
 /* ── card + data-no 档案编号角标 ── */
-#market-panel .card {
+#market-data-panel .card {
   background: var(--mkt-paper-card);
   border: 1px solid var(--mkt-line);
   border-radius: 20px;
@@ -75,7 +77,7 @@
   box-shadow: var(--mkt-shadow);
   color: var(--mkt-ink);
 }
-#market-panel .card[data-no]::before {
+#market-data-panel .card[data-no]::before {
   content: attr(data-no);
   position: absolute;
   top: -12px;
@@ -89,15 +91,15 @@
 }
 
 /* ── 表单 ── */
-#market-panel .form-group { margin-bottom: 16px; }
-#market-panel .form-group label {
+#market-data-panel .form-group { margin-bottom: 16px; }
+#market-data-panel .form-group label {
   display: block;
   font-size: 15px;
   color: var(--mkt-ink-2);
   margin-bottom: 8px;
   font-weight: 600;
 }
-#market-panel .form-control {
+#market-data-panel .form-control {
   width: 100%;
   padding: 14px 16px;
   border: 1px solid var(--mkt-line);
@@ -107,12 +109,12 @@
   font-size: 16px;
   color: var(--mkt-ink);
 }
-#market-panel .form-control:focus {
+#market-data-panel .form-control:focus {
   outline: none;
   border-color: var(--teal);
   box-shadow: 0 0 0 3px var(--teal-soft);
 }
-#market-panel .form-hint {
+#market-data-panel .form-hint {
   color: var(--mkt-ink-muted);
   font-size: 13px;
   margin: 10px 0 0;
@@ -120,7 +122,7 @@
 }
 
 /* ── 按钮族 ── */
-#market-panel .btn {
+#market-data-panel .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -138,44 +140,44 @@
   box-shadow: 0 1px 3px rgba(var(--ink-rgb), .05);
   text-decoration: none;
 }
-#market-panel .btn:hover {
+#market-data-panel .btn:hover {
   background: var(--mkt-ink);
   color: var(--mkt-paper);
   box-shadow: 0 4px 14px rgba(var(--ink-rgb), .12);
 }
-#market-panel .btn-primary,
-#market-panel .btn-info {
+#market-data-panel .btn-primary,
+#market-data-panel .btn-info {
   background: var(--mkt-stamp);
   color: #fff;
 }
-#market-panel .btn-primary:hover,
-#market-panel .btn-info:hover {
+#market-data-panel .btn-primary:hover,
+#market-data-panel .btn-info:hover {
   background: var(--mkt-stamp-deep);
   box-shadow: 0 4px 16px rgba(var(--primary-rgb), .3);
 }
-#market-panel .btn-default {
+#market-data-panel .btn-default {
   background: var(--mkt-paper-card);
   border: 1.5px solid var(--mkt-line);
 }
-#market-panel .btn-default:hover {
+#market-data-panel .btn-default:hover {
   background: var(--mkt-ink);
   color: var(--mkt-paper);
   border-color: var(--mkt-ink);
 }
-#market-panel .btn-outline {
+#market-data-panel .btn-outline {
   background: transparent;
   border: 1.5px solid var(--mkt-line);
   box-shadow: none;
 }
-#market-panel .btn-outline:hover {
+#market-data-panel .btn-outline:hover {
   background: var(--mkt-ink);
   color: var(--mkt-paper);
   border-color: var(--mkt-ink);
 }
-#market-panel .btn:disabled { opacity: .55; cursor: not-allowed; }
+#market-data-panel .btn:disabled { opacity: .55; cursor: not-allowed; }
 
 /* ── 感兴趣收藏药丸（对齐 .interest-btn）── */
-#market-panel .interest-btn {
+#market-data-panel .interest-btn {
   border: 1.5px solid #2563eb;
   background: transparent;
   color: #2563eb;
@@ -188,12 +190,12 @@
   white-space: nowrap;
   font-family: var(--mkt-sans);
 }
-#market-panel .interest-btn:hover {
+#market-data-panel .interest-btn:hover {
   background: #2563eb;
   color: #fff;
   transform: scale(1.06);
 }
-#market-panel .interest-btn.interested {
+#market-data-panel .interest-btn.interested {
   background: #2563eb;
   color: #fff;
   border-color: #2563eb;
@@ -201,14 +203,14 @@
 }
 
 /* ── 表格（th 用 JetBrains Mono 大写 + 墨线）── */
-#market-panel .table {
+#market-data-panel .table {
   width: 100%;
   border-radius: 12px;
   overflow: hidden;
   border-collapse: separate;
   border-spacing: 0;
 }
-#market-panel .table th {
+#market-data-panel .table th {
   text-align: left;
   font-family: var(--font-mono);
   font-size: 12px;
@@ -220,45 +222,45 @@
   background: var(--mkt-paper-deep);
   white-space: nowrap;
 }
-#market-panel .table td {
+#market-data-panel .table td {
   padding: 14px 14px;
   border-bottom: 1px solid var(--mkt-line);
   font-size: 16px;
 }
-#market-panel .table th:first-child { border-top-left-radius: 12px; }
-#market-panel .table th:last-child { border-top-right-radius: 12px; }
-#market-panel .table tbody tr:last-child td { border-bottom: none; }
+#market-data-panel .table th:first-child { border-top-left-radius: 12px; }
+#market-data-panel .table th:last-child { border-top-right-radius: 12px; }
+#market-data-panel .table tbody tr:last-child td { border-bottom: none; }
 
 /* ── 数据行：整行悬停浮起变蓝 + 点击跳详情 ── */
-#market-panel .data-row {
+#market-data-panel .data-row {
   transition: transform .25s ease, background-color .25s ease, box-shadow .25s ease;
   cursor: pointer;
 }
-#market-panel .data-row:hover {
+#market-data-panel .data-row:hover {
   transform: translateY(-3px) scale(1.02);
   background-color: #eef2ff;
   box-shadow: 0 6px 20px rgba(37, 99, 235, .18);
   position: relative;
   z-index: 10;
 }
-#market-panel .data-row:hover td { color: #2563eb; }
-#market-panel .data-row:hover .job-link { color: #2563eb; }
-#market-panel .job-link {
+#market-data-panel .data-row:hover td { color: #2563eb; }
+#market-data-panel .data-row:hover .job-link { color: #2563eb; }
+#market-data-panel .job-link {
   color: var(--mkt-ink);
   text-decoration: none;
   font-weight: inherit;
   display: inline-block;
   transition: color .2s ease;
 }
-#market-panel .job-link:hover { color: #2563eb; }
+#market-data-panel .job-link:hover { color: #2563eb; }
 /* 增强：多选对比勾选后行描边（与整行跳详情并存） */
-#market-panel .data-row.selected td { box-shadow: inset 0 0 0 9999px rgba(var(--primary-rgb), .06); }
-#market-panel .data-row.selected { outline: 1.5px solid var(--mkt-stamp); }
-#market-panel .pick-col { width: 40px; text-align: center; }
-#market-panel .pick-col input { width: 16px; height: 16px; accent-color: var(--mkt-stamp); cursor: pointer; }
+#market-data-panel .data-row.selected td { box-shadow: inset 0 0 0 9999px rgba(var(--primary-rgb), .06); }
+#market-data-panel .data-row.selected { outline: 1.5px solid var(--mkt-stamp); }
+#market-data-panel .pick-col { width: 40px; text-align: center; }
+#market-data-panel .pick-col input { width: 16px; height: 16px; accent-color: var(--mkt-stamp); cursor: pointer; }
 
 /* ── 城市级联行（对齐 input.html .city-row）── */
-#market-panel .city-row {
+#market-data-panel .city-row {
   display: flex;
   gap: 10px;
   align-items: center;
@@ -268,7 +270,7 @@
   border: 1px solid var(--mkt-line);
   border-radius: 12px;
 }
-#market-panel .city-row select {
+#market-data-panel .city-row select {
   font-size: 15px;
   padding: 10px 12px;
   border: 1px solid var(--mkt-line);
@@ -277,10 +279,10 @@
   color: var(--mkt-ink);
   cursor: pointer;
 }
-#market-panel #mkt-province-sel { flex: 1.1; min-width: 115px; }
-#market-panel #mkt-city-sel { flex: 1.4; min-width: 135px; }
-#market-panel .city-arrow { color: var(--mkt-ink-muted); font-size: 18px; user-select: none; }
-#market-panel .add-city-btn {
+#market-data-panel #mkt-province-sel { flex: 1.1; min-width: 115px; }
+#market-data-panel #mkt-city-sel { flex: 1.4; min-width: 135px; }
+#market-data-panel .city-arrow { color: var(--mkt-ink-muted); font-size: 18px; user-select: none; }
+#market-data-panel .add-city-btn {
   font-size: 15px;
   font-weight: 600;
   padding: 10px 22px;
@@ -292,11 +294,11 @@
   white-space: nowrap;
   transition: opacity .2s;
 }
-#market-panel .add-city-btn:hover:not(:disabled) { opacity: .85; }
-#market-panel .add-city-btn:disabled { opacity: .45; cursor: not-allowed; }
+#market-data-panel .add-city-btn:hover:not(:disabled) { opacity: .85; }
+#market-data-panel .add-city-btn:disabled { opacity: .45; cursor: not-allowed; }
 
 /* ── 已选城市标签（对齐 .tag-chip）── */
-#market-panel .tag-chip {
+#market-data-panel .tag-chip {
   display: inline-flex;
   align-items: center;
   background: var(--mkt-stamp-soft);
@@ -308,25 +310,25 @@
   gap: 8px;
   box-shadow: 0 1px 3px rgba(var(--ink-rgb), .07);
 }
-#market-panel .tag-chip .tag-remove {
+#market-data-panel .tag-chip .tag-remove {
   cursor: pointer;
   color: var(--mkt-ink-muted);
   font-size: 16px;
   line-height: 1;
   padding-left: 2px;
 }
-#market-panel .tag-chip .tag-remove:hover { color: var(--mkt-stamp); }
-#market-panel .selected-cities-wrap { margin-top: 10px; display: none; }
-#market-panel .selected-cities-wrap .wrap-label {
+#market-data-panel .tag-chip .tag-remove:hover { color: var(--mkt-stamp); }
+#market-data-panel .selected-cities-wrap { margin-top: 10px; display: none; }
+#market-data-panel .selected-cities-wrap .wrap-label {
   font-size: 14px;
   color: var(--mkt-ink-muted);
   margin-bottom: 8px;
 }
-#market-panel .selected-cities { display: flex; flex-wrap: wrap; gap: 8px; }
+#market-data-panel .selected-cities { display: flex; flex-wrap: wrap; gap: 8px; }
 
 /* ── 翻页（对齐 data.html）── */
-#market-panel .pager { text-align: center; margin: 24px 0; }
-#market-panel .pager .page-info {
+#market-data-panel .pager { text-align: center; margin: 24px 0; }
+#market-data-panel .pager .page-info {
   margin: 0 16px;
   color: var(--mkt-ink-muted);
   font-size: 14px;
@@ -334,14 +336,14 @@
 }
 
 /* ── 空态 ── */
-#market-panel .empty-row td {
+#market-data-panel .empty-row td {
   color: var(--mkt-ink-muted);
   text-align: center;
   padding: 30px 0;
 }
 
 /* ── 印章 .stamp（对齐规格 §4.3：64px 圆印、rotate(-9deg)）── */
-#market-panel .stamp {
+#market-data-panel .stamp {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -362,7 +364,7 @@
 }
 
 /* ── 提示条 .alert（对齐规格 §4.8）── */
-#market-panel .alert {
+#market-data-panel .alert {
   display: none;              /* 与 #mkt-error 一致：由 .visible 控制显隐 */
   padding: 14px 18px;
   border-radius: 14px;
@@ -371,23 +373,23 @@
   line-height: 1.6;
   margin-top: 16px;
 }
-#market-panel .alert.visible { display: block; }
-#market-panel .alert-danger {
+#market-data-panel .alert.visible { display: block; }
+#market-data-panel .alert-danger {
   background: var(--accent-light);
   border-color: var(--mkt-stamp);
   color: var(--mkt-stamp-deep);
 }
-#market-panel .alert-info {
+#market-data-panel .alert-info {
   background: var(--teal-soft);
   border-color: var(--teal);
   color: var(--emerald-700);
 }
-#market-panel .alert .mono { font-weight: 600; }
-#market-panel .alert a { color: var(--teal); text-decoration: none; }
-#market-panel .alert a:hover { color: var(--mkt-stamp); text-decoration: underline; }
+#market-data-panel .alert .mono { font-weight: 600; }
+#market-data-panel .alert a { color: var(--teal); text-decoration: none; }
+#market-data-panel .alert a:hover { color: var(--mkt-stamp); text-decoration: underline; }
 
 /* ── 已恢复徽章 .restored-badge（对齐规格 §4.9）── */
-#market-panel .restored-badge {
+#market-data-panel .restored-badge {
   display: none;
   align-items: center;
   gap: 8px;
@@ -399,37 +401,37 @@
   border-radius: 3px;
   margin-bottom: 16px;
 }
-#market-panel .restored-badge.visible { display: inline-flex; }
-#market-panel .restored-badge a {
+#market-data-panel .restored-badge.visible { display: inline-flex; }
+#market-data-panel .restored-badge a {
   color: var(--mkt-stamp);
   text-decoration: none;
   font-weight: 400;
   margin-left: 4px;
   border-bottom: 1px dashed var(--mkt-stamp);
 }
-#market-panel .restored-badge a:hover { opacity: .7; }
+#market-data-panel .restored-badge a:hover { opacity: .7; }
 
 /* ── 详情页橙色按钮 .btn-detail（对齐规格 §4.15）── */
-#market-panel .btn-detail {
+#market-data-panel .btn-detail {
   background: linear-gradient(135deg, #FF6B35, #F7931E);
   border-color: #FF6B35;
   color: #fff;
   transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
 }
-#market-panel .btn-detail:hover {
+#market-data-panel .btn-detail:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, .2);
   filter: brightness(1.1);
 }
 
 /* ── 首页功能卡 .home-feature-*（对齐规格 §4.12）── */
-#market-panel .home-feature-grid {
+#market-data-panel .home-feature-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 16px;
   margin-top: 34px;
 }
-#market-panel .home-feature-card {
+#market-data-panel .home-feature-card {
   background: var(--mkt-paper-card);
   border: 1px solid var(--mkt-line);
   border-radius: 16px;
@@ -446,24 +448,24 @@
   font-family: inherit;
   width: 100%;
 }
-#market-panel .home-feature-card:hover {
+#market-data-panel .home-feature-card:hover {
   transform: translateY(-5px);
   box-shadow: var(--mkt-shadow-lift);
   border-color: var(--mkt-stamp);
 }
-#market-panel .home-feature-card .fc-icon { font-size: 30px; line-height: 1; margin-bottom: 2px; }
-#market-panel .home-feature-card .fc-title {
+#market-data-panel .home-feature-card .fc-icon { font-size: 30px; line-height: 1; margin-bottom: 2px; }
+#market-data-panel .home-feature-card .fc-title {
   font-size: 17px;
   font-weight: 700;
   font-family: var(--mkt-serif);
   color: var(--mkt-ink);
 }
-#market-panel .home-feature-card .fc-desc {
+#market-data-panel .home-feature-card .fc-desc {
   font-size: 13px;
   color: var(--mkt-ink-2);
   line-height: 1.55;
 }
-#market-panel .home-feature-card .fc-arrow {
+#market-data-panel .home-feature-card .fc-arrow {
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -473,38 +475,38 @@
   margin-top: 4px;
   transition: .2s ease;
 }
-#market-panel .home-feature-card:hover .fc-arrow { gap: 10px; }
+#market-data-panel .home-feature-card:hover .fc-arrow { gap: 10px; }
 
 /* ── 入场动效 .fade-up（对齐规格 §4.11）── */
 @media (prefers-reduced-motion: no-preference) {
-  #market-panel .fade-up { animation: mktFadeUp .6s ease both; }
+  #market-data-panel .fade-up { animation: mktFadeUp .6s ease both; }
   @keyframes mktFadeUp {
     from { opacity: 0; transform: translateY(14px); }
     to   { opacity: 1; transform: none; }
   }
 }
 @media (max-width: 700px) {
-  #market-panel .home-feature-grid { grid-template-columns: 1fr; }
+  #market-data-panel .home-feature-grid { grid-template-columns: 1fr; }
 }
 
 /* ── 深色：行交互 / 收藏药丸 / 表格改为 token 青 ── */
-html.theme-dark #market-panel .data-row:hover {
+html.theme-dark #market-data-panel .data-row:hover {
   background-color: rgba(93, 224, 230, .08) !important;
   box-shadow: 0 6px 20px rgba(93, 224, 230, .18) !important;
 }
-html.theme-dark #market-panel .data-row:hover td,
-html.theme-dark #market-panel .data-row:hover .job-link { color: var(--cyan) !important; }
-html.theme-dark #market-panel .job-link { color: var(--text-primary) !important; }
-html.theme-dark #market-panel .interest-btn { border-color: var(--cyan) !important; color: var(--cyan) !important; }
-html.theme-dark #market-panel .interest-btn:hover,
-html.theme-dark #market-panel .interest-btn.interested {
+html.theme-dark #market-data-panel .data-row:hover td,
+html.theme-dark #market-data-panel .data-row:hover .job-link { color: var(--cyan) !important; }
+html.theme-dark #market-data-panel .job-link { color: var(--text-primary) !important; }
+html.theme-dark #market-data-panel .interest-btn { border-color: var(--cyan) !important; color: var(--cyan) !important; }
+html.theme-dark #market-data-panel .interest-btn:hover,
+html.theme-dark #market-data-panel .interest-btn.interested {
   background: var(--cyan) !important;
   color: #0b0e1f !important;
 }
-html.theme-dark #market-panel .card[data-no]::before { color: var(--brass) !important; }
+html.theme-dark #market-data-panel .card[data-no]::before { color: var(--brass) !important; }
 
 /* 深色卡片左侧 4px 渐变光条（对齐规格 §5：用 ::after，避开 data-no 的 ::before） */
-html.theme-dark #market-panel .card::after {
+html.theme-dark #market-data-panel .card::after {
   content: "";
   position: absolute;
   left: 0;
@@ -513,34 +515,34 @@ html.theme-dark #market-panel .card::after {
   width: 4px;
   border-radius: 0 4px 4px 0;
   background: linear-gradient(180deg, var(--accent-from) 0%, var(--accent-to) 100%);
-  box-shadow: 0 0 12px rgba(93, 224, 230, .25);
+  box-shadow: 0 0 12px rgba(224, 106, 82, .22);
   pointer-events: none;
 }
 
-/* 深色：印章 → 青描边 */
-html.theme-dark #market-panel .stamp {
-  border-color: var(--cyan) !important;
-  color: var(--cyan) !important;
+/* 深色：印章 → 朱砂描边 */
+html.theme-dark #market-data-panel .stamp {
+  border-color: var(--stamp) !important;
+  color: var(--stamp) !important;
 }
 
 /* 深色：提示条 → 左边框按语义着色 */
-html.theme-dark #market-panel .alert {
-  background: rgba(30, 35, 70, .85) !important;
+html.theme-dark #market-data-panel .alert {
+  background: rgba(36, 40, 35, .88) !important;
   color: var(--text-primary) !important;
-  border-left: 4px solid var(--cyan) !important;
+  border-left: 4px solid var(--teal) !important;
 }
-html.theme-dark #market-panel .alert-danger { border-left-color: var(--coral) !important; }
-html.theme-dark #market-panel .alert-info { border-left-color: var(--cyan) !important; }
-html.theme-dark #market-panel .alert a { color: var(--cyan) !important; }
+html.theme-dark #market-data-panel .alert-danger { border-left-color: var(--coral) !important; }
+html.theme-dark #market-data-panel .alert-info { border-left-color: var(--cyan) !important; }
+html.theme-dark #market-data-panel .alert a { color: var(--cyan) !important; }
 
 /* 深色：已恢复徽章 */
-html.theme-dark #market-panel .restored-badge {
+html.theme-dark #market-data-panel .restored-badge {
   background: var(--emerald-50) !important;
   color: var(--cyan) !important;
 }
 
 /* 深色：详情按钮 → 语义色渐变 */
-html.theme-dark #market-panel .btn-detail {
+html.theme-dark #market-data-panel .btn-detail {
   background: linear-gradient(135deg, var(--accent-from), var(--accent-to)) !important;
   color: #0b0e1f !important;
   border: none !important;
@@ -548,14 +550,14 @@ html.theme-dark #market-panel .btn-detail {
 }
 
 /* 深色：首页功能卡 → 渐变卡底 + 左侧光条 */
-html.theme-dark #market-panel .home-feature-card {
+html.theme-dark #market-data-panel .home-feature-card {
   background: var(--bg-card) !important;
   border: 1px solid var(--border-card) !important;
   color: var(--text-primary) !important;
   position: relative;
   overflow: hidden;
 }
-html.theme-dark #market-panel .home-feature-card::before {
+html.theme-dark #market-data-panel .home-feature-card::before {
   content: "";
   position: absolute;
   left: 0;
@@ -565,13 +567,13 @@ html.theme-dark #market-panel .home-feature-card::before {
   border-radius: 0 4px 4px 0;
   background: linear-gradient(180deg, var(--accent-from), var(--accent-to));
 }
-html.theme-dark #market-panel .home-feature-card:hover { border-color: var(--accent-from) !important; }
-html.theme-dark #market-panel .home-feature-card .fc-title { color: #fff !important; }
-html.theme-dark #market-panel .home-feature-card .fc-desc { color: var(--text-secondary) !important; }
-html.theme-dark #market-panel .home-feature-card .fc-arrow { color: var(--cyan) !important; }
+html.theme-dark #market-data-panel .home-feature-card:hover { border-color: var(--accent-from) !important; }
+html.theme-dark #market-data-panel .home-feature-card .fc-title { color: #fff !important; }
+html.theme-dark #market-data-panel .home-feature-card .fc-desc { color: var(--text-secondary) !important; }
+html.theme-dark #market-data-panel .home-feature-card .fc-arrow { color: var(--stamp) !important; }
 
 /* 纸张肌理感：柔和米色渐变 + 细颗粒 */
-#market-panel {
+#market-data-panel {
   background:
     radial-gradient(1200px 600px at 15% -5%, rgba(196, 79, 58, 0.05), transparent 60%),
     radial-gradient(900px 500px at 95% 10%, rgba(196, 79, 58, 0.04), transparent 55%),
@@ -1189,57 +1191,57 @@ html.theme-dark #market-panel .home-feature-card .fc-arrow { color: var(--cyan) 
 
 @keyframes mkt-spin { to { transform: rotate(360deg); } }
 
-/* ── 深色 SaaS 风（.market-theme-dark）：还原 job-crawler 深色主题 ── */
-html.theme-dark #market-panel {
-  --mkt-ink: #E8EAED;
-  --mkt-ink-2: #B6BEC9;
-  --mkt-ink-muted: #7C8698;
-  --mkt-line: rgba(255, 255, 255, 0.12);
-  --mkt-line-strong: rgba(255, 255, 255, 0.26);
-  --mkt-stamp: var(--mkt-accent, #6EE7E0);
-  --mkt-stamp-deep: var(--mkt-accent, #5EEAD4);
-  --mkt-stamp-bright: var(--mkt-accent, #8BF3EA);
-  --mkt-stamp-soft: rgba(110, 231, 224, 0.12);
+/* ── 深色「墨夜纸墨」（v7.2）：与全站深色同源，替换旧赛博蓝紫 ── */
+html.theme-dark #market-data-panel {
+  --mkt-ink: #F2EFE6;
+  --mkt-ink-2: rgba(242, 239, 230, 0.62);
+  --mkt-ink-muted: rgba(242, 239, 230, 0.45);
+  --mkt-line: rgba(240, 235, 220, 0.12);
+  --mkt-line-strong: rgba(240, 235, 220, 0.26);
+  --mkt-stamp: var(--stamp);
+  --mkt-stamp-deep: var(--indigo-700);
+  --mkt-stamp-bright: var(--indigo-400);
+  --mkt-stamp-soft: rgba(var(--primary-rgb), 0.12);
   --mkt-shadow: 0 2px 6px rgba(0, 0, 0, 0.35), 0 10px 30px -10px rgba(0, 0, 0, 0.5);
   --mkt-shadow-lift: 0 4px 12px rgba(0, 0, 0, 0.4), 0 18px 44px -12px rgba(0, 0, 0, 0.6);
 
   background:
-    radial-gradient(1100px 600px at 10% -8%, rgba(99, 102, 241, 0.18), transparent 60%),
-    radial-gradient(900px 520px at 95% 5%, rgba(56, 189, 248, 0.10), transparent 55%),
-    linear-gradient(160deg, #0F1226 0%, #141A33 45%, #1A1030 100%);
+    radial-gradient(1100px 600px at 12% -8%, rgba(224, 106, 82, 0.08), transparent 60%),
+    radial-gradient(900px 520px at 95% 5%, rgba(201, 169, 97, 0.05), transparent 55%),
+    var(--paper);
   color: var(--mkt-ink);
 }
 
 /* 深色下卡片毛玻璃 */
-html.theme-dark #market-panel .mkt-card,
-html.theme-dark #market-panel .mkt-stat-card,
-html.theme-dark #market-panel .mkt-analyze,
-html.theme-dark #market-panel .mkt-dim-row,
-html.theme-dark #market-panel .mkt-rank-card {
+html.theme-dark #market-data-panel .mkt-card,
+html.theme-dark #market-data-panel .mkt-stat-card,
+html.theme-dark #market-data-panel .mkt-analyze,
+html.theme-dark #market-data-panel .mkt-dim-row,
+html.theme-dark #market-data-panel .mkt-rank-card {
   background: rgba(255, 255, 255, 0.055);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
   border-color: rgba(255, 255, 255, 0.12);
 }
 
-html.theme-dark #market-panel .mkt-resume-ta {
+html.theme-dark #market-data-panel .mkt-resume-ta {
   background: rgba(255, 255, 255, 0.07);
   color: var(--mkt-ink);
   border-color: rgba(255, 255, 255, 0.22);
 }
 
-html.theme-dark #market-panel .mkt-resume-ta:focus {
+html.theme-dark #market-data-panel .mkt-resume-ta:focus {
   border-color: var(--mkt-stamp);
   box-shadow: 0 0 0 3px var(--mkt-stamp-soft);
 }
 
-html.theme-dark #market-panel .mkt-topnav-btn.active {
+html.theme-dark #market-data-panel .mkt-topnav-btn.active {
   background: var(--mkt-stamp);
   color: #0F1226;
   border-color: var(--mkt-stamp);
 }
 
-html.theme-dark #market-panel .mkt-seal-mark {
+html.theme-dark #market-data-panel .mkt-seal-mark {
   background: linear-gradient(150deg, var(--mkt-stamp-bright), var(--mkt-stamp));
   color: #0F1226;
   box-shadow:
@@ -1247,19 +1249,19 @@ html.theme-dark #market-panel .mkt-seal-mark {
     0 0 22px -4px var(--mkt-stamp-soft);
 }
 
-html.theme-dark #market-panel .mkt-btn-ghost {
+html.theme-dark #market-data-panel .mkt-btn-ghost {
   background: rgba(255, 255, 255, 0.07);
   border-color: rgba(255, 255, 255, 0.22);
   color: var(--mkt-ink-2);
 }
 
-html.theme-dark #market-panel .mkt-gap-summary { background: rgba(255, 255, 255, 0.045); }
-html.theme-dark #market-panel .mkt-dim-bar { background: rgba(255, 255, 255, 0.12); }
-html.theme-dark #market-panel .mkt-skill-tag { background: rgba(255, 255, 255, 0.05); }
+html.theme-dark #market-data-panel .mkt-gap-summary { background: rgba(255, 255, 255, 0.045); }
+html.theme-dark #market-data-panel .mkt-dim-bar { background: rgba(255, 255, 255, 0.12); }
+html.theme-dark #market-data-panel .mkt-skill-tag { background: rgba(255, 255, 255, 0.05); }
 
 /* ── 响应式 ── */
 @media (max-width: 900px) {
-  #market-panel { padding: 16px 14px 32px; }
+  #market-data-panel { padding: 16px 14px 32px; }
   .mkt-filters { grid-template-columns: 1fr 1fr; }
 }
 
@@ -1268,11 +1270,19 @@ html.theme-dark #market-panel .mkt-skill-tag { background: rgba(255, 255, 255, 0
   .mkt-topbar { gap: 10px; }
 }
 
+/* ── v7.2: 印章装饰 hover「盖章」微交互（回正放大，呼应 motion.css stamp-land）── */
+#market-data-panel .stamp,
+#market-data-panel .mkt-seal-mark {
+  transition: transform var(--dur-base) var(--ease-spring);
+}
+#market-data-panel .stamp:hover { transform: rotate(0deg) scale(1.06); }
+#market-data-panel .mkt-seal-mark:hover { transform: rotate(-3deg) scale(1.08); }
+
 /* ── 动效降级 ── */
 @media (prefers-reduced-motion: reduce) {
-  #market-panel *,
-  #market-panel *::before,
-  #market-panel *::after {
+  #market-data-panel *,
+  #market-data-panel *::before,
+  #market-data-panel *::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;

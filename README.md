@@ -2,7 +2,7 @@
 <h1 align="center">🤖 AI 模拟面试官与职业规划</h1>
 
 <p align="center">
-  <strong>v7.1 — 全站 UI 统一「纸墨印章」：Design Token 重映射 / 手动双主题 + 语义色切换 / 市场数据 DOM 级复刻 / 全国范围采集 / 岗位收藏持久化</strong>
+  <strong>v7.2 — 动效体系（View Transitions / 骨架屏 / 盖章仪式感）+ 深色「墨夜纸墨」重构 + 市场页样式作用域修复</strong>
 </p>
 
 <p align="center">
@@ -26,8 +26,12 @@ AI 模拟面试官是一个面向求职者的智能面试练习平台。上传�
 
 ### 核心亮点
 
+- **动效体系与页面仪式感（v7.2）**：新增 `motion.css` 动效基建层——面板切换优先走 **View Transitions API**（降级 fade+slide）、同屏子元素 stagger 错峰入场、骨架屏（纸纹 shimmer）替代 spinner、登录成功**印章盖章**反馈、报告评分环描边绘制 + 分数滚动、表单错误 shake、按钮按压墨点涟漪；全部动效挂 `prefers-reduced-motion` 降级（评审全文见 `docs/UI评审_v7.2_动效与高级感升级.md`）
+- **深色主题重构为「墨夜纸墨」（v7.2）**：推翻 v7.1 赛博蓝紫（青/粉/金/紫四色切换器一并移除）——深色与浅色同源：炭墨纸底 + 朱砂 `#E06A52` / 黄铜 `#C9A961` / 墨青 `#5FA896`，同一枚印章在夜里的样子；旧变量名保留为兼容别名自动跟随
+- **侧边栏信息架构分组（v7.2）**：11 个入口平铺 → 面试域 / 资产域 / 洞察域 / 招聘端 + 账户四组分区，组标题随登录身份联动显隐
+- **修复市场页设计系统从未生效（v7.2）**：v7.1 的 `market.css` 全部样式作用域误写为 `#market-panel`（真实 id 为 `#market-data-panel`），约 600 条规则自引入起即为死规则——市场页其实一直以「无设计系统」状态渲染；修正后纸墨印章 1:1 复刻才真正上线，深色残留的赛博蓝紫硬编码一并清理
 - **全站 UI 统一为「纸墨印章」风格（v7.1）**：11 个 Tab 统一视觉语言（功能布局与 DOM 结构不变）——`tokens.css` 变量名保持、仅重映射色值（印章红 / 米纸 / 墨色 / 青绿 / 黄铜），约 50 处字面 `rgba()` 改 `rgba(var(--primary-rgb), α)` 双主题自动跟随；设计规格沉淀为 `docs/job-crawler-UI设计系统规格.md`，后续改造以此为唯一基线
-- **手动双主题 + 语义色切换（v7.1）**：新增 `themeToggle.js` + `theme.css`，主题由跟随系统改为**手动切换 `html.theme-dark`**（localStorage 记忆、内联脚本防 FOUC、派发 `theme:changed`），深色下可切青/粉/金/紫语义色；废弃 `pages/dark.css` 中 Indigo 时代的硬编码修正，消除深浅割裂
+- **手动双主题（v7.1，v7.2 重构配色）**：`themeToggle.js` + `theme.css`，**手动切换 `html.theme-dark`**（localStorage 记忆、内联脚本防 FOUC、派发 `theme:changed`）；废弃 `pages/dark.css` 中 Indigo 时代的硬编码修正，消除深浅割裂
 - **市场数据 Tab DOM 级 1:1 复刻（v7.1）**：采集/列表/详情三视图对齐开源项目 job-crawler（省份→城市级联 + 已选 `tag-chip`、`.data-row` 整行上浮点击跳详情、`data-no` 角标 + `.stamp` 印章 + `.alert` / `.fade-up` 入场动效），增强能力（跨岗位对比 / 统计概览 / 学历薪资筛选 / Gap 分析）全部保留；`market.css` 清理死代码 597 行
 - **市场采集放开全国范围 + 收藏持久化（v7.1）**：`POST /api/market/crawl` 的 `cities` 改为可选（不传 = 全国搜索，底层本就支持）；新增 `job_postings.is_interested` 字段（含 `PRAGMA` 幂等迁移）+ `POST /api/market/jobs/{id}/interest`，「感兴趣」由 localStorage 升级为落库，重新采集不清空收藏
 - **双端平台化（v7.0）**：轻量认证（bcrypt + JWT，可关闭开关 `AUTH_ENABLED=false` 回退旧行为）+ 资源归属（会话/简历/岗位按 owner 隔离，WebSocket 握手校验身份）+ **报告分享链接**（招聘者免登录只读，输出侧强制脱敏手机号/邮箱/身份证，可撤销/可设有效期/带访问计数）+ **简历库/岗位库**（跨会话复用，不必重复上传与解析）
@@ -295,11 +299,12 @@ AI-simulated-interviewer/
 │       │   ├── marketData.js     # [v4.1] 市场数据 Tab（采集/岗位库/详情/分析，v7.1 DOM 复刻 job-crawler）
 │       │   ├── memoryGraph.js    # [v6.4] 长期记忆 Tab（2D SVG 薄弱点图谱 + 明细联动 + resolved）
 │       │   ├── voice.js          # 语音交互（TTS + STT，v6.4 世代守卫真打断）
-│       │   ├── themeToggle.js    # [v7.1 NEW] 全局主题切换器（手动深浅 + 语义色切换）
+│       │   ├── themeToggle.js    # [v7.1 NEW] 全局主题切换器（手动深浅；v7.2 移除语义色切换器）
 │       │   └── utils.js          # 工具函数（含 confirm 弹窗 / emptyState 三件套）
 │       └── css/
 │           ├── tokens.css        # Design Tokens（v7.1 纸墨印章色值重映射 + RGB 三元组）
-│           ├── theme.css         # [v7.1 NEW] 主题切换相关样式（html.theme-dark / 语义色切换器）
+│           ├── theme.css         # [v7.1 NEW] 主题切换相关样式（html.theme-dark；v7.2 重写为「墨夜纸墨」覆盖层）
+│           ├── motion.css        # [v7.2 NEW] 动效基建层（面板过渡/stagger/骨架屏/盖章/countup/shake/降级）
 │           ├── base.css          # reset + 排版
 │           ├── components.css    # 框架组件
 │           └── pages/            # 领域样式（含 market.css 纸墨印章 / memory.css 记忆图谱）
@@ -519,7 +524,7 @@ AUTH_SECRET=...      # 可选；不配置时自动生成并持久化到 data/.au
 ### 宪章与契约（v3.2）
 
 - [不变硬约束 CHARTER.md](CHARTER.md)：架构原则 / 诊断五维度 / L1-L4 分层规则 / 决策记录卡模板 / 已知局限
-- [版本迭代叙事 CHANGELOG.md](CHANGELOG.md)：v2 → v7.1 各轮新增、推翻、修复
+- [版本迭代叙事 CHANGELOG.md](CHANGELOG.md)：v2 → v7.2 各轮新增、推翻、修复
 - [.importlinter](.importlinter)：分层依赖契约文件（INI 格式，与 CHARTER 约束同步）
 
 ### 自动化测试

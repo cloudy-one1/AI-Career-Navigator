@@ -164,120 +164,126 @@
 }
 
 /* ===================================================
-   v5.0: 深色主题 —— 手动切换（html.theme-dark）
-   对齐 job-crawler theme-dark.css：原 HTML 结构 / 类名
-   100% 不动，仅通过本作用域变量重映射生效。
+   v7.2: 深色主题「墨夜纸墨」—— 手动切换（html.theme-dark）
+   ---------------------------------------------------
+   设计意图：深色不再另起「赛博霓虹」一套审美，而是同一枚
+   印章在夜里的样子——炭墨纸底、朱砂提亮、黄铜辅助。
+   原 DOM / 类名 100% 不动，仅通过本作用域变量重映射生效。
    浅色（默认）下本块 0 影响。
+   旧变量名（--cyan/--pink/--coral/--accent-from 等）保留为
+   兼容别名，值已重映射为墨夜色板，旧引用自动跟随。
    =================================================== */
 html.theme-dark {
   /* ── 深色专用 token ── */
-  --bg-page: linear-gradient(135deg, #1C1F3B 0%, #16213E 50%, #1A1040 100%);
-  --bg-card: linear-gradient(145deg, rgba(30,35,70,0.85) 0%, rgba(22,28,62,0.95) 100%);
-  --text-primary: #FFFFFF;
-  --text-secondary: rgba(255,255,255,0.55);
-  --text-muted: rgba(255,255,255,0.45);
-  --cyan:#5DE0E6; --pink:#FF6EC7; --gold:#FFB84D; --lavender:#B48CFF; --coral:#FF7B8A;
-  --border-card: rgba(100,120,200,0.15);
-  /* 强调色（默认 cyan，由 themeToggle.js 切换 --accent-from/--accent-to） */
-  --accent-from:#5DE0E6;
-  --accent-to:#B48CFF;
+  --bg-page: linear-gradient(165deg, #191C18 0%, #131512 55%, #171511 100%);
+  --bg-card: linear-gradient(160deg, rgba(36,40,35,0.92) 0%, rgba(26,30,26,0.96) 100%);
+  --text-primary: #F2EFE6;
+  --text-secondary: rgba(242,239,230,0.60);
+  --text-muted: rgba(242,239,230,0.45);
+  --cyan:#5FA896;            /* 兼容别名 → 墨青（成功/链接） */
+  --pink:#E06A52;            /* 兼容别名 → 朱砂 */
+  --gold:#C9A961; --lavender:#C9A961; --coral:#FF8A75;
+  --border-card: rgba(240,235,220,0.14);
+  /* 强调色（v7.2 起固定为朱砂，不再提供语义色切换） */
+  --accent-from:#E06A52;
+  --accent-to:#D85C45;
 
   /* ── 米色 token 重映射（内联 var(--*) 自动跟随）── */
-  --paper:#161A33;
-  --card:#1E2346;
-  --ink:#FFFFFF;
-  --ink-soft:rgba(255,255,255,0.55);
-  --stamp:#B48CFF;
-  --brass:#8B9FFF;
-  --line:rgba(100,120,200,0.18);
-  --teal:#5DE0E6;
-  --teal-soft:rgba(93,224,230,0.10);
-  --accent:#5DE0E6;
-  --accent-light:rgba(93,224,230,0.12);
-  --gold:#FFB84D;
+  --paper:#161916;
+  --card:#1E221E;
+  --ink:#F2EFE6;
+  --ink-soft:rgba(242,239,230,0.60);
+  --stamp:#E06A52;
+  --brass:#C9A961;
+  --line:rgba(240,235,220,0.12);
+  --teal:#5FA896;
+  --teal-soft:rgba(95,168,150,0.12);
+  --accent:#E06A52;
+  --accent-light:rgba(224,106,82,0.14);
+  --gold:#C9A961;
 
   /* ── 阶梯重映射（让 var(--indigo-*) / var(--slate-*) 自动跟随深色）── */
-  --indigo-50:rgba(93,224,230,0.10);
-  --indigo-100:rgba(93,224,230,0.16);
-  --indigo-400:#5DE0E6;
-  --indigo-500:#5DE0E6;
-  --indigo-600:var(--accent-from);
-  --indigo-700:#7DE9EE;
-  --indigo-800:#B48CFF;
+  --indigo-50:rgba(224,106,82,0.12);
+  --indigo-100:rgba(224,106,82,0.20);
+  --indigo-400:#E06A52;
+  --indigo-500:#E06A52;
+  --indigo-600:#E06A52;
+  --indigo-700:#EC8169;
+  --indigo-800:#FF8A75;
 
-  --amber-50:rgba(255,184,77,0.12);
-  --amber-400:#FFCB70;
-  --amber-500:#FFB84D;
-  --amber-600:#FFA726;
+  --amber-50:rgba(201,169,97,0.12);
+  --amber-400:#D9BC77;
+  --amber-500:#C9A961;
+  --amber-600:#B3904A;
 
-  --green-50:rgba(93,224,230,0.10);
-  --green-500:#5DE0E6;
-  --emerald-50:rgba(93,224,230,0.10);
-  --emerald-200:rgba(93,224,230,0.28);
-  --emerald-500:#5DE0E6;
-  --emerald-600:#5DE0E6;
-  --emerald-700:#5DE0E6;
+  --green-50:rgba(95,168,150,0.12);
+  --green-500:#5FA896;
+  --emerald-50:rgba(95,168,150,0.12);
+  --emerald-200:rgba(95,168,150,0.30);
+  --emerald-500:#5FA896;
+  --emerald-600:#6BB8A5;
+  --emerald-700:#7CC6B4;
 
-  --red-50:rgba(255,123,138,0.12);
-  --red-500:#FF7B8A;
-  --blue-500:#5DE0E6;
-  --orange-500:#FFB84D;
+  --red-50:rgba(255,138,117,0.12);
+  --red-500:#FF8A75;
+  --blue-500:#5FA896;
+  --orange-500:#C9A961;
 
-  --slate-50:#161A33;
-  --slate-100:#1E2346;
-  --slate-200:rgba(100,120,200,0.18);
-  --slate-300:rgba(100,120,200,0.28);
-  --slate-400:rgba(255,255,255,0.45);
-  --slate-500:rgba(255,255,255,0.55);
-  --slate-600:rgba(255,255,255,0.65);
-  --slate-700:rgba(255,255,255,0.75);
-  --slate-800:#FFFFFF;
-  --slate-900:#FFFFFF;
+  --slate-50:#161916;
+  --slate-100:#1E221E;
+  --slate-200:rgba(240,235,220,0.12);
+  --slate-300:rgba(240,235,220,0.20);
+  --slate-400:rgba(242,239,230,0.45);
+  --slate-500:rgba(242,239,230,0.60);
+  --slate-600:rgba(242,239,230,0.70);
+  --slate-700:rgba(242,239,230,0.80);
+  --slate-800:#F2EFE6;
+  --slate-900:#FBF9F2;
 
   /* ── 语义别名 ── */
-  --color-bg:#161A33;
-  --color-surface:#1E2346;
-  --color-text:#FFFFFF;
-  --color-text-secondary:rgba(255,255,255,0.55);
-  --color-text-muted:rgba(255,255,255,0.45);
-  --color-border:rgba(100,120,200,0.18);
-  --color-primary:var(--accent-from);
-  --color-primary-hover:#7DE9EE;
-  --color-primary-soft:rgba(93,224,230,0.12);
-  --color-success:#5DE0E6;
-  --color-warning:#FFB84D;
-  --color-danger:#FF7B8A;
-  --color-info:#5DE0E6;
-  --color-accent:#B48CFF;
+  --color-bg:#161916;
+  --color-surface:#1E221E;
+  --color-text:#F2EFE6;
+  --color-text-secondary:rgba(242,239,230,0.60);
+  --color-text-muted:rgba(242,239,230,0.45);
+  --color-border:rgba(240,235,220,0.12);
+  --color-primary:#E06A52;
+  --color-primary-hover:#EC8169;
+  --color-primary-soft:rgba(224,106,82,0.14);
+  --color-success:#5FA896;
+  --color-warning:#C9A961;
+  --color-danger:#FF8A75;
+  --color-info:#5FA896;
+  --color-accent:#C9A961;
 
   /* ── 旧别名同步（style.css 大量引用，必须覆盖）── */
-  --primary:var(--accent-from);
-  --primary-light:#7DE9EE;
-  --primary-dark:#B48CFF;
-  --success:#5DE0E6;
-  --warning:#FFB84D;
-  --danger:#FF7B8A;
-  --bg:#161A33;
-  --border:rgba(100,120,200,0.18);
-  --text:#FFFFFF;
-  --text-secondary:rgba(255,255,255,0.55);
-  --text-muted:rgba(255,255,255,0.45);
+  --primary:#E06A52;
+  --primary-light:#EC8169;
+  --primary-dark:#FF8A75;
+  --success:#5FA896;
+  --warning:#C9A961;
+  --danger:#FF8A75;
+  --bg:#161916;
+  --border:rgba(240,235,220,0.12);
+  --text:#F2EFE6;
+  --text-secondary:rgba(242,239,230,0.60);
+  --text-muted:rgba(242,239,230,0.45);
 
-  /* ── 阴影 / 玻璃态 ── */
-  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.40);
-  --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.50);
-  --shadow-lg: 0 12px 32px -8px rgba(0, 0, 0, 0.60);
-  --shadow-xl: 0 24px 48px -12px rgba(0, 0, 0, 0.70), 0 8px 16px -8px rgba(0, 0, 0, 0.50);
-  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.35);
-  --shadow-glow: 0 0 0 4px rgba(93, 224, 230, 0.18);
-  --glass-bg: rgba(30, 35, 70, 0.72);
-  --glass-border: rgba(100, 120, 200, 0.28);
+  /* ── 阴影 / 玻璃态（墨色调）── */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.35);
+  --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.45);
+  --shadow-lg: 0 12px 32px -8px rgba(0, 0, 0, 0.55);
+  --shadow-xl: 0 24px 48px -12px rgba(0, 0, 0, 0.65), 0 8px 16px -8px rgba(0, 0, 0, 0.45);
+  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.30);
+  --shadow-glow: 0 0 0 4px rgba(224, 106, 82, 0.16);
+  --glass-bg: rgba(30, 34, 30, 0.72);
+  --glass-border: rgba(240, 235, 220, 0.14);
 
-  /* ── RGB 三元组（深色：青 / 金 / 珊瑚）── */
-  --primary-rgb: 93, 224, 230;
-  --success-rgb: 93, 224, 230;
-  --warning-rgb: 255, 184, 77;
-  --danger-rgb: 255, 123, 138;
-  --ink-rgb: 255, 255, 255;
+  /* ── RGB 三元组（墨夜：朱砂 / 墨青 / 黄铜）── */
+  --primary-rgb: 224, 106, 82;
+  --success-rgb: 95, 168, 150;
+  --warning-rgb: 201, 169, 97;
+  --danger-rgb: 255, 138, 117;
+  --ink-rgb: 242, 239, 230;
 }

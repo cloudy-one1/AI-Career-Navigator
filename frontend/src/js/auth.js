@@ -6,7 +6,7 @@
 // 而不是假设登录一定存在。
 // ===================================================
 
-import { $, el, toast } from './utils.js';
+import { $, el, toast, stampIn, shake } from './utils.js';
 
 const TOKEN_KEY = 'aims_token';
 const USER_KEY = 'aims_user';
@@ -193,7 +193,14 @@ function renderAuthForm(defaultMode = 'login') {
         setToken(data.access_token);
         _user = data.user;
         toast(isLogin ? '登录成功' : '注册成功', 'success');
-        renderPanel();
+        // v7.2: 登录成功的「盖章」仪式感——印章落在登录卡上再切换视图
+        const card = form.closest('.card');
+        if (card) {
+          const seal = el('div', { className: 'auth-seal', 'aria-hidden': 'true', textContent: '面' });
+          card.appendChild(seal);
+          stampIn(seal);
+        }
+        setTimeout(renderPanel, 650);
         // v7.0.1: 携带身份与"刚登录"标记——app.js 据此按角色分流
         // （招聘者 → 收件箱；求职者 → 留在原处）
         window.dispatchEvent(new CustomEvent('auth:changed', {
@@ -202,6 +209,8 @@ function renderAuthForm(defaultMode = 'login') {
       } catch (err) {
         errBox.textContent = err.message || '操作失败，请重试';
         errBox.classList.remove('hidden');
+        // v7.2: 校验失败水平 shake，位置感反馈
+        shake(form);
         submit.disabled = false;
         submit.textContent = isLogin ? '登录' : '注册并登录';
       }

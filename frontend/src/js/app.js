@@ -32,6 +32,15 @@ function applyRoleView(user) {
       : audience !== 'recruiter';                // 求职者/匿名：看不到收件箱
     btn.classList.toggle('hidden', !show);
   });
+  // v7.2: 分组小标题随身份显隐（空组不留孤立标题）
+  $$('.nav-group-label').forEach(lbl => {
+    const audience = lbl.dataset.audience;
+    if (!audience) return;                       // 无标记 = 双端通用（账户组）
+    const show = isRecruiter
+      ? audience === 'recruiter'
+      : audience !== 'recruiter';
+    lbl.classList.toggle('hidden', !show);
+  });
 
   // 身份切换后当前停留的面板可能已被隐藏——招聘者落到收件箱，
   // 求职者若停在收件箱则回到面试页
@@ -50,23 +59,41 @@ function switchTab(tabName) {
     else btn.removeAttribute('aria-current');
   });
 
-  // 更新面板
-  $$('.panel').forEach(p => {
-    p.classList.toggle('active', p.id === `${tabName}-panel`);
-  });
+  // v7.2: 面板切换过渡。Chromium 走 View Transitions API（旧页淡出+新页上滑），
+  // 其余浏览器降级为 .panel-enter 入场动画（motion.css）+ 子元素 stagger。
+  const apply = () => {
+    $$('.panel').forEach(p => {
+      const activating = p.id === `${tabName}-panel`;
+      p.classList.remove('panel-enter');
+      p.classList.toggle('active', activating);
+      if (activating) {
+        p.classList.add('panel-enter');
+        // 兜底：动画时钟被冻结时（后台标签页节流/极慢设备），
+        // stagger 子元素会停在 opacity:0——超时后摘除类，内容立即落到可见态
+        setTimeout(() => p.classList.remove('panel-enter'), 1200);
+      }
+    });
 
-  // 初始化对应面板
-  if (tabName === 'interview') initInterview();
-  else if (tabName === 'report') initReport();
-  else if (tabName === 'history') initHistory();
-  else if (tabName === 'question-bank') initQuestionBank();
-  else if (tabName === 'career-plan') initCareerPlan();
-  else if (tabName === 'market-data') initMarketData();
-  else if (tabName === 'memory') initMemory();
-  else if (tabName === 'resume-library') initResumeLibrary();
-  else if (tabName === 'position-library') initPositionLibrary();
-  else if (tabName === 'recruiter-inbox') initRecruiterInbox();
-  else if (tabName === 'account') initAuth();
+    // 初始化对应面板
+    if (tabName === 'interview') initInterview();
+    else if (tabName === 'report') initReport();
+    else if (tabName === 'history') initHistory();
+    else if (tabName === 'question-bank') initQuestionBank();
+    else if (tabName === 'career-plan') initCareerPlan();
+    else if (tabName === 'market-data') initMarketData();
+    else if (tabName === 'memory') initMemory();
+    else if (tabName === 'resume-library') initResumeLibrary();
+    else if (tabName === 'position-library') initPositionLibrary();
+    else if (tabName === 'recruiter-inbox') initRecruiterInbox();
+    else if (tabName === 'account') initAuth();
+  };
+
+  const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (document.startViewTransition && !reducedMotion) {
+    document.startViewTransition(apply);
+  } else {
+    apply();
+  }
 
   updateInterviewStatus(tabName);
 }

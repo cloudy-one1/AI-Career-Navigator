@@ -451,3 +451,25 @@
   .user-btn-label { display: none; }
   .user-btn { padding: 5px; }
 }
+
+/* ── v7.2: 登录成功的「盖章」落款（JS stampIn 触发，落定后随视图重绘消失）── */
+.auth-card { position: relative; overflow: hidden; }
+.auth-seal {
+  position: absolute;
+  right: 18px;
+  top: 12px;
+  width: 56px;
+  height: 56px;
+  border-radius: 50%;
+  border: 2.5px solid var(--stamp);
+  color: var(--stamp);
+  display: grid;
+  place-items: center;
+  font-family: var(--font-serif);
+  font-weight: 900;
+  font-size: 24px;
+  letter-spacing: 0.1em;
+  opacity: 0.9;
+  pointer-events: none;
+  background: rgba(var(--primary-rgb), 0.06);
+}

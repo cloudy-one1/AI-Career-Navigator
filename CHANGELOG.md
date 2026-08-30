@@ -1,6 +1,42 @@
 # 变更日志（CHANGELOG）
 
-> 记录 v2 → v7.1 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+> 记录 v2 → v7.2 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+
+---
+
+## v7.2.0 动效体系 + 「墨夜纸墨」深色重构 + 市场页样式作用域修复（2026-08-30）
+
+> 起因是 UI 评审发现「双主题审美割裂 + 面板零过渡 + 动效碎片化」三件拉低质感的事（评审全文见 `docs/UI评审_v7.2_动效与高级感升级.md`）。本轮只动表现层：后端、业务逻辑、DOM 结构与类名体系全部不变。
+
+### 1. 动效基建 `src/css/motion.css`（新增层）
+
+- 动效 token 扩展：`--dur-gesture(200ms) / --dur-reveal(500ms) / --ease-emphasized / --stagger(60ms)`，全站动效时长/缓动收编进 token，页面不得私写数值。
+- **面板切换过渡**：`app.js switchTab()` 优先走 **View Transitions API**（旧页淡出 + 新页上滑），不支持时降级为 `.panel-enter` 入场动画；新面板同屏子元素按 `--stagger` 错峰入场（最多编排前 10 个）。
+- **骨架屏**：`utils.js skeletonBlock()`（纸纹 shimmer 扫光）替代「廉价 spinner」——接入 report 加载、history `loadingIndicator`、recruiterInbox、shareReport 四处。
+- **仪式感动效**：`stampIn()` 印章盖章（scale 落定 + 墨晕扩散，登录/注册成功落在登录卡上，650ms 后切视图）；`countUp()` 数字滚动（报告页评分环 0→总分滚动 + `.ring-draw` 环形描边绘制）；`shake()` 表单校验失败水平抖动；`.btn-press` 按压墨点涟漪；`.stream-box` 诊断流式框左侧朱砂流光。
+- 全部动效挂 `prefers-reduced-motion` 降级（motion.css 自带 + 沿用 base.css 全局机制）。
+
+### 2. 深色主题重构：赛博蓝紫 →「墨夜纸墨」
+
+- **推翻 v7.1 的深色配色**（`#1C1F3B` 蓝紫渐变 + 青/粉/金/紫霓虹 + 四色语义切换器）：深色不再是另一套审美，而是同一枚印章在夜里的样子——炭墨纸底 `#161916→#1E221E`（墨绿灰调）、印章红提亮为朱砂 `#E06A52`、黄铜 `#C9A961`、墨青 `#5FA896`，与浅色纸墨同源。
+- `themeToggle.js` 移除语义色切换器（给用户四种强调色选择是「不自信」的信号，高级产品替用户做决定）；`theme.css` 全量重写为墨夜覆盖层。
+- 旧变量名（`--cyan/--pink/--coral/--accent-from` 等）保留为兼容别名、值重映射进墨夜色板，market.css 等旧引用自动跟随，零改名成本。
+
+### 3. 信息架构与框架精修
+
+- 侧边栏 11 入口平铺 → **四组分区**：面试域（模拟面试/历史/题库）、资产域（简历库/岗位库）、洞察域（报告/市场/记忆/职业规划）、招聘端（收件箱，按身份显隐）+ 账户；组标题随身份过滤联动（`applyRoleView` 扩展）。
+- 修正 `<title>`（原「AI面试官与职业规划 v3.2」→「AI 模拟面试官」）与版本徽章 v3.2 → v7.2；品牌印章 hover「回正放大」微动效。
+
+### 4. 修复：市场页整套设计系统从未生效（v7.1 遗留）
+
+- **`market.css` 全部样式作用域写在 `#market-panel`，而真实面板 id 是 `#market-data-panel`**——约 600 条规则（含全部深色覆盖）自引入起就是死规则，市场页一直以「无设计系统」的裸状态渲染。全局替换修正作用域 id。
+- 清理 market.css 深色段残留的赛博蓝紫硬编码（indigo/sky 径向光晕 + `#0F1226→#1A1030` 渐变 + 青色印章描边），统一并入墨夜纸墨色板。
+
+### 5. 回归中发现并修复的存量 bug（实数据链路验证时暴露）
+
+- **报告页「生成分享链接」报 `request is not defined`（v7.0 起）**：`report.js` 三处分享接口调用使用 `request()` 但未从 `api.js` 导入——分享功能自 v7.0 上线起实际不可用。补齐 import。
+- **分享页/招聘端收件箱五维雷达图从未绘制（v7.0.1 起）**：`shareReport.js` 的 `mountRadar(scope)` 内部引用了不在作用域内的 `data` 变量，每次挂载抛 `ReferenceError` 被静默吞掉。改为 `mountRadar(container, data)` 显式传参；顺带把雷达硬编码 Indigo 蓝（canvas 不解析 CSS 变量）改为印章红色板。
+- 面板入场动画兜底：动画时钟被冻结时（后台标签页节流），stagger 子元素会停在 `opacity:0`——`switchTab` 在 1.2s 后强制摘除 `panel-enter`，内容直接落到可见态。
 
 ---
 

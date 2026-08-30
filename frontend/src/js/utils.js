@@ -115,3 +115,56 @@ export function emptyState({ icon = '📭', title = '暂无数据', desc = '' } 
   if (desc) wrap.appendChild(el('div', { className: 'empty-desc', textContent: desc }));
   return wrap;
 }
+
+// ===== v7.2 动效工具（样式统一在 motion.css，全站共享）=====
+
+/** 骨架屏占位块（纸纹 shimmer 扫光），替代 spinner 的加载表达。
+ *  lines: 行数；widths: 每行宽度类（'w60' | 'w80' | 'w100'），默认末行短。 */
+export function skeletonBlock({ lines = 3, widths = ['w100', 'w80', 'w60'] } = {}) {
+  const wrap = el('div', { className: 'skeleton', 'aria-hidden': 'true' });
+  for (let i = 0; i < lines; i++) {
+    wrap.appendChild(el('div', { className: `skeleton-line ${widths[i % widths.length]}` }));
+  }
+  return wrap;
+}
+
+/** 数字滚动（评分环 / 统计卡揭晓）。easeOutCubic，尊重减弱动效偏好。 */
+export function countUp(target, to, { duration = 800, decimals = 1 } = {}) {
+  if (!target) return;
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (reduced || !Number.isFinite(to)) {
+    target.textContent = to.toFixed(decimals);
+    return;
+  }
+  const start = performance.now();
+  const tick = now => {
+    const p = Math.min((now - start) / duration, 1);
+    const eased = 1 - Math.pow(1 - p, 3);
+    target.textContent = (to * eased).toFixed(decimals);
+    if (p < 1) requestAnimationFrame(tick);
+  };
+  requestAnimationFrame(tick);
+}
+
+/** 印章「盖章」仪式感：给元素挂 .stamp-in 并同步一圈墨晕。 */
+export function stampIn(target) {
+  if (!target) return;
+  target.classList.remove('stamp-in');
+  void target.offsetWidth;   // 重置动画
+  target.classList.add('stamp-in');
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!reduced) {
+    const ripple = el('span', { className: 'stamp-ripple', 'aria-hidden': 'true' });
+    target.appendChild(ripple);
+    setTimeout(() => ripple.remove(), 600);
+  }
+}
+
+/** 表单校验失败的水平 shake 反馈。 */
+export function shake(target) {
+  if (!target) return;
+  target.classList.remove('shake');
+  void target.offsetWidth;
+  target.classList.add('shake');
+  setTimeout(() => target.classList.remove('shake'), 500);
+}

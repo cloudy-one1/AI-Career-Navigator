@@ -2,21 +2,22 @@
 // history.js — 面试历史记录（v4.0：列表增强 + 详情抽屉）
 // ===================================================
 
-import { $, el, fmtDate, DIM_NAMES, escHtml } from './utils.js';
+import { $, el, fmtDate, DIM_NAMES, escHtml, skeletonBlock } from './utils.js';
 import { listSessions, getSession, getGlobalWeaknessProfile } from './api.js';
 
 const STYLE_NAMES = { friendly: '友好型', strict: '严格型', pressure: '压力型' };
 const STATUS_MAP = { active: '进行中', completed: '已完成', interrupted: '已中断', aborted: '已中止' };
 
+// v7.2: 加载态从「转圈 dots」升级为骨架屏（纸纹 shimmer）
 function loadingIndicator(text) {
-  return el('div', { className: 'streaming-indicator' },
-    el('div', { className: 'streaming-dots' },
-      el('div', { className: 'streaming-dot' }),
-      el('div', { className: 'streaming-dot' }),
-      el('div', { className: 'streaming-dot' }),
-    ),
-    el('span', { textContent: text || '加载中...' }),
+  const wrap = el('div', { className: 'skeleton', 'aria-hidden': 'true' },
+    el('div', { className: 'skeleton-line title' }),
+    el('div', { className: 'skeleton-line w100' }),
+    el('div', { className: 'skeleton-line w80' }),
+    el('div', { className: 'skeleton-line w60' }),
   );
+  if (text) wrap.appendChild(el('span', { className: 'skeleton-caption', textContent: text }));
+  return wrap;
 }
 
 /** 初始化历史 Tab */
