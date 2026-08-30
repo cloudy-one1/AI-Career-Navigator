@@ -1,5 +1,5 @@
 {
-  "note": "黄金样本回归夹具（v7.1 新增，v7.1 校准 baseline）。四类典型回答：量化充分但 STAR 欠缺 / 全篇口号 / STAR 完整且量化充分 / 甩锅避答。expected = 人工标注的『应然』区间，供第 1 层确定性回归断言（验证全链路不回退）与人工对照质量线；baseline = deepseek-chat 在当前配置下的『实然』快照，供第 2 层 live-LLM 抽检做回归守护——模型分数 / 最弱维度跌出 baseline 即告警，但不强行要求达到 expected（达到 expected 属质量提升，需另行拉齐 prompt）。baseline 的 overall 容差带由 3 轮 live 扫描的实测 min/max 加 0.3 安全垫标定（v7.1 收紧，原单样本 ±0.8）。diagnosis 为人工标注的诊断 JSON（模拟 LLM 输出，使全链路确定性可回归）。",
+  "note": "黄金样本回归夹具（v7.1 新增，v7.1 校准 baseline，v7.2.1 扩容 4→20 条）。样本覆盖：量化充分但 STAR 欠缺 / 全篇口号 / STAR 完整且量化充分 / 甩锅避答（原 4 条），以及数据矛盾、名词堆砌、答非所问、甩锅外部、回答过短、有动词无数字、量化充分、跨项目串联、坦诚不足、失败反思、双加分、三重扣分封顶、夹紧保护、高质量 next_question 等 16 条新类别。expected = 人工标注的『应然』区间，供第 1 层确定性回归断言（验证全链路不回退）与人工对照质量线；v7.2.1 起新增样本的 expected.evidence_keys 由 tests/fixtures/generate_golden_samples.py 跑规则引擎实算生成（标注意图由人给出，期望值由确定性规则取真值），保证子集断言自洽。baseline = deepseek-chat 的『实然』快照：原 4 条已标定；v7.2.1 新增 16 条暂无 baseline，live-LLM 抽检自动跳过无 baseline 样本，待首轮 live 扫描后补标。diagnosis 为人工标注的诊断 JSON（模拟 LLM 输出，使全链路确定性可回归）。",
   "samples": [
     {
       "id": "quantified_full_star_gap",
@@ -7,28 +7,55 @@
       "question": "你最近做过什么性能优化？具体怎么做的，效果如何？",
       "answer": "我们系统双十一大促时接口 P99 延迟从 800ms 降到 200ms，吞吐量从 2000 QPS 提升到 6000 QPS，覆盖了 300 万用户。我负责定位慢查询，用连接池和索引优化解决了瓶颈。",
       "diagnosis": {
-        "star_completeness": {"score": 2.0, "comment": "缺少背景与任务交代，直接跳到优化动作", "quote": "我负责定位慢查询"},
-        "quantification": {"score": 4.5, "comment": "P99/QPS/用户数多组量化，数据充分", "quote": "P99 延迟从 800ms 降到 200ms"},
-        "logic_coherence": {"score": 4.5, "comment": "问题定位到解决路径因果清晰", "quote": "用连接池和索引优化解决了瓶颈"},
-        "job_relevance": {"score": 4.5, "comment": "性能优化贴合后端岗位", "quote": "我们系统双十一大促时接口"},
-        "professional_depth": {"score": 4.5, "comment": "能说清连接池与索引的作用", "quote": "索引优化"},
+        "star_completeness": {
+          "score": 2.0,
+          "comment": "缺少背景与任务交代，直接跳到优化动作",
+          "quote": "我负责定位慢查询"
+        },
+        "quantification": {
+          "score": 4.5,
+          "comment": "P99/QPS/用户数多组量化，数据充分",
+          "quote": "P99 延迟从 800ms 降到 200ms"
+        },
+        "logic_coherence": {
+          "score": 4.5,
+          "comment": "问题定位到解决路径因果清晰",
+          "quote": "用连接池和索引优化解决了瓶颈"
+        },
+        "job_relevance": {
+          "score": 4.5,
+          "comment": "性能优化贴合后端岗位",
+          "quote": "我们系统双十一大促时接口"
+        },
+        "professional_depth": {
+          "score": 4.5,
+          "comment": "能说清连接池与索引的作用",
+          "quote": "索引优化"
+        },
         "weakest_dimension": "star_completeness",
         "follow_up_question": "这块优化当时你具体负责哪一部分？",
         "overall_score": 3.9,
         "overall_comment": "量化充分但 STAR 结构欠缺，需要补背景与个人职责",
         "real_interview_impact": "面试官会觉得数据扎实，但会追问你个人的具体动作",
         "next_action": "follow_up",
-        "risk_points": ["STAR 不完整"]
+        "risk_points": [
+          "STAR 不完整"
+        ]
       },
       "rewrite": {
         "rewritten_answer": "当时系统大促接口延迟高，我负责性能优化的定位与实施……",
-        "key_changes": ["补充背景与个人职责"]
+        "key_changes": [
+          "补充背景与个人职责"
+        ]
       },
       "expected": {
         "overall_min": 3.3,
         "overall_max": 4.5,
         "weakest_dimension": "star_completeness",
-        "evidence_keys": ["quantified", "irrelevant_answer"]
+        "evidence_keys": [
+          "quantified",
+          "irrelevant_answer"
+        ]
       },
       "baseline": {
         "overall_min": 2.7,
@@ -42,28 +69,54 @@
       "question": "介绍一下你们项目整体效果怎么样，最后结果如何？",
       "answer": "我们项目整体性能提升了不少效果非常显著，首先我们很努力，然后领导表扬，最后结果很好",
       "diagnosis": {
-        "star_completeness": {"score": 3.5, "comment": "有大致脉络但缺具体事件", "quote": "我们项目整体性能提升了不少"},
-        "quantification": {"score": 3.0, "comment": "提升了不少但无任何数字", "quote": "提升了不少"},
-        "logic_coherence": {"score": 3.5, "comment": "流程词串联但缺乏事实支撑", "quote": "首先我们很努力"},
-        "job_relevance": {"score": 3.5, "comment": "与岗位能力关联弱", "quote": "效果非常显著"},
-        "professional_depth": {"score": 3.0, "comment": "无技术细节", "quote": "最后结果很好"},
+        "star_completeness": {
+          "score": 3.5,
+          "comment": "有大致脉络但缺具体事件",
+          "quote": "我们项目整体性能提升了不少"
+        },
+        "quantification": {
+          "score": 3.0,
+          "comment": "提升了不少但无任何数字",
+          "quote": "提升了不少"
+        },
+        "logic_coherence": {
+          "score": 3.5,
+          "comment": "流程词串联但缺乏事实支撑",
+          "quote": "首先我们很努力"
+        },
+        "job_relevance": {
+          "score": 3.5,
+          "comment": "与岗位能力关联弱",
+          "quote": "效果非常显著"
+        },
+        "professional_depth": {
+          "score": 3.0,
+          "comment": "无技术细节",
+          "quote": "最后结果很好"
+        },
         "weakest_dimension": "quantification",
         "follow_up_question": "能具体说一下性能提升了多少、怎么提升的吗？",
         "overall_score": 3.1,
         "overall_comment": "口号化表达，缺乏数据支撑",
         "real_interview_impact": "面试官难以判断真实水平，会追问具体数字",
         "next_action": "follow_up",
-        "risk_points": ["无量化数据"]
+        "risk_points": [
+          "无量化数据"
+        ]
       },
       "rewrite": {
         "rewritten_answer": "项目整体性能提升明显，例如接口 P99 从 800ms 降到 200ms……",
-        "key_changes": ["补充量化数据"]
+        "key_changes": [
+          "补充量化数据"
+        ]
       },
       "expected": {
         "overall_min": 2.5,
         "overall_max": 3.7,
         "weakest_dimension": "quantification",
-        "evidence_keys": ["no_quantification"]
+        "evidence_keys": [
+          "no_quantification"
+        ]
       },
       "baseline": {
         "overall_min": 0.7,
@@ -77,28 +130,54 @@
       "question": "介绍一下你负责的订单模块优化项目：背景、任务、行动、结果是什么？",
       "answer": "背景是我负责的订单模块优化项目接口慢导致成功率偏低，我的任务是提升下单成功率，我做了三步：先加数据库索引，然后接重试机制，最后加监控看板，上线后下单成功率从 92% 提升到 98%。",
       "diagnosis": {
-        "star_completeness": {"score": 5.0, "comment": "背景-任务-行动-结果完整", "quote": "背景是我负责的订单模块优化项目"},
-        "quantification": {"score": 4.0, "comment": "有明确前后对比数据", "quote": "从 92% 提升到 98%"},
-        "logic_coherence": {"score": 4.5, "comment": "三步行动顺序清晰", "quote": "先加数据库索引"},
-        "job_relevance": {"score": 4.5, "comment": "贴合后端业务优化岗位", "quote": "下单成功率从 92%"},
-        "professional_depth": {"score": 3.0, "comment": "只讲了做了什么，未解释索引为何能提速等原理", "quote": "最后加监控看板"},
+        "star_completeness": {
+          "score": 5.0,
+          "comment": "背景-任务-行动-结果完整",
+          "quote": "背景是我负责的订单模块优化项目"
+        },
+        "quantification": {
+          "score": 4.0,
+          "comment": "有明确前后对比数据",
+          "quote": "从 92% 提升到 98%"
+        },
+        "logic_coherence": {
+          "score": 4.5,
+          "comment": "三步行动顺序清晰",
+          "quote": "先加数据库索引"
+        },
+        "job_relevance": {
+          "score": 4.5,
+          "comment": "贴合后端业务优化岗位",
+          "quote": "下单成功率从 92%"
+        },
+        "professional_depth": {
+          "score": 3.0,
+          "comment": "只讲了做了什么，未解释索引为何能提速等原理",
+          "quote": "最后加监控看板"
+        },
         "weakest_dimension": "professional_depth",
         "follow_up_question": "为什么加索引能提升下单成功率？底层原理是什么？",
         "overall_score": 4.4,
         "overall_comment": "结构完整、数据充分，但原理深度不足",
         "real_interview_impact": "通过概率高，深度追问是唯一风险点",
         "next_action": "follow_up",
-        "risk_points": ["原理层不够深"]
+        "risk_points": [
+          "原理层不够深"
+        ]
       },
       "rewrite": {
         "rewritten_answer": "背景是我负责的订单模块优化……关键点是我解释了索引减少回表扫描的原理……",
-        "key_changes": ["补充原理说明"]
+        "key_changes": [
+          "补充原理说明"
+        ]
       },
       "expected": {
         "overall_min": 3.8,
         "overall_max": 5.0,
         "weakest_dimension": "professional_depth",
-        "evidence_keys": ["quantified"]
+        "evidence_keys": [
+          "quantified"
+        ]
       },
       "baseline": {
         "overall_min": 2.7,
@@ -112,33 +191,983 @@
       "question": "说一下你在这个项目里的具体贡献？",
       "answer": "这个项目主要是别的团队做的，我在里面只负责很小一部分，就是帮忙测试一下，核心模块都是他们开发的。",
       "diagnosis": {
-        "star_completeness": {"score": 3.0, "comment": "回避个人行动，归因外部", "quote": "这个项目主要是别的团队做的"},
-        "quantification": {"score": 4.0, "comment": "非量化问题，未涉及", "quote": "核心模块都是他们开发的"},
-        "logic_coherence": {"score": 4.0, "comment": "表述通顺", "quote": "我在里面只负责很小一部分"},
-        "job_relevance": {"score": 4.0, "comment": "能说明部分职责", "quote": "就是帮忙测试一下"},
-        "professional_depth": {"score": 4.0, "comment": "未涉及技术细节", "quote": "都是他们开发的"},
+        "star_completeness": {
+          "score": 3.0,
+          "comment": "回避个人行动，归因外部",
+          "quote": "这个项目主要是别的团队做的"
+        },
+        "quantification": {
+          "score": 4.0,
+          "comment": "非量化问题，未涉及",
+          "quote": "核心模块都是他们开发的"
+        },
+        "logic_coherence": {
+          "score": 4.0,
+          "comment": "表述通顺",
+          "quote": "我在里面只负责很小一部分"
+        },
+        "job_relevance": {
+          "score": 4.0,
+          "comment": "能说明部分职责",
+          "quote": "就是帮忙测试一下"
+        },
+        "professional_depth": {
+          "score": 4.0,
+          "comment": "未涉及技术细节",
+          "quote": "都是他们开发的"
+        },
         "weakest_dimension": "star_completeness",
         "follow_up_question": "那你在测试环节具体做了哪些事情？",
         "overall_score": 3.2,
         "overall_comment": "避重就轻，缺乏对个人贡献的正面回答",
         "real_interview_impact": "面试官会认为你缺少责任担当，追体验差",
         "next_action": "follow_up",
-        "risk_points": ["回避个人贡献"]
+        "risk_points": [
+          "回避个人贡献"
+        ]
       },
       "rewrite": {
         "rewritten_answer": "这个项目我参与测试环节，主要负责……",
-        "key_changes": ["聚焦个人贡献"]
+        "key_changes": [
+          "聚焦个人贡献"
+        ]
       },
       "expected": {
         "overall_min": 2.8,
         "overall_max": 4.0,
         "weakest_dimension": "star_completeness",
-        "evidence_keys": ["blame_shift", "too_passive"]
+        "evidence_keys": [
+          "blame_shift",
+          "too_passive"
+        ]
       },
       "baseline": {
         "overall_min": 0.9,
         "overall_max": 1.5,
         "weakest_dimension": "star_completeness"
+      }
+    },
+    {
+      "id": "data_conflict_ratio",
+      "category": "数据前后矛盾 · 同指标两个值",
+      "question": "你优化过哪个接口？性能提升了多少？",
+      "answer": "我们把下单接口优化了，转化率提升了 30%，之后又做了一轮本地缓存改造，转化率提升到 50%，还把接口的 P99 延迟压缩到了 80ms，整体效果非常明显。",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 4.0,
+          "comment": "有个人动作，但背景交代偏少",
+          "quote": "我们把下单接口优化了"
+        },
+        "quantification": {
+          "score": 3.0,
+          "comment": "先说 30% 后说 50%，同指标冲突",
+          "quote": "转化率提升了 30%"
+        },
+        "logic_coherence": {
+          "score": 4.0,
+          "comment": "两轮优化关系交代不清",
+          "quote": "之后又做了一轮本地缓存改造"
+        },
+        "job_relevance": {
+          "score": 4.0,
+          "comment": "指标与后端岗位相关",
+          "quote": "还把接口的 P99 延迟压缩到了 80ms"
+        },
+        "professional_depth": {
+          "score": 4.0,
+          "comment": "未解释缓存改造的具体机制",
+          "quote": "整体效果非常明显"
+        },
+        "weakest_dimension": "quantification",
+        "follow_up_question": "这两个转化率数字口径一致吗？分别是在什么范围和时间段统计的？",
+        "overall_score": 3.8,
+        "overall_comment": "量化意识强，但同一指标先后给出两个不同数值，数据可信度存疑",
+        "real_interview_impact": "面试官一旦发现数字对不上，会怀疑整段经历的真实性",
+        "next_action": "follow_up",
+        "risk_points": [
+          "同一指标数据前后矛盾"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "我们把下单接口的链路做了两轮优化：第一轮定位慢查询并引入连接池，转化率提升 30%；第二轮加本地缓存，转化率提升到 50%，P99 延迟从基线降到 80ms。",
+        "key_changes": [
+          "明确两轮优化的先后关系",
+          "统一指标口径"
+        ]
+      },
+      "expected": {
+        "overall_min": 2.8,
+        "overall_max": 3.6,
+        "weakest_dimension": "quantification",
+        "evidence_keys": [
+          "data_conflict",
+          "irrelevant_answer"
+        ]
+      }
+    },
+    {
+      "id": "term_stacking_recall",
+      "category": "名词堆砌 · 背诵感",
+      "question": "你熟悉哪些消息队列和缓存组件？",
+      "answer": "你问我熟悉哪些消息队列和缓存？Redis、Kafka、MySQL、Docker、K8s、Nginx、Zookeeper、Elasticsearch 这些我都在生产环境用过。",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 3.5,
+          "comment": "没有事件与个人行动的叙事结构",
+          "quote": "你问我熟悉哪些消息队列和缓存"
+        },
+        "quantification": {
+          "score": 3.0,
+          "comment": "无规模或效果数据",
+          "quote": "Redis"
+        },
+        "logic_coherence": {
+          "score": 3.0,
+          "comment": "词与词之间没有逻辑关联",
+          "quote": "Kafka"
+        },
+        "job_relevance": {
+          "score": 3.5,
+          "comment": "组件与岗位相关，但停留在名词层",
+          "quote": "Kafka"
+        },
+        "professional_depth": {
+          "score": 2.0,
+          "comment": "只声明用过，无任何细节支撑",
+          "quote": "这些我都在生产环境用过"
+        },
+        "weakest_dimension": "professional_depth",
+        "follow_up_question": "挑 Kafka 讲讲：你在生产环境用它解决过什么具体问题？",
+        "overall_score": 3.0,
+        "overall_comment": "组件名罗列密集，但没有任何使用场景和因果展开，背诵感明显",
+        "real_interview_impact": "面试官会立刻切换到深挖模式，用场景题检验是真用过还是背题",
+        "next_action": "follow_up",
+        "risk_points": [
+          "名词堆砌缺少展开"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "消息队列主要用 Kafka：曾在日志收集场景把单机写入扩到 5 个分区解决消费积压；缓存用 Redis，做过热点 key 的本地二级缓存来挡住促销流量。",
+        "key_changes": [
+          "补充使用场景",
+          "补充解决的问题与效果"
+        ]
+      },
+      "expected": {
+        "overall_min": 2.4,
+        "overall_max": 3.2,
+        "weakest_dimension": "professional_depth",
+        "evidence_keys": [
+          "term_stacking"
+        ]
+      }
+    },
+    {
+      "id": "irrelevant_offtopic",
+      "category": "答非所问 · 完全跑题",
+      "question": "讲讲 MySQL 索引的底层结构，为什么用 B+ 树？",
+      "answer": "我平时生活里最喜欢的事情是周末去郊外爬山，上个月刚去爬了黄山看日出感觉特别震撼，此外我还比较喜欢摄影和做饭这些放松方式，我觉得兴趣广泛的人心态会更好一些。",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 3.0,
+          "comment": "与问题无关的叙事",
+          "quote": "我平时生活里最喜欢的事情是周末去郊外爬山"
+        },
+        "quantification": {
+          "score": 3.0,
+          "comment": "无任何与问题相关的数据",
+          "quote": "上个月刚去爬了黄山"
+        },
+        "logic_coherence": {
+          "score": 2.5,
+          "comment": "内容无法回应提问",
+          "quote": "此外我还比较喜欢摄影和做饭这些放松方式"
+        },
+        "job_relevance": {
+          "score": 3.0,
+          "comment": "与岗位能力无关联",
+          "quote": "我觉得兴趣广泛的人心态会更好一些"
+        },
+        "professional_depth": {
+          "score": 3.0,
+          "comment": "无技术内容",
+          "quote": "我觉得兴趣广泛的人心态会更好一些"
+        },
+        "weakest_dimension": "logic_coherence",
+        "follow_up_question": "我们回到问题本身：B+ 树和哈希索引比，各自适合什么场景？",
+        "overall_score": 2.9,
+        "overall_comment": "回答与所问的技术问题完全无关，无法评估目标能力",
+        "real_interview_impact": "面试官会认为候选人在回避问题，直接记为负面信号",
+        "next_action": "follow_up",
+        "risk_points": [
+          "答非所问"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "MySQL 索引用 B+ 树：叶子节点存数据且有序，等值和范围查询都能走索引，相比哈希索引多了范围扫描能力，也更适合磁盘页的按块读取。",
+        "key_changes": [
+          "正面回答问题",
+          "给出结构与原因"
+        ]
+      },
+      "expected": {
+        "overall_min": 2.3,
+        "overall_max": 3.1,
+        "weakest_dimension": "logic_coherence",
+        "evidence_keys": [
+          "irrelevant_answer"
+        ]
+      }
+    },
+    {
+      "id": "blame_shift_product",
+      "category": "甩锅外部 · 排期问题",
+      "question": "为什么这个项目延期了两个月才上线？",
+      "answer": "主要是产品要求的改动太多了，跟我没关系，都是他们排期的问题。",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 2.5,
+          "comment": "归因外部，无个人行动",
+          "quote": "主要是产品要求的改动太多了"
+        },
+        "quantification": {
+          "score": 3.5,
+          "comment": "无数据支撑",
+          "quote": "都是他们排期的问题"
+        },
+        "logic_coherence": {
+          "score": 3.0,
+          "comment": "因果链断裂",
+          "quote": "跟我没关系"
+        },
+        "job_relevance": {
+          "score": 3.5,
+          "comment": "未回应自身职责",
+          "quote": "主要是产品要求的改动太多了"
+        },
+        "professional_depth": {
+          "score": 3.5,
+          "comment": "无技术内容",
+          "quote": "都是他们排期的问题"
+        },
+        "weakest_dimension": "star_completeness",
+        "follow_up_question": "延期两个月，你这边做了哪些努力去追赶进度？",
+        "overall_score": 3.2,
+        "overall_comment": "把延期完全归因外部，没有说明自己的判断与应对动作",
+        "real_interview_impact": "面试官会质疑协作意识与担当，这类回答在行为面是明显减分项",
+        "next_action": "follow_up",
+        "risk_points": [
+          "归因外部",
+          "回答过短未展开"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "当时需求变更比立项时多了三成，我先和产品对齐了优先级，把 P0 需求保住按期上线，P1 需求排到下个迭代，并把这个机制固化到了后续项目的需求评审里。",
+        "key_changes": [
+          "承认客观因素的同时给出个人应对",
+          "补充结果"
+        ]
+      },
+      "expected": {
+        "overall_min": 2.5,
+        "overall_max": 3.3,
+        "weakest_dimension": "star_completeness",
+        "evidence_keys": [
+          "blame_shift",
+          "too_passive"
+        ]
+      }
+    },
+    {
+      "id": "too_short_passive",
+      "category": "回答过短 · 被动等待追问",
+      "question": "介绍一下你负责过的最有挑战的项目？",
+      "answer": "我做过一个电商后台，挑战挺大的，顺利完成了上线。",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 2.0,
+          "comment": "只有事件名词，无背景与个人动作",
+          "quote": "我做过一个电商后台"
+        },
+        "quantification": {
+          "score": 3.0,
+          "comment": "无量化",
+          "quote": "挑战挺大的"
+        },
+        "logic_coherence": {
+          "score": 3.0,
+          "comment": "挑战是什么未交代",
+          "quote": "挑战挺大的"
+        },
+        "job_relevance": {
+          "score": 3.0,
+          "comment": "与岗位相关性待确认",
+          "quote": "电商后台"
+        },
+        "professional_depth": {
+          "score": 3.0,
+          "comment": "无技术细节",
+          "quote": "顺利完成了上线"
+        },
+        "weakest_dimension": "star_completeness",
+        "follow_up_question": "挑战具体体现在哪里？你在里面负责哪一块？",
+        "overall_score": 2.8,
+        "overall_comment": "信息量过少，没有展开任何背景、动作与结果",
+        "real_interview_impact": "面试官需要连续追问才能拼出信息，第一印象是表达意愿不足",
+        "next_action": "follow_up",
+        "risk_points": [
+          "回答过短未展开"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "我负责电商后台的订单超时关闭模块：难点是高并发下关单与支付的状态一致性，我用延迟队列加幂等兜底解决了重复关单，上线后零客诉。",
+        "key_changes": [
+          "补充背景与难点",
+          "补充个人动作与结果"
+        ]
+      },
+      "expected": {
+        "overall_min": 2.2,
+        "overall_max": 3.0,
+        "weakest_dimension": "star_completeness",
+        "evidence_keys": [
+          "too_passive"
+        ]
+      }
+    },
+    {
+      "id": "verb_without_numbers",
+      "category": "有成果动词 · 无任何数字",
+      "question": "你做的性能优化工作效果怎么样？",
+      "answer": "这次性能优化工作效果最明显的是商品详情页：我们改造了缓存策略，命中率提升非常大，接口耗时改善也很大，大促期间卡顿投诉基本消失了。",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 3.5,
+          "comment": "有个人动作，缺少背景任务结构",
+          "quote": "我们改造了缓存策略"
+        },
+        "quantification": {
+          "score": 2.5,
+          "comment": "有成果动词但无任何数值",
+          "quote": "命中率提升非常大"
+        },
+        "logic_coherence": {
+          "score": 3.5,
+          "comment": "对象明确，表述通顺",
+          "quote": "这次性能优化工作效果最明显的是商品详情页"
+        },
+        "job_relevance": {
+          "score": 3.5,
+          "comment": "与岗位相关",
+          "quote": "接口耗时改善也很大"
+        },
+        "professional_depth": {
+          "score": 3.5,
+          "comment": "未说明缓存策略的具体设计",
+          "quote": "我们改造了缓存策略"
+        },
+        "weakest_dimension": "quantification",
+        "follow_up_question": "命中率具体提升了多少？接口耗时从多少降到多少？",
+        "overall_score": 3.3,
+        "overall_comment": "方向和动作都合理，但通篇没有一个数字，效果无法评估",
+        "real_interview_impact": "面试官会逐项追问数字，答不出会让前面所有描述的可信度打折",
+        "next_action": "follow_up",
+        "risk_points": [
+          "成果描述未量化"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "详情页缓存命中率从 62% 提升到 94%，接口 P99 从 450ms 降到 120ms，大促期间卡顿类工单下降了九成。",
+        "key_changes": [
+          "为每项成果补充量化数据"
+        ]
+      },
+      "expected": {
+        "overall_min": 2.7,
+        "overall_max": 3.5,
+        "weakest_dimension": "quantification",
+        "evidence_keys": [
+          "no_quantification"
+        ]
+      }
+    },
+    {
+      "id": "quantified_metrics",
+      "category": "量化充分 · 多组指标",
+      "question": "这轮优化带来的可量化收益有哪些？",
+      "answer": "这轮优化可量化的收益主要有三个：接口 P99 延迟从 800ms 降到 200ms，吞吐量提升到 6000 QPS，线上故障率下降了 40%，前后持续 6 周，覆盖订单和支付两条核心链路。",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 4.0,
+          "comment": "范围明确，背景交代完整",
+          "quote": "覆盖订单和支付两条核心链路"
+        },
+        "quantification": {
+          "score": 4.5,
+          "comment": "多组量化前后对照",
+          "quote": "接口 P99 延迟从 800ms 降到 200ms"
+        },
+        "logic_coherence": {
+          "score": 4.0,
+          "comment": "指标并列罗列，归因链路可再补",
+          "quote": "吞吐量提升到 6000 QPS"
+        },
+        "job_relevance": {
+          "score": 4.0,
+          "comment": "与后端岗位高度相关",
+          "quote": "覆盖订单和支付两条核心链路"
+        },
+        "professional_depth": {
+          "score": 3.5,
+          "comment": "未解释优化如何传导到故障率",
+          "quote": "线上故障率下降了 40%"
+        },
+        "weakest_dimension": "professional_depth",
+        "follow_up_question": "故障率下降 40% 是怎么归因到这轮优化的？有没有对照数据？",
+        "overall_score": 4.0,
+        "overall_comment": "多组量化指标前后对照清晰，数据意识很强",
+        "real_interview_impact": "量化扎实会显著提升面试官信任，但会被追问数据口径与归因",
+        "next_action": "follow_up",
+        "risk_points": [
+          "数据归因待补充"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "这轮优化 6 周内分两阶段落地：先降 P99（800ms→200ms），再扩容提吞吐（6000 QPS），故障率下降 40% 通过上线前后各一个月的告警数据对照归因。",
+        "key_changes": [
+          "补充归因方法",
+          "分阶段呈现"
+        ]
+      },
+      "expected": {
+        "overall_min": 3.7,
+        "overall_max": 4.5,
+        "weakest_dimension": "professional_depth",
+        "evidence_keys": [
+          "quantified"
+        ]
+      }
+    },
+    {
+      "id": "cross_project_link",
+      "category": "跨项目串联 · 系统性思维",
+      "question": "除了这个项目，你还主导过哪些有代表性的工作？",
+      "answer": "主导过支付网关的重构，把老的同步对账改成了异步批处理，日对账时效从 T+1 提前到 T+0；同时我还牵头做了统一鉴权平台，把三个业务线的登录逻辑收敛到一处，token 泄漏类工单下降了 70%；另外在数据侧推动过埋点规范的落地，让后续的漏斗分析有了统一口径。",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 4.0,
+          "comment": "有多段完整事件",
+          "quote": "主导过支付网关的重构"
+        },
+        "quantification": {
+          "score": 3.5,
+          "comment": "有关键量化",
+          "quote": "token 泄漏类工单下降了 70%"
+        },
+        "logic_coherence": {
+          "score": 4.0,
+          "comment": "用关联词串联多段经历",
+          "quote": "同时我还牵头做了统一鉴权平台"
+        },
+        "job_relevance": {
+          "score": 3.0,
+          "comment": "与岗位相关性强",
+          "quote": "统一鉴权平台"
+        },
+        "professional_depth": {
+          "score": 2.5,
+          "comment": "迁移与兼容方案未展开",
+          "quote": "把三个业务线的登录逻辑收敛到一处"
+        },
+        "weakest_dimension": "professional_depth",
+        "follow_up_question": "统一鉴权平台迁移三个业务线时，灰度和兼容是怎么做的？",
+        "overall_score": 3.4,
+        "overall_comment": "能把多段工作用关联词串成体系，体现系统性；但各段的技术深度都偏浅",
+        "real_interview_impact": "多线程推进的经历是加分项，深度追问会集中在迁移与兼容方案上",
+        "next_action": "follow_up",
+        "risk_points": [
+          "单项深度不足"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "统一鉴权平台按业务线分三批灰度迁移：先接测试流量验证协议兼容，再用双 token 过渡期保证老客户端无感升级，最后下线旧登录模块。",
+        "key_changes": [
+          "补充迁移与灰度方案",
+          "补充风险控制"
+        ]
+      },
+      "expected": {
+        "overall_min": 3.0,
+        "overall_max": 3.8,
+        "weakest_dimension": "professional_depth",
+        "evidence_keys": [
+          "cross_project_link",
+          "irrelevant_answer"
+        ]
+      }
+    },
+    {
+      "id": "candid_unknown_with_plan",
+      "category": "坦诚不足 · 给出学习方向",
+      "question": "讲讲 JVM G1 垃圾回收器的原理，你了解多少？",
+      "answer": "G1 的回收原理这块我之前只在课程项目里碰过一次，说实话我对它不太了解，接下来我会去把官方文档和源码过一遍，再自己搭个集群练手，争取下次能讲清楚它的触发机制和调优思路。",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 3.0,
+          "comment": "交代了经验边界",
+          "quote": "我之前只在课程项目里碰过一次"
+        },
+        "quantification": {
+          "score": 3.0,
+          "comment": "无量化需求",
+          "quote": "只在课程项目里碰过一次"
+        },
+        "logic_coherence": {
+          "score": 3.5,
+          "comment": "学习路径清晰",
+          "quote": "接下来我会去把官方文档和源码过一遍"
+        },
+        "job_relevance": {
+          "score": 3.5,
+          "comment": "学习方向与岗位相关",
+          "quote": "争取下次能讲清楚它的触发机制和调优思路"
+        },
+        "professional_depth": {
+          "score": 1.0,
+          "comment": "坦诚知识空白",
+          "quote": "说实话我对它不太了解"
+        },
+        "weakest_dimension": "professional_depth",
+        "follow_up_question": "那你现在能讲讲 CMS 和 G1 最核心的一个区别吗？",
+        "overall_score": 2.8,
+        "overall_comment": "坦承知识边界并给出可执行的学习计划，态度分拉回部分专业分",
+        "real_interview_impact": "比不懂装懂好得多；面试官可能降低该领域预期，转而考察学习执行力",
+        "next_action": "follow_up",
+        "risk_points": [
+          "核心知识存在空白"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "G1 我掌握到使用层：region 分区、增量回收、可预测停顿目标是它的三个关键词，回收算法细节我计划两周内通过官方文档加源码补齐，先用小集群验证。",
+        "key_changes": [
+          "先框定已知边界",
+          "给出补齐计划与验证方式"
+        ]
+      },
+      "expected": {
+        "overall_min": 2.4,
+        "overall_max": 3.2,
+        "weakest_dimension": "professional_depth",
+        "evidence_keys": [
+          "candid_gap",
+          "irrelevant_answer"
+        ]
+      }
+    },
+    {
+      "id": "failure_reflection",
+      "category": "失败案例 · 反思改进",
+      "question": "说一次你搞砸过的经历，当时怎么处理的？",
+      "answer": "这个项目第一版上线后 3 天就出过一次线上事故，我们后来复盘总结，重新设计了灰度发布的流程，改进了回滚机制，之后半年没再出过大问题。",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 3.5,
+          "comment": "事件背景完整",
+          "quote": "这个项目第一版上线后 3 天就出过一次线上事故"
+        },
+        "quantification": {
+          "score": 3.0,
+          "comment": "有时间量化",
+          "quote": "3 天"
+        },
+        "logic_coherence": {
+          "score": 4.0,
+          "comment": "事故到改进的因果清晰",
+          "quote": "我们后来复盘总结"
+        },
+        "job_relevance": {
+          "score": 3.5,
+          "comment": "与工程实践相关",
+          "quote": "重新设计了灰度发布的流程"
+        },
+        "professional_depth": {
+          "score": 1.5,
+          "comment": "根因与机制细节未展开",
+          "quote": "改进了回滚机制"
+        },
+        "weakest_dimension": "professional_depth",
+        "follow_up_question": "那次事故的根因是什么？灰度流程具体改了哪几步？",
+        "overall_score": 3.1,
+        "overall_comment": "主动暴露失败并给出机制层面的改进，复盘意识好；根因分析偏浅",
+        "real_interview_impact": "敢于讲失败是成熟信号，但面试官一定会追问根因，答不出会反转印象",
+        "next_action": "follow_up",
+        "risk_points": [
+          "根因分析未展开"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "事故根因是灰度批次间隔过短导致配置热更新冲突；复盘后我把灰度从两批改成五批，每批加自动回归检查点，并给回滚脚本加了幂等锁，此后同类问题零复发。",
+        "key_changes": [
+          "补充根因分析",
+          "改进措施落到机制层面"
+        ]
+      },
+      "expected": {
+        "overall_min": 2.7,
+        "overall_max": 3.5,
+        "weakest_dimension": "professional_depth",
+        "evidence_keys": [
+          "failure_reflection",
+          "irrelevant_answer"
+        ]
+      }
+    },
+    {
+      "id": "mixed_bonus_strong",
+      "category": "双加分 · 量化充分且跨项目串联",
+      "question": "说说你主导过的两项有代表性的技术工作，分别带来了什么结果？",
+      "answer": "我主导过两件事：因为老网关的同步对账跑批太慢，我把对账链路重构成异步批处理，时效从 T+1 提前到 T+0，资损告警响应时间缩短了 80%；同时我把鉴权模块抽成了独立服务，三条业务线接入后 token 类工单下降了 70%，这套思路后来还被日志平台借鉴走了。",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 4.0,
+          "comment": "两段完整事件叙事",
+          "quote": "我主导过两件事"
+        },
+        "quantification": {
+          "score": 4.0,
+          "comment": "多组量化收益",
+          "quote": "资损告警响应时间缩短了 80%"
+        },
+        "logic_coherence": {
+          "score": 4.5,
+          "comment": "因果动机清晰",
+          "quote": "因为老网关的同步对账跑批太慢"
+        },
+        "job_relevance": {
+          "score": 3.0,
+          "comment": "工作与岗位强相关",
+          "quote": "同时我把鉴权模块抽成了独立服务"
+        },
+        "professional_depth": {
+          "score": 3.0,
+          "comment": "改造机制未展开",
+          "quote": "我把对账链路重构成异步批处理"
+        },
+        "weakest_dimension": "professional_depth",
+        "follow_up_question": "对账从同步改异步，一致性怎么保证？对不平的账怎么处理？",
+        "overall_score": 3.7,
+        "overall_comment": "量化与系统性兼备的高质量回答，两段工作都有明确收益",
+        "real_interview_impact": "这类回答会让面试官提升对候选人的整体预期，追问会走向实现细节",
+        "next_action": "follow_up",
+        "risk_points": [
+          "一致性方案待展开"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "对账一致性靠日切快照加对账单补偿：异步批处理前先冻结快照，对不平自动生成差异单进人工审核队列，T+1 前闭环。",
+        "key_changes": [
+          "补充一致性设计",
+          "补充异常路径"
+        ]
+      },
+      "expected": {
+        "overall_min": 3.5,
+        "overall_max": 4.3,
+        "weakest_dimension": "professional_depth",
+        "evidence_keys": [
+          "cross_project_link",
+          "irrelevant_answer",
+          "quantified"
+        ]
+      }
+    },
+    {
+      "id": "mixed_penalty_caps",
+      "category": "三重扣分 · 堆砌且未量化且过短",
+      "question": "聊聊你的后端技术储备和最近的实践？",
+      "answer": "熟悉 Redis、Kafka、MySQL、Docker、K8s，优化过很多模块，效果很好",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 3.0,
+          "comment": "无任何具体事件",
+          "quote": "优化过很多模块"
+        },
+        "quantification": {
+          "score": 2.5,
+          "comment": "有成果动词但无数字",
+          "quote": "优化过很多模块"
+        },
+        "logic_coherence": {
+          "score": 3.0,
+          "comment": "结论无支撑",
+          "quote": "效果很好"
+        },
+        "job_relevance": {
+          "score": 3.0,
+          "comment": "组件相关但无场景",
+          "quote": "Redis"
+        },
+        "professional_depth": {
+          "score": 2.0,
+          "comment": "只有名词层，无深度信号",
+          "quote": "熟悉 Redis"
+        },
+        "weakest_dimension": "professional_depth",
+        "follow_up_question": "挑一个你优化过的模块，讲讲当时的问题和你的方案？",
+        "overall_score": 2.7,
+        "overall_comment": "名词堆砌加无数据加过短，三类信号同时触发，是典型的背诵式回答",
+        "real_interview_impact": "面试官基本会判定为准备不足，进入压力追问模式",
+        "next_action": "follow_up",
+        "risk_points": [
+          "名词堆砌",
+          "成果描述未量化",
+          "回答过短未展开"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "最近在用 Kafka 做订单事件分发：遇到过消费积压，我把分区从 6 扩到 12 并给消费者加了批量拉取，积压在 20 分钟内清零，订单延迟从分钟级降到秒级。",
+        "key_changes": [
+          "挑一个组件展开",
+          "补充问题、方案与量化结果"
+        ]
+      },
+      "expected": {
+        "overall_min": 1.7,
+        "overall_max": 2.5,
+        "weakest_dimension": "professional_depth",
+        "evidence_keys": [
+          "irrelevant_answer",
+          "no_quantification",
+          "term_stacking"
+        ]
+      }
+    },
+    {
+      "id": "clamp_double_penalty",
+      "category": "夹紧保护 · 规则不再重复惩罚",
+      "question": "这个功能上线的效果如何？",
+      "answer": "这个功能上线之后效果提升特别明显，核心功能的完成率提高了很多，用户反馈都说体验好了不少，老板在周会上也专门表扬了这个项目，团队整体士气提升很大。",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 3.5,
+          "comment": "有事件但结果未量化",
+          "quote": "老板在周会上也专门表扬了这个项目"
+        },
+        "quantification": {
+          "score": 1.0,
+          "comment": "模型已给最低分，规则扣分被夹紧",
+          "quote": "效果提升特别明显"
+        },
+        "logic_coherence": {
+          "score": 3.5,
+          "comment": "表述通顺但空洞",
+          "quote": "核心功能的完成率提高了很多"
+        },
+        "job_relevance": {
+          "score": 3.5,
+          "comment": "与岗位相关",
+          "quote": "核心功能的完成率"
+        },
+        "professional_depth": {
+          "score": 3.5,
+          "comment": "定性描述无技术细节",
+          "quote": "用户反馈都说体验好了不少"
+        },
+        "weakest_dimension": "quantification",
+        "follow_up_question": "完成率从多少提高到多少？找一个你能报出来的数字。",
+        "overall_score": 3.0,
+        "overall_comment": "通篇是定性形容，模型已把量化维度打到最低分，规则修正被夹紧不再重复扣",
+        "real_interview_impact": "面试官会直接要求报数字，报不出则整段评价都会被降级",
+        "next_action": "follow_up",
+        "risk_points": [
+          "成果描述未量化"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "上线两周后核心功能完成率从 71% 提升到 89%，用户侧好评率 96%，周会表扬之外我把这次的经验沉淀成了操作 SOP。",
+        "key_changes": [
+          "用数字替换定性形容"
+        ]
+      },
+      "expected": {
+        "overall_min": 2.6,
+        "overall_max": 3.4,
+        "weakest_dimension": "quantification",
+        "evidence_keys": [
+          "no_quantification"
+        ]
+      }
+    },
+    {
+      "id": "blame_shift_core_module",
+      "category": "甩锅其他团队 · 回避角色",
+      "question": "你在核心模块的开发里承担了什么角色？",
+      "answer": "核心模块当时是其他团队在做，我们这边只提供了数据接口，具体他们内部怎么排期的我不太清楚，反正最后延期不归我们管。",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 2.0,
+          "comment": "归因外部，回避个人角色",
+          "quote": "核心模块当时是其他团队在做"
+        },
+        "quantification": {
+          "score": 3.0,
+          "comment": "无量化",
+          "quote": "只提供了数据接口"
+        },
+        "logic_coherence": {
+          "score": 3.0,
+          "comment": "结论与论证脱节",
+          "quote": "反正最后延期不归我们管"
+        },
+        "job_relevance": {
+          "score": 3.0,
+          "comment": "接口工作本可展开却放弃",
+          "quote": "我们这边只提供了数据接口"
+        },
+        "professional_depth": {
+          "score": 3.0,
+          "comment": "无技术内容",
+          "quote": "具体他们内部怎么排期的我不太清楚"
+        },
+        "weakest_dimension": "star_completeness",
+        "follow_up_question": "你提供的数据接口被他们怎么使用的？接口设计上你做了哪些取舍？",
+        "overall_score": 2.8,
+        "overall_comment": "把自己放在事件之外，连自己负责的接口都没有展开",
+        "real_interview_impact": "面试官会认为候选人不了解全局也缺乏参与感，追问会很难受",
+        "next_action": "follow_up",
+        "risk_points": [
+          "归因外部",
+          "答非所问倾向"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "核心模块由其他团队主开发，我负责给他们提供数据接口：当时为了支撑他们的高并发查询，我把接口改成了批量模式并加了二级缓存，P99 稳定在 50ms 内。",
+        "key_changes": [
+          "正面回答自己的角色",
+          "把自己负责的部分讲深"
+        ]
+      },
+      "expected": {
+        "overall_min": 2.0,
+        "overall_max": 2.8,
+        "weakest_dimension": "star_completeness",
+        "evidence_keys": [
+          "blame_shift",
+          "irrelevant_answer"
+        ]
+      }
+    },
+    {
+      "id": "next_question_clean",
+      "category": "高质量回答 · 直接进入下一题",
+      "question": "你平时靠什么流程保证代码质量？",
+      "answer": "我平时靠三层流程来保证代码质量：提交前跑本地单测和 lint，必须全部通过；评审环节请资深同事重点看边界条件和异常处理；上线前还有灰度发布和监控告警兜底，出问题 5 分钟内可以回滚。",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 4.5,
+          "comment": "行动具体可验证",
+          "quote": "提交前跑本地单测和 lint"
+        },
+        "quantification": {
+          "score": 3.5,
+          "comment": "有关键时间量化",
+          "quote": "出问题 5 分钟内可以回滚"
+        },
+        "logic_coherence": {
+          "score": 4.0,
+          "comment": "三层结构清晰",
+          "quote": "我平时靠三层流程来保证代码质量"
+        },
+        "job_relevance": {
+          "score": 4.0,
+          "comment": "贴合工程实践",
+          "quote": "评审环节请资深同事重点看边界条件和异常处理"
+        },
+        "professional_depth": {
+          "score": 4.0,
+          "comment": "有兜底设计意识",
+          "quote": "上线前还有灰度发布和监控告警兜底"
+        },
+        "weakest_dimension": "quantification",
+        "follow_up_question": "这三层流程里，评审环节发现过哪类最高频的问题？",
+        "overall_score": 4.0,
+        "overall_comment": "流程分层清晰、有兜底手段，可直接进入下一题",
+        "real_interview_impact": "流程化思维是工程成熟度的直接信号，整体印象加分",
+        "next_action": "next_question",
+        "risk_points": [
+          "量化覆盖还可加强"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "在现有三层流程之上，我还会把每轮评审的高频问题归类成 checklist 沉淀到团队 wiki，让下一轮评审有据可依。",
+        "key_changes": [
+          "补充流程的迭代机制"
+        ]
+      },
+      "expected": {
+        "overall_min": 3.6,
+        "overall_max": 4.4,
+        "weakest_dimension": "quantification",
+        "evidence_keys": []
+      }
+    },
+    {
+      "id": "candid_gap_short",
+      "category": "坦诚不足 · 短回答双信号",
+      "question": "聊聊你对服务网格 Istio 的理解？",
+      "answer": "这个我没接触过，不太了解，不过我会去查一下资料补上。",
+      "diagnosis": {
+        "star_completeness": {
+          "score": 2.5,
+          "comment": "无任何事件展开",
+          "quote": "这个我没接触过"
+        },
+        "quantification": {
+          "score": 2.5,
+          "comment": "无量化需求",
+          "quote": "这个我没接触过"
+        },
+        "logic_coherence": {
+          "score": 2.5,
+          "comment": "有转折但内容单薄",
+          "quote": "不过我会去查一下资料补上"
+        },
+        "job_relevance": {
+          "score": 2.5,
+          "comment": "学习意愿与岗位相关",
+          "quote": "我会去查一下资料补上"
+        },
+        "professional_depth": {
+          "score": 2.0,
+          "comment": "坦诚知识空白",
+          "quote": "这个我没接触过"
+        },
+        "weakest_dimension": "star_completeness",
+        "follow_up_question": "那换个你熟悉的：讲一个你最近深入学过的技术组件？",
+        "overall_score": 2.4,
+        "overall_comment": "坦诚但没有展开任何已有知识的迁移，回答过短",
+        "real_interview_impact": "诚实是加分项，但完全不尝试迁移已有知识会显得积累单薄",
+        "next_action": "follow_up",
+        "risk_points": [
+          "回答过短未展开",
+          "知识空白"
+        ]
+      },
+      "rewrite": {
+        "rewritten_answer": "Istio 我没在生产用过，但我理解它解决的是服务间流量治理问题，和我们自研网关做灰度路由是同一类需求，区别在于它把能力下沉到了 sidecar 层。",
+        "key_changes": [
+          "尝试知识迁移",
+          "给出已有的相近经验"
+        ]
+      },
+      "expected": {
+        "overall_min": 2.0,
+        "overall_max": 2.8,
+        "weakest_dimension": "star_completeness",
+        "evidence_keys": [
+          "candid_gap",
+          "too_passive"
+        ]
       }
     }
   ]

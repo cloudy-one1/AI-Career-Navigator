@@ -2,7 +2,7 @@
 // interview.js — 面试流程控制 (v2.3: 语音交互)
 // ===================================================
 
-import { $, $$, el, toast, DIM_NAMES, scoreClass } from './utils.js';
+import { $, $$, el, toast, DIM_NAMES, scoreClass, escHtml } from './utils.js';
 import { createInterviewWS, request } from './api.js';
 import {
   voiceSupport, speak, stopSpeaking, isSpeaking,
@@ -380,15 +380,17 @@ async function loadCompanyProfiles() {
   const sel = $('#company-select');
   if (!sel) return;
   // 先放兜底选项，接口失败时用户仍可用（自动匹配 / 不启用）
-  sel.innerHTML = '<option value="">🔍 自动匹配（按 JD 关键词）</option>'
-    + '<option value="none">🚫 不启用公司风格</option>';
+  const autoOpt = () => el('option', { value: '', textContent: '🔍 自动匹配（按 JD 关键词）' });
+  const noneOpt = () => el('option', { value: 'none', textContent: '🚫 不启用公司风格' });
+  sel.replaceChildren(autoOpt(), noneOpt());
   try {
     const { getCompanyProfiles } = await import('./api.js');
     const profiles = await getCompanyProfiles();
     if (!Array.isArray(profiles) || !profiles.length) return;
-    sel.innerHTML = '<option value="">🔍 自动匹配（按 JD 关键词）</option>'
-      + profiles.map(p => `<option value="${p.name}">${p.display_name}</option>`).join('')
-      + '<option value="none">🚫 不启用公司风格</option>';
+    // 公司名来自后端 YAML 配置（半可信）：走 DOM 赋值而非模板串拼接，杜绝属性位逃逸
+    sel.replaceChildren(autoOpt(),
+      ...profiles.map(p => el('option', { value: p.name, textContent: p.display_name })),
+      noneOpt());
   } catch (_) { /* 公司风格层不可用：保留兜底选项即可 */ }
 }
 
@@ -705,7 +707,7 @@ function setSkillBarActive(active, skillName = '', step = 1, total = 1) {
     hint.textContent = '临时插入，走完自动回到面试；技能轮不计入评分';
     return;
   }
-  hint.innerHTML = `进行中：<b>${skillName}</b>　${step}/${total} · <a href="#" id="skill-exit">退出技能</a>`;
+  hint.innerHTML = `进行中：<b>${escHtml(skillName)}</b>　${Number(step)}/${Number(total)} · <a href="#" id="skill-exit">退出技能</a>`;
   $('#skill-exit')?.addEventListener('click', (e) => {
     e.preventDefault();
     if (ws && typeof ws.send === 'function') ws.send('skill', { action: 'deactivate' });
@@ -1482,6 +1484,8 @@ function showDiagnosis(area, data) {
             el('div', { className: 'dim-score', textContent: String(s) }),
             isWeak ? el('span', { className: 'dim-weak-badge', textContent: '最弱项' }) : '',
             el('div', { className: 'dim-comment', textContent: dim.comment || '' }),
+            // v7.3: 评分依据原话（DimensionScore.quote，v7.0 字段首次渲染）+ 黄铜扫描线
+            dim.quote ? el('div', { className: 'quote-evidence quote-scan', textContent: `「${dim.quote}」` }) : '',
           );
         }),
       ),
@@ -1565,9 +1569,9 @@ function showRoundSummary(area, data) {
     const q = data.quality;
     const icon = q.passed ? '✅' : '⚠️';
     const summary = q.passed
-      ? `本轮加权均分 ${q.avg_score}/5，达到阈值 ${q.threshold}`
-      : `本轮加权均分 ${q.avg_score}/5，未达阈值 ${q.threshold}`
-        + (q.weak_dimension_name ? `，薄弱环节：${q.weak_dimension_name}` : '');
+      ? `本轮加权均分 ${Number(q.avg_score)}/5，达到阈值 ${Number(q.threshold)}`
+      : `本轮加权均分 ${Number(q.avg_score)}/5，未达阈值 ${Number(q.threshold)}`
+        + (q.weak_dimension_name ? `，薄弱环节：${escHtml(q.weak_dimension_name)}` : '');
     qualityHtml = `
       <div style="margin-top:8px;padding:8px 12px;background:${q.passed ? 'var(--emerald-50)' : 'var(--amber-50)'};border-radius:8px;font-size:.85rem;">
         ${icon} ${summary}
@@ -1603,13 +1607,13 @@ function showQualityCheck(area, data) {
   const reason = passed
     ? '本轮质量达标，进入下一环节'
     : (data.can_add_extra
-        ? `薄弱环节：${data.weak_dimension_name || '待定'} — 将追加针对性问题`
+        ? `薄弱环节：${escHtml(data.weak_dimension_name) || '待定'} — 将追加针对性问题`
         : '追加题次数已用尽，进入下一环节');
 
   const banner = el('div', {
     className: 'quality-check-banner',
     style: `padding:10px 16px;margin:8px 0;background:${bg};border-left:4px solid ${border};border-radius:8px;font-size:.85rem;`,
-    innerHTML: `${icon} <strong>质量检查：</strong>加权平均分 ${data.avg_score}/5 （阈值 ${data.threshold}） — ${reason}`,
+    innerHTML: `${icon} <strong>质量检查：</strong>加权平均分 ${Number(data.avg_score)}/5 （阈值 ${Number(data.threshold)}） — ${reason}`,
   });
 
   area.appendChild(banner);
@@ -1623,7 +1627,7 @@ function showExtraQuestion(area, data) {
     innerHTML: `
       <div style="font-size:.85rem;color:var(--text-secondary);">⚠️ 本轮质量未达标，面试官追加一题</div>
       <div style="font-size:.8rem;color:var(--text-secondary);margin-top:2px;">
-        ${data.reason || '针对薄弱环节追加提问'}
+        ${escHtml(data.reason) || '针对薄弱环节追加提问'}
       </div>
     `,
   }));

@@ -92,7 +92,7 @@ AI 模拟面试官是一个面向求职者的智能面试练习平台。上传�
 - **动态难度调度（v6.6，对标 interviewerAgent）**：按诊断加权总分做轮内难度自适应（连续 2 次达标升档 / 失手降档，1-5 档）；难度**不参与阶段推进**（归 v6.2 工程强控），并逐题记录难度轨迹进报告、变档实时推送，解决"分数变低是能力下降还是难度升高"的归因问题
 - **题库管理**：CRUD + 收藏 + 从面试会话导入
 - **Docker 部署**：Dockerfile + docker-compose.yml 一键部署
-- **自动化测试**：约 900 个测试用例覆盖核心路径（含依赖 API Key 的 LLM 类测试；v7.0.3 起新增黄金样本回归）
+- **自动化测试**：约 1000 个测试用例覆盖核心路径（含依赖 API Key 的 LLM 类测试；v7.0.3 起新增黄金样本回归，v7.2.1 扩容至 20 条并接入 CI）
 
 ---
 
@@ -309,7 +309,7 @@ AI-simulated-interviewer/
 │           ├── components.css    # 框架组件
 │           └── pages/            # 领域样式（含 market.css 纸墨印章 / memory.css 记忆图谱）
 │
-├── tests/                        # 自动化测试（约 900 用例 + 1 live_llm 抽检，本机非 LLM 类全绿）
+├── tests/                        # 自动化测试（约 1000 用例 + 1 live_llm 抽检，本机非 LLM 类全绿）
 │   ├── conftest.py               # 共享 fixtures
 │   ├── test_schemas.py           # Schema 验证
 │   ├── test_api.py               # HTTP 路由集成测试（含安全测试）
@@ -333,8 +333,8 @@ AI-simulated-interviewer/
 │   ├── test_injection_dedup.py      # [v6.4] 注入去重（指纹稳定/先过滤后预算/耗尽回退，19 例）
 │   ├── test_alternate_question.py   # [v6.4] 备选题/换题（台账/负向约束/重试上限，10 例）
 │   ├── test_weakness_memory.py      # [v6.4] 长期记忆闭环（迁移幂等/resolved/回注入，17 例）
-│   ├── test_diagnosis_golden.py     # [v7.0.3 NEW] 黄金样本评测（4 类典型回答确定性回归 + live-LLM 抽检）
-│   └── fixtures/golden_answers.json # [v7.0.3 NEW] 黄金样本与人工标注
+│   ├── test_diagnosis_golden.py     # [v7.0.3 NEW] 黄金样本评测（v7.2.1 扩容至 20 条确定性回归 + live-LLM 抽检）
+│   └── fixtures/golden_answers.json # [v7.0.3 NEW] 黄金样本与人工标注（覆盖 16 类典型行为信号）
 │
 ├── docs/                         # 需求文档与周报
 │   ├── week1_*.md                # v1 模块需求
@@ -367,7 +367,8 @@ AI-simulated-interviewer/
 | **日志** | logging + RotatingFileHandler（5MB×3 旋转） |
 | **部署** | Docker + Docker Compose（跨平台一键部署） |
 | **分层校验** | import-linter 契约（L1-L4，`run.py lint` 强制） |
-| **测试** | pytest（约 900 用例 + 1 live_llm 抽检，本机非 LLM 类全绿） |
+| **测试** | pytest（约 1000 用例 + 1 live_llm 抽检，本机非 LLM 类全绿） |
+| **CI（v7.2.1）** | GitHub Actions：import-linter 契约 + 全量测试 + 前端构建冒烟 |
 
 ---
 
@@ -465,7 +466,7 @@ AUTH_SECRET=...      # 可选；不配置时自动生成并持久化到 data/.au
 
 ## 🧪 测试策略与工程保障（答辩看点）
 
-本项目的测试不是「堆数量」，而是**分层保障 + 评测（eval）**两套机制配合。约 900 个自动化用例全绿，结构如下：
+本项目的测试不是「堆数量」，而是**分层保障 + 评测（eval）**两套机制配合。约 1000 个自动化用例全绿，结构如下：
 
 | 层级 | 代表文件 | 守什么 | 为什么必要 |
 |------|----------|--------|-----------|
@@ -532,7 +533,7 @@ AUTH_SECRET=...      # 可选；不配置时自动生成并持久化到 data/.au
 测试策略见上文「测试策略与工程保障」。常用命令：
 
 ```bash
-# 运行全部测试（约 900 用例，全绿）
+# 运行全部测试（约 1000 用例，全绿；push/PR 由 GitHub Actions 自动执行）
 pytest tests/ -v
 
 # 仅跑黄金样本评测（确定性回归，默认运行）

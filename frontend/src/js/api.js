@@ -17,8 +17,8 @@ function notifyUnauthorized() {
   window.dispatchEvent(new CustomEvent(AUTH_UNAUTHORIZED_EVENT));
 }
 
-/** 通用 HTTP 请求 */
-export async function request(method, path, body, isForm) {
+/** 通用 HTTP 请求；opts.raw=true 时返回原始 Response（文件下载等非 JSON 场景），token 注入与 401 广播仍然生效 */
+export async function request(method, path, body, isForm, { raw = false } = {}) {
   const opts = { method };
   const headers = {};
   if (body && !isForm) {
@@ -45,7 +45,7 @@ export async function request(method, path, body, isForm) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || err.detail || res.statusText);
   }
-  return res.json();
+  return raw ? res : res.json();
 }
 
 /** 上传简历文件（临时使用，不入简历库）
@@ -106,10 +106,9 @@ export async function getReport(sessionId) {
   return request('GET', `/api/reports/${sessionId}`);
 }
 
-/** v2.7: 导出复盘 Markdown */
+/** v2.7: 导出复盘 Markdown。v7.2: 曾绕过统一出口导致登录后 401，改走 request({raw}) 补上 token 注入 */
 export async function exportReview(sessionId) {
-  const res = await fetch(BASE + `/api/reports/${sessionId}/review`);
-  if (!res.ok) throw new Error('导出复盘失败');
+  const res = await request('GET', `/api/reports/${sessionId}/review`, null, false, { raw: true });
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');

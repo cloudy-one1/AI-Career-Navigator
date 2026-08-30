@@ -1,0 +1,56 @@
+# CI（v7.2.1 新增）：分层契约 + 全量测试 + 前端构建。
+#
+# 口径说明：
+# - 后端测试不含 live-LLM 抽检（test_diagnosis_golden.py 的 live_llm 用例默认
+#   skip，需 GOLDEN_LIVE_LLM=1 + 真实 Key，烧 token，仅手动触发，见 README）。
+# - 采集器测试在导入前 stub 了 playwright（见 test_market_crawler_job_scraper.py），
+#   因此无需 `playwright install chromium` 即可运行。
+# - 前端无单测，`npm run build` 同时充当类型/导入错误的冒烟检查。
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 安装依赖
+        run: pip install -r requirements.txt
+
+      - name: 分层依赖契约检查（import-linter）
+        run: python run.py lint
+
+      - name: 全量测试（约 1000 用例，live-LLM 抽检默认跳过）
+        run: python -m pytest tests -q
+        env:
+          PYTHONUTF8: "1"
+
+  frontend:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: 安装依赖
+        run: npm ci
+
+      - name: 构建（冒烟：导入/语法错误即红灯）
+        run: npm run build

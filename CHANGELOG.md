@@ -4,6 +4,29 @@
 
 ---
 
+## v7.2.1 评审修复 + 黄金样本扩容 4→20 + CI 接入（2026-08-31）
+
+> 起因是外部深度评审指出三处具体缺陷（分享页雷达图 / 导出复盘鉴权 / XSS 转义不成体系）与两项工程缺口（黄金样本仅 4 条、无 CI）。本轮范围纪律：只修评审指认的问题，不动架构（main.py 路由拆分、interview.js 拆层列为后续专项）。
+
+### 1. 修复（评审指认）
+
+- **分享页/招聘端雷达图从未绘制（v7.0.1 起）**：`shareReport.js` 的 `mountRadar(scope)` 引用了不在作用域内的 `data`（`renderReportInto` 的参数），每次挂载抛 `ReferenceError` 被静默吞掉——外部 HR 看到的分享页核心可视化恰好缺失。改为 `mountRadar(container, data)` 显式传参，并顺手把雷达硬编码 Indigo 蓝改为印章红色板。
+- **导出复盘 Markdown 不带鉴权（v7.0 起）**：`api.js exportReview()` 裸 `fetch` 绕过了「全站唯一出口」约定（`api.js` 自身注释），登录用户导出会 401 且不触发全局登出广播。`request()` 增加 `raw` 选项（返回原始 Response，token 注入与 401 广播照常生效），导出改走统一出口。与 v7.2.0 §六的 `/export.html` 401 修复（token query 兜底）为两条不同导出路径，互补。
+- **XSS 转义不成体系**：全站 `escHtml` 仅 6 处使用，同一类数据在 `report.js` 有转义、在 `interview.js` 裸拼。本轮立规矩「innerHTML 模板内插值一律转义」，落地 6 处：追加题理由（`data.reason`，LLM 相邻自由文本）、质量横幅薄弱维度名、轮次摘要薄弱维度名、技能条技能名（数字插值统一 `Number()` 化）、公司风格下拉（`<option>` 拼接改 DOM 赋值 `replaceChildren`，杜绝属性位逃逸）。
+
+### 2. 黄金样本评测扩容（4 → 20 条）
+
+- 原 4 条覆盖「量化/口号/完整/甩锅」四类；新增 16 条覆盖 10 条确定性规则的每个信号：数据矛盾、名词堆砌、答非所问、甩锅外部、回答过短、有动词无数字、量化充分、跨项目串联、坦诚不足、失败反思、双加分组合、三重扣分封顶、夹紧保护（模型已给 1 分时规则不重复扣）、高质量 `next_question`、短回答双信号。
+- **expected 由规则引擎实算生成**（临时生成脚本跑 `detect_adjustments → apply_adjustments → weighted_score` 取真值），杜绝手算误差；`weakest_dimension` 意图与实算不一致即拒绝写入。过程中实算纠正了 3 处手算偏差（长回答 2-gram 重叠超预期触发 `irrelevant_answer` 共火等），全部如实标注为多信号组合。
+- 新增样本暂无 `baseline`（deepseek-chat 实然快照待 live 扫描标定）：live-LLM 抽检对无 baseline 样本自动跳过基线守护层、保留结构软断言，避免虚构基线让 live 层变脆。
+- 测试数 40 通过（20 样本 × 确定性回归 + 引用字面子串两层断言）。
+
+### 3. CI 接入（GitHub Actions）
+
+- `.github/workflows/ci.yml` 双 job：后端（pip 依赖 → `run.py lint` 分层契约 → 全量 pytest，live-LLM 默认 skip）+ 前端（`npm ci` → `npm run build` 冒烟，导入/语法错误即红灯）。采集器测试导入前已 stub playwright，无需下载 Chromium。
+
+---
+
 ## v7.2.0 动效体系 + 「墨夜纸墨」深色重构 + 市场页样式作用域修复（2026-08-30）
 
 > 起因是 UI 评审发现「双主题审美割裂 + 面板零过渡 + 动效碎片化」三件拉低质感的事（评审全文见 `docs/UI评审_v7.2_动效与高级感升级.md`）。本轮只动表现层：后端、业务逻辑、DOM 结构与类名体系全部不变。
@@ -37,6 +60,15 @@
 - **报告页「生成分享链接」报 `request is not defined`（v7.0 起）**：`report.js` 三处分享接口调用使用 `request()` 但未从 `api.js` 导入——分享功能自 v7.0 上线起实际不可用。补齐 import。
 - **分享页/招聘端收件箱五维雷达图从未绘制（v7.0.1 起）**：`shareReport.js` 的 `mountRadar(scope)` 内部引用了不在作用域内的 `data` 变量，每次挂载抛 `ReferenceError` 被静默吞掉。改为 `mountRadar(container, data)` 显式传参；顺带把雷达硬编码 Indigo 蓝（canvas 不解析 CSS 变量）改为印章红色板。
 - 面板入场动画兜底：动画时钟被冻结时（后台标签页节流），stagger 子元素会停在 `opacity:0`——`switchTab` 在 1.2s 后强制摘除 `panel-enter`，内容直接落到可见态。
+
+### 6. 评分揭晓仪式感补全 + 导出页「同脸」（采纳外部方案，详见 docs/UI评审_v7.2 §五/§六）
+
+- **动效纪律成文化**：时长上限（常规 ≤400ms、>1s 仅限揭示时刻）、JS 动效显式读 `prefers-reduced-motion`、一场面试最多 2 个 WOW 时刻——写入 docs/UI评审_v7.2 §五作为全站约束。
+- **评分揭晓粒子爆发**：分数滚动落定瞬间从评分环径向爆出 16 粒（`utils.js burstParticles`），颜色随分数分级（≥4.0 墨青/黄铜/朱砂，3.0–4.0 黄铜/朱砂，<3.0 深红/黄铜）；实测 maxParticles=16。
+- **报告页五维总览卡**：新增五张迷你卡（与分享页 share-dim 同脸，等宽大数字 + 分级色条），spring 弹入 stagger 110ms。
+- **Quote 证据引用渲染（v7.0 字段首次上屏）**：`DimensionScore.quote` 在面试诊断卡中以黄铜左边条证据块呈现 + 首次黄铜扫描线（「AI 在审视你的原话」的视觉化）。
+- **导出页纸墨皮肤（同脸）**：`/export.html` 模板从 GitHub 蓝换成米纸底 + 印章红衬线标题 + 黄铜 blockquote + 「面」字印章品牌眉标。
+- **导出页 401 修复（v7.0 遗漏路径）**：导出页经 `window.open` 顶层导航打开带不了 Authorization 头——token 支持 query 参数兜底（与 `resolve_ws_user` 同一权衡），前端按钮登录态自动拼接。
 
 ---
 
