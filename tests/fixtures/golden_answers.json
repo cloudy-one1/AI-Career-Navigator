@@ -1,0 +1,145 @@
+{
+  "note": "黄金样本回归夹具（v7.1 新增，v7.1 校准 baseline）。四类典型回答：量化充分但 STAR 欠缺 / 全篇口号 / STAR 完整且量化充分 / 甩锅避答。expected = 人工标注的『应然』区间，供第 1 层确定性回归断言（验证全链路不回退）与人工对照质量线；baseline = deepseek-chat 在当前配置下的『实然』快照，供第 2 层 live-LLM 抽检做回归守护——模型分数 / 最弱维度跌出 baseline 即告警，但不强行要求达到 expected（达到 expected 属质量提升，需另行拉齐 prompt）。baseline 的 overall 容差带由 3 轮 live 扫描的实测 min/max 加 0.3 安全垫标定（v7.1 收紧，原单样本 ±0.8）。diagnosis 为人工标注的诊断 JSON（模拟 LLM 输出，使全链路确定性可回归）。",
+  "samples": [
+    {
+      "id": "quantified_full_star_gap",
+      "category": "量化充分 · STAR 欠缺",
+      "question": "你最近做过什么性能优化？具体怎么做的，效果如何？",
+      "answer": "我们系统双十一大促时接口 P99 延迟从 800ms 降到 200ms，吞吐量从 2000 QPS 提升到 6000 QPS，覆盖了 300 万用户。我负责定位慢查询，用连接池和索引优化解决了瓶颈。",
+      "diagnosis": {
+        "star_completeness": {"score": 2.0, "comment": "缺少背景与任务交代，直接跳到优化动作", "quote": "我负责定位慢查询"},
+        "quantification": {"score": 4.5, "comment": "P99/QPS/用户数多组量化，数据充分", "quote": "P99 延迟从 800ms 降到 200ms"},
+        "logic_coherence": {"score": 4.5, "comment": "问题定位到解决路径因果清晰", "quote": "用连接池和索引优化解决了瓶颈"},
+        "job_relevance": {"score": 4.5, "comment": "性能优化贴合后端岗位", "quote": "我们系统双十一大促时接口"},
+        "professional_depth": {"score": 4.5, "comment": "能说清连接池与索引的作用", "quote": "索引优化"},
+        "weakest_dimension": "star_completeness",
+        "follow_up_question": "这块优化当时你具体负责哪一部分？",
+        "overall_score": 3.9,
+        "overall_comment": "量化充分但 STAR 结构欠缺，需要补背景与个人职责",
+        "real_interview_impact": "面试官会觉得数据扎实，但会追问你个人的具体动作",
+        "next_action": "follow_up",
+        "risk_points": ["STAR 不完整"]
+      },
+      "rewrite": {
+        "rewritten_answer": "当时系统大促接口延迟高，我负责性能优化的定位与实施……",
+        "key_changes": ["补充背景与个人职责"]
+      },
+      "expected": {
+        "overall_min": 3.3,
+        "overall_max": 4.5,
+        "weakest_dimension": "star_completeness",
+        "evidence_keys": ["quantified", "irrelevant_answer"]
+      },
+      "baseline": {
+        "overall_min": 2.7,
+        "overall_max": 3.5,
+        "weakest_dimension": "logic_coherence"
+      }
+    },
+    {
+      "id": "vague_slogans",
+      "category": "全篇口号 · 无量化",
+      "question": "介绍一下你们项目整体效果怎么样，最后结果如何？",
+      "answer": "我们项目整体性能提升了不少效果非常显著，首先我们很努力，然后领导表扬，最后结果很好",
+      "diagnosis": {
+        "star_completeness": {"score": 3.5, "comment": "有大致脉络但缺具体事件", "quote": "我们项目整体性能提升了不少"},
+        "quantification": {"score": 3.0, "comment": "提升了不少但无任何数字", "quote": "提升了不少"},
+        "logic_coherence": {"score": 3.5, "comment": "流程词串联但缺乏事实支撑", "quote": "首先我们很努力"},
+        "job_relevance": {"score": 3.5, "comment": "与岗位能力关联弱", "quote": "效果非常显著"},
+        "professional_depth": {"score": 3.0, "comment": "无技术细节", "quote": "最后结果很好"},
+        "weakest_dimension": "quantification",
+        "follow_up_question": "能具体说一下性能提升了多少、怎么提升的吗？",
+        "overall_score": 3.1,
+        "overall_comment": "口号化表达，缺乏数据支撑",
+        "real_interview_impact": "面试官难以判断真实水平，会追问具体数字",
+        "next_action": "follow_up",
+        "risk_points": ["无量化数据"]
+      },
+      "rewrite": {
+        "rewritten_answer": "项目整体性能提升明显，例如接口 P99 从 800ms 降到 200ms……",
+        "key_changes": ["补充量化数据"]
+      },
+      "expected": {
+        "overall_min": 2.5,
+        "overall_max": 3.7,
+        "weakest_dimension": "quantification",
+        "evidence_keys": ["no_quantification"]
+      },
+      "baseline": {
+        "overall_min": 0.7,
+        "overall_max": 1.3,
+        "weakest_dimension": "star_completeness"
+      }
+    },
+    {
+      "id": "star_complete_quantified",
+      "category": "STAR 完整 · 量化充分",
+      "question": "介绍一下你负责的订单模块优化项目：背景、任务、行动、结果是什么？",
+      "answer": "背景是我负责的订单模块优化项目接口慢导致成功率偏低，我的任务是提升下单成功率，我做了三步：先加数据库索引，然后接重试机制，最后加监控看板，上线后下单成功率从 92% 提升到 98%。",
+      "diagnosis": {
+        "star_completeness": {"score": 5.0, "comment": "背景-任务-行动-结果完整", "quote": "背景是我负责的订单模块优化项目"},
+        "quantification": {"score": 4.0, "comment": "有明确前后对比数据", "quote": "从 92% 提升到 98%"},
+        "logic_coherence": {"score": 4.5, "comment": "三步行动顺序清晰", "quote": "先加数据库索引"},
+        "job_relevance": {"score": 4.5, "comment": "贴合后端业务优化岗位", "quote": "下单成功率从 92%"},
+        "professional_depth": {"score": 3.0, "comment": "只讲了做了什么，未解释索引为何能提速等原理", "quote": "最后加监控看板"},
+        "weakest_dimension": "professional_depth",
+        "follow_up_question": "为什么加索引能提升下单成功率？底层原理是什么？",
+        "overall_score": 4.4,
+        "overall_comment": "结构完整、数据充分，但原理深度不足",
+        "real_interview_impact": "通过概率高，深度追问是唯一风险点",
+        "next_action": "follow_up",
+        "risk_points": ["原理层不够深"]
+      },
+      "rewrite": {
+        "rewritten_answer": "背景是我负责的订单模块优化……关键点是我解释了索引减少回表扫描的原理……",
+        "key_changes": ["补充原理说明"]
+      },
+      "expected": {
+        "overall_min": 3.8,
+        "overall_max": 5.0,
+        "weakest_dimension": "professional_depth",
+        "evidence_keys": ["quantified"]
+      },
+      "baseline": {
+        "overall_min": 2.7,
+        "overall_max": 3.7,
+        "weakest_dimension": "professional_depth"
+      }
+    },
+    {
+      "id": "blame_shift_avoidance",
+      "category": "甩锅避答 · 归因外部",
+      "question": "说一下你在这个项目里的具体贡献？",
+      "answer": "这个项目主要是别的团队做的，我在里面只负责很小一部分，就是帮忙测试一下，核心模块都是他们开发的。",
+      "diagnosis": {
+        "star_completeness": {"score": 3.0, "comment": "回避个人行动，归因外部", "quote": "这个项目主要是别的团队做的"},
+        "quantification": {"score": 4.0, "comment": "非量化问题，未涉及", "quote": "核心模块都是他们开发的"},
+        "logic_coherence": {"score": 4.0, "comment": "表述通顺", "quote": "我在里面只负责很小一部分"},
+        "job_relevance": {"score": 4.0, "comment": "能说明部分职责", "quote": "就是帮忙测试一下"},
+        "professional_depth": {"score": 4.0, "comment": "未涉及技术细节", "quote": "都是他们开发的"},
+        "weakest_dimension": "star_completeness",
+        "follow_up_question": "那你在测试环节具体做了哪些事情？",
+        "overall_score": 3.2,
+        "overall_comment": "避重就轻，缺乏对个人贡献的正面回答",
+        "real_interview_impact": "面试官会认为你缺少责任担当，追体验差",
+        "next_action": "follow_up",
+        "risk_points": ["回避个人贡献"]
+      },
+      "rewrite": {
+        "rewritten_answer": "这个项目我参与测试环节，主要负责……",
+        "key_changes": ["聚焦个人贡献"]
+      },
+      "expected": {
+        "overall_min": 2.8,
+        "overall_max": 4.0,
+        "weakest_dimension": "star_completeness",
+        "evidence_keys": ["blame_shift", "too_passive"]
+      },
+      "baseline": {
+        "overall_min": 0.9,
+        "overall_max": 1.5,
+        "weakest_dimension": "star_completeness"
+      }
+    }
+  ]
+}

@@ -47,11 +47,20 @@ async def init_market_db() -> None:
                 tags TEXT DEFAULT '[]',
                 description TEXT DEFAULT '',
                 url TEXT DEFAULT '',
+                is_interested INTEGER DEFAULT 0,   -- 「感兴趣」收藏（与题库 is_favorited 同模式）
                 collected_at TEXT DEFAULT (datetime('now', 'localtime')),
                 updated_at TEXT DEFAULT (datetime('now', 'localtime')),
                 UNIQUE(source, source_id)
             )
         """)
+        # v7.1 迁移：为已存在的库补齐 is_interested 列。
+        # CREATE TABLE IF NOT EXISTS 不会改动已存在的表，故必须显式 ALTER。
+        async with db.execute("PRAGMA table_info(job_postings)") as cur:
+            cols = {row[1] for row in await cur.fetchall()}
+        if "is_interested" not in cols:
+            await db.execute("ALTER TABLE job_postings ADD COLUMN is_interested INTEGER DEFAULT 0")
+            logger.info("market.db 迁移：新增 is_interested 字段")
+
         await db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_keyword ON job_postings(keyword)")
         await db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_city ON job_postings(city)")
         await db.commit()
@@ -148,6 +157,32 @@ async def get_job_by_id(job_id: int) -> Optional[dict]:
         d = dict(row)
         d["tags"] = json.loads(d.get("tags") or "[]")
         return d
+    finally:
+        await db.close()
+
+
+async def toggle_interest(job_id: int) -> Optional[bool]:
+    """切换「感兴趣」收藏状态，返回新状态；岗位不存在返回 None。
+
+    与题库 question_bank.is_favorited 同模式：全局标记（不区分用户），
+    因为本项目 market.db 是单机单用户库，且「不登录也能正常使用」。
+    刻意不更新 updated_at —— 收藏是用户态，不应改写数据时间戳。
+    """
+    db = await get_db()
+    try:
+        async with db.execute(
+            "SELECT is_interested FROM job_postings WHERE id = ?", (job_id,)
+        ) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        new_val = 0 if (row[0] or 0) else 1
+        await db.execute(
+            "UPDATE job_postings SET is_interested = ? WHERE id = ?",
+            (new_val, job_id),
+        )
+        await db.commit()
+        return bool(new_val)
     finally:
         await db.close()
 

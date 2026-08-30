@@ -1,0 +1,183 @@
+/* ===================================================
+   theme.css — 深色风格覆盖层（对齐 job-crawler theme-dark.css）
+   ---------------------------------------------------
+   原则：DOM 结构 / 类名 100% 不动，仅在 html.theme-dark
+        作用域下通过变量重映射 + 同名类覆盖生效。
+        浅色（默认）下本文件 0 影响。
+   大部分颜色已由 tokens.css 的 html.theme-dark 变量
+   重映射自动跟随，本文件只处理：渐变背景、标题渐变、
+   框架层毛玻璃、卡片光条、弹层、语义色切换器。
+   =================================================== */
+
+/* ---------- 1. 页面基底 + 顶部径向辉光 ---------- */
+html.theme-dark body {
+  background: var(--bg-page) !important;
+  background-attachment: fixed !important;
+  color: var(--text-primary) !important;
+  position: relative;
+}
+html.theme-dark body::before {
+  content: "";
+  position: fixed; inset: 0; z-index: -1; pointer-events: none;
+  background: radial-gradient(ellipse at 30% 0%, rgba(78,84,180,0.15) 0%, transparent 60%);
+}
+
+/* ---------- 2. 标题渐变文字（h1/h2）；h3~h5 纯白 ---------- */
+html.theme-dark h1,
+html.theme-dark h2 {
+  color: #fff !important;
+  background: linear-gradient(90deg, #FFFFFF 30%, #8B9FFF 60%, #FF6EC7 100%);
+  -webkit-background-clip: text; background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+html.theme-dark h3,
+html.theme-dark h4,
+html.theme-dark h5 {
+  color: #fff !important;
+  -webkit-text-fill-color: #fff !important;
+  background: none !important;
+}
+
+/* ---------- 3. 框架层（header / 侧栏 / 底部导航）---------- */
+html.theme-dark .app-header {
+  background: rgba(22,28,62,0.82) !important;
+  border-bottom: 1px solid var(--border-card) !important;
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+}
+html.theme-dark .app-nav {
+  background: rgba(22,28,62,0.82) !important;
+  border-right: 1px solid var(--border-card) !important;
+}
+html.theme-dark .nav-item { color: var(--text-secondary) !important; }
+html.theme-dark .nav-item:hover { color: #fff !important; background: rgba(93,224,230,0.10) !important; }
+html.theme-dark .nav-item.active {
+  color: var(--accent-from) !important;
+  background: rgba(93,224,230,0.12) !important;
+}
+html.theme-dark .nav-item.active::before {
+  background: linear-gradient(180deg, var(--accent-from), var(--accent-to)) !important;
+}
+html.theme-dark .bottom-nav {
+  background: rgba(22,28,62,0.82) !important;
+  border-top: 1px solid var(--border-card) !important;
+}
+html.theme-dark .brand-logo {
+  background: linear-gradient(135deg, var(--accent-from), var(--accent-to)) !important;
+  color: #0b0e1f !important;
+}
+html.theme-dark .version-badge {
+  background: rgba(93,224,230,0.12) !important;
+  color: var(--cyan) !important;
+  border-color: rgba(93,224,230,0.28) !important;
+}
+
+/* ---------- 4. 卡片（渐变卡底 + hover 辉光）---------- */
+html.theme-dark .card,
+html.theme-dark .modal {
+  background: var(--bg-card) !important;
+  border: 1px solid var(--border-card) !important;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.25), inset 0 1px 0 rgba(255,255,255,0.04) !important;
+  color: var(--text-primary) !important;
+}
+html.theme-dark .card:hover {
+  box-shadow: 0 8px 40px rgba(93,224,230,0.12), inset 0 1px 0 rgba(255,255,255,0.04) !important;
+}
+
+/* ---------- 5. 按钮 ---------- */
+html.theme-dark .btn { border-radius: var(--radius-full) !important; }
+html.theme-dark .btn-primary {
+  background: linear-gradient(135deg, var(--accent-from), var(--accent-to)) !important;
+  color: #0b0e1f !important;
+  box-shadow: none !important;
+}
+html.theme-dark .btn-primary:hover {
+  filter: brightness(1.08);
+  box-shadow: 0 8px 40px rgba(93,224,230,0.2) !important;
+}
+html.theme-dark .btn-secondary {
+  background: rgba(30,35,70,0.85) !important;
+  color: #fff !important;
+  border: 1px solid var(--border-card) !important;
+}
+html.theme-dark .btn-secondary:hover { background: rgba(93,224,230,0.16) !important; }
+html.theme-dark .btn-danger { background: var(--coral) !important; color: #0b0e1f !important; }
+
+/* ---------- 6. 表单 ---------- */
+html.theme-dark .form-input,
+html.theme-dark .form-textarea,
+html.theme-dark .form-control,
+html.theme-dark .answer-textarea {
+  background: rgba(15,18,40,0.6) !important;
+  border: 1px solid var(--border-card) !important;
+  color: #fff !important;
+}
+html.theme-dark .form-input:focus,
+html.theme-dark .form-textarea:focus,
+html.theme-dark .form-control:focus,
+html.theme-dark .answer-textarea:focus {
+  border-color: var(--cyan) !important;
+  box-shadow: 0 0 0 3px rgba(93,224,230,0.18) !important;
+}
+html.theme-dark .form-label,
+html.theme-dark .form-group label { color: var(--text-secondary) !important; }
+
+/* ---------- 7. 弹层 / 遮罩 / Toast ---------- */
+html.theme-dark .modal-overlay,
+html.theme-dark .confirm-mask {
+  background: rgba(8,10,28,0.6) !important;
+  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+}
+html.theme-dark .modal {
+  background: rgba(22,28,62,0.96) !important;
+  border-color: var(--border-card) !important;
+  box-shadow: 0 20px 60px rgba(0,0,0,.45) !important;
+}
+html.theme-dark .confirm-box {
+  background: rgba(22,28,62,0.96) !important;
+  color: var(--text-primary) !important;
+}
+html.theme-dark .modal-title,
+html.theme-dark .confirm-title { color: #fff !important; }
+html.theme-dark .toast { box-shadow: 0 8px 32px rgba(0,0,0,.35) !important; }
+
+/* ---------- 8. 语义色切换器（仅深色下挂载）---------- */
+html.theme-dark #accent-switcher {
+  position: fixed; right: 18px; bottom: 18px; z-index: 2000;
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 14px; border-radius: var(--radius-full);
+  background: rgba(22,28,62,0.82);
+  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  border: 1px solid var(--border-card);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.35);
+}
+html.theme-dark #accent-switcher .lbl {
+  font-size: 12px; color: var(--text-secondary); letter-spacing: .05em;
+}
+html.theme-dark #accent-switcher button {
+  width: 20px; height: 20px; border-radius: 50%;
+  border: 2px solid transparent; cursor: pointer; padding: 0;
+  transition: transform .2s ease, border-color .2s ease;
+}
+html.theme-dark #accent-switcher button:hover { transform: scale(1.15); }
+html.theme-dark #accent-switcher button.active {
+  border-color: #fff; box-shadow: 0 0 0 2px rgba(255,255,255,0.25);
+}
+
+/* ---------- 9. 切换风格按钮（两风格均可见）---------- */
+.theme-toggle {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--font-family); font-weight: 600; font-size: 14px;
+  padding: 7px 16px; border-radius: 22px; cursor: pointer;
+  background: transparent; border: 1.5px solid var(--line); color: var(--ink-soft);
+  transition: .2s ease; white-space: nowrap;
+}
+.theme-toggle:hover { color: var(--ink); border-color: var(--ink); }
+html.theme-dark .theme-toggle { border-color: var(--border-card); color: var(--text-secondary); }
+html.theme-dark .theme-toggle:hover { color: #fff; border-color: var(--cyan); }
+
+/* ---------- 10. 动效降级 ---------- */
+@media (prefers-reduced-motion: reduce) {
+  html.theme-dark .card,
+  html.theme-dark .btn,
+  html.theme-dark .nav-item { transition: none !important; }
+}

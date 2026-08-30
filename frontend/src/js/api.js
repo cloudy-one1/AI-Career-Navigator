@@ -255,6 +255,11 @@ export async function getMarketJob(jobId) {
   return request('GET', `/api/market/jobs/${jobId}`);
 }
 
+/** 切换岗位「感兴趣」收藏（持久化到 market.db，返回 { job_id, is_interested }） */
+export async function toggleMarketInterest(jobId) {
+  return request('POST', `/api/market/jobs/${jobId}/interest`);
+}
+
 /** 岗位列表（过滤 + 分页） */
 export async function getMarketJobs(filters = {}, page = 0, limit = 50) {
   const params = new URLSearchParams();

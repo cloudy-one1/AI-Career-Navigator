@@ -55,8 +55,10 @@ def validate(keyword: str, cities: list, pages: int) -> Optional[str]:
     """参数校验，返回错误信息；合法返回 None。"""
     if not keyword or not keyword.strip():
         return "关键词不能为空"
-    if not cities or len(cities) > _CITY_LIMIT:
-        return f"请选择 1~{_CITY_LIMIT} 个城市"
+    # 空列表合法：走全国范围搜索（scrape_jobs 内部 fallback 到 ("全国","000000")）
+    cities = cities or []
+    if len(cities) > _CITY_LIMIT:
+        return f"最多选择 {_CITY_LIMIT} 个城市"
     if not isinstance(pages, int) or not (_PAGES_RANGE[0] <= pages <= _PAGES_RANGE[1]):
         return f"页数需为 {_PAGES_RANGE[0]}~{_PAGES_RANGE[1]} 的整数"
     return None

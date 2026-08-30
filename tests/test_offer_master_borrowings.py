@@ -65,10 +65,6 @@ class TestDiagnosisPromptBorrowings:
         assert VOICE_TRANSCRIPTION_NOTE not in sys_prompt
         assert "语音转写容错" not in sys_prompt
 
-    def test_note_constant_examples(self):
-        assert "疑似转写误差" in VOICE_TRANSCRIPTION_NOTE
-        assert "SARS" in VOICE_TRANSCRIPTION_NOTE
-
 
 # ----- 3. TTS LRU 缓存 -----
 

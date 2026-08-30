@@ -118,9 +118,11 @@ class TestFollowUpPatternBoundToRole:
 
         out = await s.generate_follow_up(diagnosis={"weakest_dimension_name": "量化程度"})
         assert out
-        # 怎么问：skeptical 的追问链首环
-        assert "这个数据是怎么归因的" in captured["system"]
-        # 负向边界
+        # 怎么问：角色追问链必须真的进入 system prompt
+        # （从配置取链断言，不再锁死具体文案——等价改写配置不爆红）
+        chain = config.INTERVIEWER_STYLES["skeptical"]["followup_chain"]
+        assert any(link in captured["system"] for link in chain), "追问链未注入 system prompt"
+        # 负向边界：不会问清单区块
         assert "你不问什么" in captured["system"]
         # 问什么：薄弱维度
         assert "量化程度" in captured["system"]

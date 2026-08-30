@@ -1,67 +1,99 @@
 /* ===================================================
-   tokens.css — 设计 Token 层（v4.0）
-   规范来源：docs/前端设计方案_UIUX重构.md 第 4 章
+   tokens.css — 设计 Token 层（v5.0 纸墨风）
+   视觉基线：docs/job-crawler-UI设计系统规格.md
+   ---------------------------------------------------
+   改造策略：**变量名保持不变，仅重映射色值**。
+   - 全站 CSS（style.css / pages/*.css / components.css）
+     引用的 --card / --primary / --indigo-* / --slate-* 等
+     全部自动切换为纸墨色，无需逐行改名。
+   - 深色由「跟随系统 prefers-color-scheme」改为
+     「手动切换 html.theme-dark」（对齐 job-crawler）。
    =================================================== */
 
 :root {
-  /* ── 品牌主色 Indigo 阶梯（专业可信）── */
-  --indigo-50: #EEF2FF;
-  --indigo-100: #E0E7FF;
-  --indigo-400: #818CF8;
-  --indigo-500: #6366F1;
-  --indigo-600: #4F46E5;
-  --indigo-700: #4338CA;
-  --indigo-800: #3730A3;
+  /* ══ job-crawler 纸墨风核心 Token（原始名，直接复用其组件 CSS）══ */
+  --paper:#F4F2ED;          /* 页面底色（米色纸张） */
+  --card:#FCFAF6;           /* 卡片底色（略亮于纸） */
+  --ink:#1F2320;            /* 主文字（墨色） */
+  --ink-soft:#667066;       /* 次要文字 / 说明 */
+  --stamp:#C44F3A;          /* 印章红（强调） */
+  --brass:#A08945;          /* 黄铜（编号 / 次要强调） */
+  --line:#DAD6CC;           /* 描边 / 分隔线 */
+  --teal:#3A7A6A;           /* 青绿（链接 / 成功 / 焦点） */
+  --teal-soft:#E8F1ED;      /* 青绿浅底 */
+  --accent:#C44F3A;         /* 强调色（= 印章红） */
+  --accent-light:#FDF0EC;   /* 强调浅底 */
+  --gold:#A08945;
 
-  /* ── 辅助色 琥珀（教练陪伴·仅用于鼓励/里程碑/成长）── */
-  --amber-50: #FFFBEB;
-  --amber-400: #FBBF24;
-  --amber-500: #F59E0B;
-  --amber-600: #D97706;
+  /* ══ 印章红阶梯（原 Indigo 阶梯位置：主色 / 强调）══ */
+  --indigo-50:#FDF0EC;
+  --indigo-100:#F9D9D2;
+  --indigo-400:#D9705C;
+  --indigo-500:#C44F3A;
+  --indigo-600:#C44F3A;
+  --indigo-700:#A83E2E;
+  --indigo-800:#9B3025;
 
-  /* ── 功能色 ── */
-  --green-50: #ECFDF5;
-  --green-500: #10B981;
-  --emerald-50: #ECFDF5;
-  --emerald-200: #A7F3D0;
-  --emerald-500: #10B981;
-  --emerald-600: #059669;
-  --emerald-700: #047857;
-  --red-50: #FEF2F2;
-  --red-500: #EF4444;
-  --blue-500: #3B82F6;
-  --orange-500: #F97316;
+  /* ══ 黄铜 / 琥珀阶梯（原 Amber：警示 / 里程碑）══ */
+  --amber-50:#FBF4E4;
+  --amber-400:#BE9F58;
+  --amber-500:#A08945;
+  --amber-600:#7A6634;
 
-  /* ── 中性色 Slate 阶梯 ── */
-  --slate-50: #F8FAFC;
-  --slate-100: #F1F5F9;
-  --slate-200: #E2E8F0;
-  --slate-300: #CBD5E1;
-  --slate-400: #94A3B8;
-  --slate-500: #64748B;
-  --slate-600: #475569;
-  --slate-700: #334155;
-  --slate-800: #1E293B;
-  --slate-900: #0F172A;
+  /* ══ 青绿阶梯（原 Green / Emerald：成功 / 正向）══ */
+  --green-50:#E8F1ED;
+  --green-500:#3A7A6A;
+  --emerald-50:#E8F1ED;
+  --emerald-200:#BFD8CF;
+  --emerald-500:#3A7A6A;
+  --emerald-600:#2C6455;
+  --emerald-700:#1D4F42;
 
-  /* ── 语义别名 ── */
-  --color-bg: var(--slate-50);
-  --color-surface: #FFFFFF;
-  --color-text: var(--slate-900);
-  --color-text-secondary: var(--slate-700);
-  --color-text-muted: var(--slate-500);
-  --color-border: var(--slate-200);
-  --color-primary: var(--indigo-600);
+  /* ══ 危险 / 信息 / 提示 ══ */
+  --red-50:#FDF0EC;
+  --red-500:#C44F3A;
+  --blue-500:#3A7A6A;
+  --orange-500:#A08945;
+
+  /* ══ 中性墨阶（原 Slate 阶梯位置：纸墨灰）══ */
+  --slate-50:#F4F2ED;
+  --slate-100:#E7E4DC;
+  --slate-200:#DAD6CC;
+  --slate-300:#C3BDB0;
+  --slate-400:#9A948A;
+  --slate-500:#667066;
+  --slate-600:#4A524B;
+  --slate-700:#333A34;
+  --slate-800:#1F2320;
+  --slate-900:#171A18;
+
+  /* ══ 语义别名（全站组件引用）══ */
+  --color-bg: var(--paper);
+  --color-surface: var(--card);
+  --color-text: var(--ink);
+  --color-text-secondary: var(--ink-soft);
+  --color-text-muted: var(--slate-400);
+  --color-border: var(--line);
+  --color-primary: var(--stamp);
   --color-primary-hover: var(--indigo-700);
-  --color-primary-soft: var(--indigo-50);
-  --color-success: var(--green-500);
-  --color-warning: var(--amber-500);
-  --color-danger: var(--red-500);
-  --color-info: var(--blue-500);
-  --color-accent: var(--amber-500);
+  --color-primary-soft: var(--accent-light);
+  --color-success: var(--teal);
+  --color-warning: var(--brass);
+  --color-danger: var(--indigo-800);
+  --color-info: var(--teal);
+  --color-accent: var(--brass);
 
-  /* ── 字体与排版 ── */
-  --font-family: "PingFang SC", "Microsoft YaHei", -apple-system, "Segoe UI", Roboto, sans-serif;
+  /* ══ RGB 三元组（供 rgba(var(--x-rgb), α) 使用，深色下自动跟随）══ */
+  --primary-rgb: 196, 79, 58;      /* 印章红 */
+  --success-rgb: 58, 122, 106;     /* 青绿 */
+  --warning-rgb: 160, 137, 69;     /* 黄铜 */
+  --danger-rgb: 155, 48, 37;       /* 深印章红 */
+  --ink-rgb: 31, 35, 32;           /* 墨色 */
+
+  /* ══ 字体与排版 ══ */
+  --font-family: 'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', -apple-system, sans-serif;
+  --font-serif: 'Noto Serif SC', 'Songti SC', serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
   --text-xs: 12px;
   --text-sm: 13px;
   --text-base: 14px;
@@ -71,7 +103,7 @@
   --text-2xl: 28px;
   --text-3xl: 36px;
 
-  /* ── 间距 4pt 网格 ── */
+  /* ══ 间距 4pt 网格 ══ */
   --space-1: 4px;
   --space-2: 8px;
   --space-3: 12px;
@@ -81,103 +113,171 @@
   --space-7: 48px;
   --space-8: 64px;
 
-  /* ── 圆角 ── */
+  /* ══ 圆角（对齐 job-crawler：卡片 20 / 按钮 26 / 表单 12 / 药丸 999）══ */
   --radius-sm: 8px;
   --radius-md: 12px;
-  --radius-lg: 16px;
+  --radius-lg: 20px;
   --radius-full: 999px;
 
-  /* ── 阴影（v6.3 补齐六级 + 内阴影；xs 用于贴地元素，xl 用于弹层）── */
-  --shadow-xs: 0 1px 2px rgba(15, 23, 42, 0.04);
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
-  --shadow-md: 0 4px 12px -2px rgba(15, 23, 42, 0.08);
-  --shadow-lg: 0 12px 32px -8px rgba(15, 23, 42, 0.14);
-  --shadow-xl: 0 24px 48px -12px rgba(15, 23, 42, 0.22), 0 8px 16px -8px rgba(15, 23, 42, 0.10);
-  --shadow-inset: inset 0 1px 2px rgba(15, 23, 42, 0.06);
-  --shadow-glow: 0 0 0 4px rgba(79, 70, 229, 0.12);
+  /* ══ 阴影（纸墨：暖灰调、更轻更柔）══ */
+  --shadow-xs: 0 1px 2px rgba(31, 35, 32, 0.04);
+  --shadow-sm: 0 1px 4px rgba(31, 35, 32, 0.05);
+  --shadow-md: 0 4px 12px -2px rgba(31, 35, 32, 0.08);
+  --shadow-lg: 0 12px 32px -8px rgba(31, 35, 32, 0.12);
+  --shadow-xl: 0 24px 48px -12px rgba(31, 35, 32, 0.18), 0 8px 16px -8px rgba(31, 35, 32, 0.08);
+  --shadow-inset: inset 0 1px 2px rgba(31, 35, 32, 0.05);
+  --shadow-glow: 0 0 0 4px rgba(196, 79, 58, 0.14);
 
-  /* ── 玻璃态（v6.3；毛玻璃面板/悬浮工具条用）── */
-  --glass-bg: rgba(255, 255, 255, 0.72);
-  --glass-border: rgba(255, 255, 255, 0.55);
+  /* ══ 玻璃态（米纸半透明）══ */
+  --glass-bg: rgba(252, 250, 246, 0.72);
+  --glass-border: rgba(218, 214, 204, 0.55);
   --glass-blur: 14px;
 
-  /* ── 动效 ── */
+  /* ══ 动效 ══ */
   --dur-fast: 150ms;
   --dur-base: 250ms;
   --dur-slow: 350ms;
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
-  /* v6.3: 标准微交互缓动（hover/active 等位移类过渡统一用它，
-     与 --ease-out 的"入场"语义区分；取自 Material 标准曲线） */
   --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 /* ===================================================
-   旧变量别名（迁移期兼容 style.css 既有组件样式）
-   映射表见 docs 附录 B；组件逐步切换后移除本块
+   旧变量别名（迁移期兼容 style.css / pages CSS 既有组件）
+   变量名保持原样，值全部指向纸墨 Token
    =================================================== */
 :root {
-  --primary: var(--indigo-600);
+  --primary: var(--stamp);
   --primary-light: var(--indigo-400);
   --primary-dark: var(--indigo-800);
-  --success: var(--green-500);
-  --warning: var(--amber-500);
-  --danger: var(--red-500);
-  --bg: var(--slate-50);
-  --card: #FFFFFF;
-  --border: var(--slate-200);
-  --text: var(--slate-800);
-  --text-secondary: var(--slate-500);
+  --success: var(--teal);
+  --warning: var(--brass);
+  --danger: var(--indigo-800);
+  --bg: var(--paper);
+  --border: var(--line);
+  --text: var(--ink);
+  --text-secondary: var(--ink-soft);
   --text-muted: var(--slate-400);
   --radius: var(--radius-md);
   --shadow: var(--shadow-sm);
   --transition: var(--dur-base) var(--ease-out);
-  /* --shadow-md / --radius / --transition 与新 Token 同名，
-     直接复用新定义，不再重复声明 */
 }
 
 /* ===================================================
-   v4.0: 深色主题（跟随系统 prefers-color-scheme）
-   覆盖语义层 + 旧别名层；组件级微调见 pages/dark.css
+   v5.0: 深色主题 —— 手动切换（html.theme-dark）
+   对齐 job-crawler theme-dark.css：原 HTML 结构 / 类名
+   100% 不动，仅通过本作用域变量重映射生效。
+   浅色（默认）下本块 0 影响。
    =================================================== */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --color-bg: #0F172A;
-    --color-surface: #1E293B;
-    --color-text: #E2E8F0;
-    --color-text-secondary: #94A3B8;
-    --color-text-muted: #64748B;
-    --color-border: #334155;
-    --color-primary: #818CF8;
-    --color-primary-hover: #A5B4FC;
-    --color-primary-soft: rgba(129, 140, 248, 0.14);
-    --color-success: #34D399;
-    --color-warning: #FBBF24;
-    --color-danger: #F87171;
-    --color-info: #60A5FA;
-    --color-accent: #FBBF24;
+html.theme-dark {
+  /* ── 深色专用 token ── */
+  --bg-page: linear-gradient(135deg, #1C1F3B 0%, #16213E 50%, #1A1040 100%);
+  --bg-card: linear-gradient(145deg, rgba(30,35,70,0.85) 0%, rgba(22,28,62,0.95) 100%);
+  --text-primary: #FFFFFF;
+  --text-secondary: rgba(255,255,255,0.55);
+  --text-muted: rgba(255,255,255,0.45);
+  --cyan:#5DE0E6; --pink:#FF6EC7; --gold:#FFB84D; --lavender:#B48CFF; --coral:#FF7B8A;
+  --border-card: rgba(100,120,200,0.15);
+  /* 强调色（默认 cyan，由 themeToggle.js 切换 --accent-from/--accent-to） */
+  --accent-from:#5DE0E6;
+  --accent-to:#B48CFF;
 
-    --primary: #818CF8;
-    --primary-light: #A5B4FC;
-    --primary-dark: #6366F1;
-    --success: #34D399;
-    --warning: #FBBF24;
-    --danger: #F87171;
-    --bg: #0F172A;
-    --card: #1E293B;
-    --border: #334155;
-    --text: #E2E8F0;
-    --text-secondary: #94A3B8;
-    --text-muted: #64748B;
+  /* ── 米色 token 重映射（内联 var(--*) 自动跟随）── */
+  --paper:#161A33;
+  --card:#1E2346;
+  --ink:#FFFFFF;
+  --ink-soft:rgba(255,255,255,0.55);
+  --stamp:#B48CFF;
+  --brass:#8B9FFF;
+  --line:rgba(100,120,200,0.18);
+  --teal:#5DE0E6;
+  --teal-soft:rgba(93,224,230,0.10);
+  --accent:#5DE0E6;
+  --accent-light:rgba(93,224,230,0.12);
+  --gold:#FFB84D;
 
-    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
-    --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
-    --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.5);
-    --shadow-lg: 0 12px 32px -8px rgba(0, 0, 0, 0.6);
-    --shadow-xl: 0 24px 48px -12px rgba(0, 0, 0, 0.7), 0 8px 16px -8px rgba(0, 0, 0, 0.5);
-    --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  /* ── 阶梯重映射（让 var(--indigo-*) / var(--slate-*) 自动跟随深色）── */
+  --indigo-50:rgba(93,224,230,0.10);
+  --indigo-100:rgba(93,224,230,0.16);
+  --indigo-400:#5DE0E6;
+  --indigo-500:#5DE0E6;
+  --indigo-600:var(--accent-from);
+  --indigo-700:#7DE9EE;
+  --indigo-800:#B48CFF;
 
-    --glass-bg: rgba(30, 41, 59, 0.72);
-    --glass-border: rgba(51, 65, 85, 0.55);
-  }
+  --amber-50:rgba(255,184,77,0.12);
+  --amber-400:#FFCB70;
+  --amber-500:#FFB84D;
+  --amber-600:#FFA726;
+
+  --green-50:rgba(93,224,230,0.10);
+  --green-500:#5DE0E6;
+  --emerald-50:rgba(93,224,230,0.10);
+  --emerald-200:rgba(93,224,230,0.28);
+  --emerald-500:#5DE0E6;
+  --emerald-600:#5DE0E6;
+  --emerald-700:#5DE0E6;
+
+  --red-50:rgba(255,123,138,0.12);
+  --red-500:#FF7B8A;
+  --blue-500:#5DE0E6;
+  --orange-500:#FFB84D;
+
+  --slate-50:#161A33;
+  --slate-100:#1E2346;
+  --slate-200:rgba(100,120,200,0.18);
+  --slate-300:rgba(100,120,200,0.28);
+  --slate-400:rgba(255,255,255,0.45);
+  --slate-500:rgba(255,255,255,0.55);
+  --slate-600:rgba(255,255,255,0.65);
+  --slate-700:rgba(255,255,255,0.75);
+  --slate-800:#FFFFFF;
+  --slate-900:#FFFFFF;
+
+  /* ── 语义别名 ── */
+  --color-bg:#161A33;
+  --color-surface:#1E2346;
+  --color-text:#FFFFFF;
+  --color-text-secondary:rgba(255,255,255,0.55);
+  --color-text-muted:rgba(255,255,255,0.45);
+  --color-border:rgba(100,120,200,0.18);
+  --color-primary:var(--accent-from);
+  --color-primary-hover:#7DE9EE;
+  --color-primary-soft:rgba(93,224,230,0.12);
+  --color-success:#5DE0E6;
+  --color-warning:#FFB84D;
+  --color-danger:#FF7B8A;
+  --color-info:#5DE0E6;
+  --color-accent:#B48CFF;
+
+  /* ── 旧别名同步（style.css 大量引用，必须覆盖）── */
+  --primary:var(--accent-from);
+  --primary-light:#7DE9EE;
+  --primary-dark:#B48CFF;
+  --success:#5DE0E6;
+  --warning:#FFB84D;
+  --danger:#FF7B8A;
+  --bg:#161A33;
+  --border:rgba(100,120,200,0.18);
+  --text:#FFFFFF;
+  --text-secondary:rgba(255,255,255,0.55);
+  --text-muted:rgba(255,255,255,0.45);
+
+  /* ── 阴影 / 玻璃态 ── */
+  --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-sm: 0 1px 4px rgba(0, 0, 0, 0.40);
+  --shadow-md: 0 4px 12px -2px rgba(0, 0, 0, 0.50);
+  --shadow-lg: 0 12px 32px -8px rgba(0, 0, 0, 0.60);
+  --shadow-xl: 0 24px 48px -12px rgba(0, 0, 0, 0.70), 0 8px 16px -8px rgba(0, 0, 0, 0.50);
+  --shadow-inset: inset 0 1px 2px rgba(0, 0, 0, 0.35);
+  --shadow-glow: 0 0 0 4px rgba(93, 224, 230, 0.18);
+  --glass-bg: rgba(30, 35, 70, 0.72);
+  --glass-border: rgba(100, 120, 200, 0.28);
+
+  /* ── RGB 三元组（深色：青 / 金 / 珊瑚）── */
+  --primary-rgb: 93, 224, 230;
+  --success-rgb: 93, 224, 230;
+  --warning-rgb: 255, 184, 77;
+  --danger-rgb: 255, 123, 138;
+  --ink-rgb: 255, 255, 255;
 }

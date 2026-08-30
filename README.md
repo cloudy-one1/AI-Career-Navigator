@@ -2,7 +2,7 @@
 <h1 align="center">🤖 AI 模拟面试官与职业规划</h1>
 
 <p align="center">
-  <strong>v7.0 — 双端平台化：认证与资源归属 / 简历库·岗位库 / 报告分享（招聘端只读）/ 流程状态显式化 / 诊断证据引用</strong>
+  <strong>v7.1 — 全站 UI 统一「纸墨印章」：Design Token 重映射 / 手动双主题 + 语义色切换 / 市场数据 DOM 级复刻 / 全国范围采集 / 岗位收藏持久化</strong>
 </p>
 
 <p align="center">
@@ -26,12 +26,16 @@ AI 模拟面试官是一个面向求职者的智能面试练习平台。上传�
 
 ### 核心亮点
 
+- **全站 UI 统一为「纸墨印章」风格（v7.1）**：11 个 Tab 统一视觉语言（功能布局与 DOM 结构不变）——`tokens.css` 变量名保持、仅重映射色值（印章红 / 米纸 / 墨色 / 青绿 / 黄铜），约 50 处字面 `rgba()` 改 `rgba(var(--primary-rgb), α)` 双主题自动跟随；设计规格沉淀为 `docs/job-crawler-UI设计系统规格.md`，后续改造以此为唯一基线
+- **手动双主题 + 语义色切换（v7.1）**：新增 `themeToggle.js` + `theme.css`，主题由跟随系统改为**手动切换 `html.theme-dark`**（localStorage 记忆、内联脚本防 FOUC、派发 `theme:changed`），深色下可切青/粉/金/紫语义色；废弃 `pages/dark.css` 中 Indigo 时代的硬编码修正，消除深浅割裂
+- **市场数据 Tab DOM 级 1:1 复刻（v7.1）**：采集/列表/详情三视图对齐开源项目 job-crawler（省份→城市级联 + 已选 `tag-chip`、`.data-row` 整行上浮点击跳详情、`data-no` 角标 + `.stamp` 印章 + `.alert` / `.fade-up` 入场动效），增强能力（跨岗位对比 / 统计概览 / 学历薪资筛选 / Gap 分析）全部保留；`market.css` 清理死代码 597 行
+- **市场采集放开全国范围 + 收藏持久化（v7.1）**：`POST /api/market/crawl` 的 `cities` 改为可选（不传 = 全国搜索，底层本就支持）；新增 `job_postings.is_interested` 字段（含 `PRAGMA` 幂等迁移）+ `POST /api/market/jobs/{id}/interest`，「感兴趣」由 localStorage 升级为落库，重新采集不清空收藏
 - **双端平台化（v7.0）**：轻量认证（bcrypt + JWT，可关闭开关 `AUTH_ENABLED=false` 回退旧行为）+ 资源归属（会话/简历/岗位按 owner 隔离，WebSocket 握手校验身份）+ **报告分享链接**（招聘者免登录只读，输出侧强制脱敏手机号/邮箱/身份证，可撤销/可设有效期/带访问计数）+ **简历库/岗位库**（跨会话复用，不必重复上传与解析）
 - **诊断证据引用（v7.0）**：五维评分每维度附 `quote`——从候选人回答中原样摘录的支撑片段（≤30 字），把主观打分锚定到可复核的文本证据
 - **流程状态显式化（v7.0）**：面试推进决策收敛为纯函数 `decide_next(FlowSnapshot)`（无 IO 可单测），流程位置（出题/追问/推进/结束）落库可追溯
-- **全新 UIUX（v4.0）**：三步引导准备 Setup + 双栏面试工作台（对话流 + 固定诊断面板）+ 复盘态诊断卡（环形总分/原文改写对照）+ 报告 Dashboard + 深色主题（跟随系统）
+- **全新 UIUX（v4.0）**：三步引导准备 Setup + 双栏面试工作台（对话流 + 固定诊断面板）+ 复盘态诊断卡（环形总分/原文改写对照）+ 报告 Dashboard + 深色主题（v7.1 起改为手动切换）
 - **Vite 工程化（v4.0）**：Design Tokens 四层 CSS 架构 + 左垂直导航（桌面/平板/移动三态自适应）+ npm 开发/构建脚本
-- **市场数据 Tab（v4.1）**：B 档内嵌 Playwright 实时采集（省份→城市级联多选 + 进度轮询，采集自动回灌 market.db）+ 岗位库检索统计 + 全屏岗位详情（跳转 51job 原文）+ 单选 Gap 分析 / 多选跨岗位对比，纸墨印章双风格自由切换
+- **市场数据 Tab（v4.1）**：B 档内嵌 Playwright 实时采集（省份→城市级联多选 + 进度轮询，采集自动回灌 market.db）+ 岗位库检索统计 + 全屏岗位详情（跳转 51job 原文）+ 单选 Gap 分析 / 多选跨岗位对比；[v7.1] 视图已 DOM 级复刻 job-crawler，主题统一由全局切换器控制
 - **MiMo 云端语音（v4.2）**：后端代理 mimo-v2.5-tts（合成）+ mimo-v2.5-asr（识别，官方 chat/completions 协议），前端双引擎自动降级，录音用 MediaRecorder，密钥仅存后端不泄漏
 - **双 Agent 诊断引擎**：Diagnostician（诊断）+ Rewriter（改写）独立协作，非单一评分
 - **动态维度权重**：根据 JD 自动调整各维度权重 + SHA256 缓存，诊断更贴合岗位
@@ -84,7 +88,7 @@ AI 模拟面试官是一个面向求职者的智能面试练习平台。上传�
 - **动态难度调度（v6.6，对标 interviewerAgent）**：按诊断加权总分做轮内难度自适应（连续 2 次达标升档 / 失手降档，1-5 档）；难度**不参与阶段推进**（归 v6.2 工程强控），并逐题记录难度轨迹进报告、变档实时推送，解决"分数变低是能力下降还是难度升高"的归因问题
 - **题库管理**：CRUD + 收藏 + 从面试会话导入
 - **Docker 部署**：Dockerfile + docker-compose.yml 一键部署
-- **自动化测试**：963 个测试用例覆盖核心路径（含依赖 API Key 的 LLM 类测试）
+- **自动化测试**：约 900 个测试用例覆盖核心路径（含依赖 API Key 的 LLM 类测试；v7.0.3 起新增黄金样本回归）
 
 ---
 
@@ -288,17 +292,19 @@ AI-simulated-interviewer/
 │       │   ├── history.js        # 历史记录
 │       │   ├── questionBank.js   # 题库管理界面
 │       │   ├── careerPlan.js     # [v3.2] 职业规划 Tab（时间轴 + 阶段卡片 + 技能曲线）
-│       │   ├── marketData.js     # [v4.1] 市场数据 Tab（采集/岗位库/详情/分析）
+│       │   ├── marketData.js     # [v4.1] 市场数据 Tab（采集/岗位库/详情/分析，v7.1 DOM 复刻 job-crawler）
 │       │   ├── memoryGraph.js    # [v6.4] 长期记忆 Tab（2D SVG 薄弱点图谱 + 明细联动 + resolved）
 │       │   ├── voice.js          # 语音交互（TTS + STT，v6.4 世代守卫真打断）
+│       │   ├── themeToggle.js    # [v7.1 NEW] 全局主题切换器（手动深浅 + 语义色切换）
 │       │   └── utils.js          # 工具函数（含 confirm 弹窗 / emptyState 三件套）
 │       └── css/
-│           ├── tokens.css        # Design Tokens（语义 Token + 六级阴影 + 玻璃态 + 深色主题）
+│           ├── tokens.css        # Design Tokens（v7.1 纸墨印章色值重映射 + RGB 三元组）
+│           ├── theme.css         # [v7.1 NEW] 主题切换相关样式（html.theme-dark / 语义色切换器）
 │           ├── base.css          # reset + 排版
 │           ├── components.css    # 框架组件
 │           └── pages/            # 领域样式（含 market.css 纸墨印章 / memory.css 记忆图谱）
 │
-├── tests/                        # 自动化测试（963 用例，本机非 LLM 类全绿）
+├── tests/                        # 自动化测试（约 900 用例 + 1 live_llm 抽检，本机非 LLM 类全绿）
 │   ├── conftest.py               # 共享 fixtures
 │   ├── test_schemas.py           # Schema 验证
 │   ├── test_api.py               # HTTP 路由集成测试（含安全测试）
@@ -321,14 +327,17 @@ AI-simulated-interviewer/
 │   ├── test_mock_interviewer_borrowings.py  # [v6.3] 角色卡/锚点/加减分/JD gap/压力题/恢复红线（50 例）
 │   ├── test_injection_dedup.py      # [v6.4] 注入去重（指纹稳定/先过滤后预算/耗尽回退，19 例）
 │   ├── test_alternate_question.py   # [v6.4] 备选题/换题（台账/负向约束/重试上限，10 例）
-│   └── test_weakness_memory.py      # [v6.4] 长期记忆闭环（迁移幂等/resolved/回注入，17 例）
+│   ├── test_weakness_memory.py      # [v6.4] 长期记忆闭环（迁移幂等/resolved/回注入，17 例）
+│   ├── test_diagnosis_golden.py     # [v7.0.3 NEW] 黄金样本评测（4 类典型回答确定性回归 + live-LLM 抽检）
+│   └── fixtures/golden_answers.json # [v7.0.3 NEW] 黄金样本与人工标注
 │
 ├── docs/                         # 需求文档与周报
 │   ├── week1_*.md                # v1 模块需求
 │   ├── week2_v2迭代_需求.md       # v2 大版本迭代
 │   ├── week3_*.md                # 模块差距分析
 │   ├── week4_深化诊断核心_需求.md  # v2.6 深化诊断
-│   └── week5_v3数据层_需求.md     # v3.0 市场数据层
+│   ├── week5_v3数据层_需求.md     # v3.0 市场数据层
+│   └── job-crawler-UI设计系统规格.md  # [v7.1] 全站 UI 改造基线（Token/组件/深色覆盖/页面骨架）
 │
 ├── data/                         # 运行时数据（自动创建，不提交 Git）
 ├── LICENSE                       # MIT 许可证
@@ -353,7 +362,7 @@ AI-simulated-interviewer/
 | **日志** | logging + RotatingFileHandler（5MB×3 旋转） |
 | **部署** | Docker + Docker Compose（跨平台一键部署） |
 | **分层校验** | import-linter 契约（L1-L4，`run.py lint` 强制） |
-| **测试** | pytest（963 用例，本机非 LLM 类全绿） |
+| **测试** | pytest（约 900 用例 + 1 live_llm 抽检，本机非 LLM 类全绿） |
 
 ---
 
@@ -449,6 +458,24 @@ AUTH_SECRET=...      # 可选；不配置时自动生成并持久化到 data/.au
 
 ---
 
+## 🧪 测试策略与工程保障（答辩看点）
+
+本项目的测试不是「堆数量」，而是**分层保障 + 评测（eval）**两套机制配合。约 900 个自动化用例全绿，结构如下：
+
+| 层级 | 代表文件 | 守什么 | 为什么必要 |
+|------|----------|--------|-----------|
+| ① 确定性脚手架不变式 | test_schemas / test_dimension_weights / test_score_adjustments / test_flow / test_output_sanitizer | 纯函数逻辑（Schema、权重、评分加扣分项、状态机、话术净化）一旦被改坏，立刻红灯 | LLM 不可控，但脚手架必须可控——这是「改代码不引入回归」的底线 |
+| ② 端到端链路 | test_api / test_session | 简历→出题→诊断→报告全链路；穷尽异常 / 降级 / fallback 路径 | 保证「系统真的跑得通」，而非单个函数对 |
+| ③ 安全与边界 | test_security / test_auth / test_share | 注入拦截、越权、分享脱敏、恢复红线 | 课程项目级护栏的可验证证据 |
+| ④ 黄金样本评测（eval） | test_diagnosis_golden | **诊断有效性**：最弱维度抓得对不对、加扣分命中没命中、证据引用是否原话 | AI 项目最该测、却最常被忽略——单测验证「工程正确性」，eval 验证「诊断准不准」 |
+
+**为什么这是项目优势（而非负担）：**
+- 学生 / 课程 AI 项目普遍「跑通 demo 就交」，测试多为 0–10 条且**零模型质量评测**；本仓库的四层 + eval 体现工业级工程素养。
+- 最关键的差异化是 **④ 黄金样本评测**：固定样本 + 人工标注做确定性回归，并用 `live-LLM` 抽检（默认 deselect，需显式开启）做真实模型结构软断言——首次把「诊断准不准」纳入可观测 / 可回归范围。
+- 测试已从「锁死 prompt 文案」重构为「从配置取追问链 / 收尾指令做行为断言」，因此**频繁改写提示词不会误红**，测试从「阻挠迭代」变成「允许迭代」。
+
+> 诚实边界：诊断质量最终依赖 LLM，单测验证的是工程正确性；黄金样本 + live-LLM 抽检补齐「诊断有效性」的可观测性，但模型本身的质量仍需人工评审。详见下文「已知局限」。
+
 ## ⚠️ 已知局限与架构取舍
 
 本系统定位为**课程项目**，以下局限是已知的、刻意的取舍，而非待修复的 bug：
@@ -463,7 +490,7 @@ AUTH_SECRET=...      # 可选；不配置时自动生成并持久化到 data/.au
 | **模型调用单点故障（已缓解）** | 原仅单模型，任一 provider 故障即硬失败；v4.3 起支持 `LLM_FALLBACK_CHAIN` 优雅降级，主模型失败自动切备用模型，调用方零改动、不影响双 Agent 诊断客观性 | 仍建议为备用 provider 配置独立密钥以保障可用性 |
 | **SQLite 扩展性** | 单文件数据库；多 Worker 下 WebSocket 需 sticky session，水平扩展受限 | 换异步 Postgres / 引入连接池；或改用内存态 + 持久化分离 |
 | **内容护栏可被绕过** | 见上节，正则过滤防不住认真攻击者 | 见上节演进方向 |
-| **测试偏纯函数** | 50 个用例覆盖了权重计算、Schema 校验等确定性逻辑；但**诊断准确性、追问是否抓最弱维度、评分稳定性**依赖 LLM 输出，难以在单测中验证 | 引入基于黄金样本的回归评测（LLM-as-judge / 人工抽检），把"核心主张"纳入可观测范围 |
+| **测试偏纯函数** | 确定性逻辑（权重/Schema/评分修正）覆盖充分；但**诊断准确性、追问是否抓最弱维度、评分稳定性**依赖 LLM 输出，单测难以验证 | **已实现（v7.0.3）**：黄金样本回归（4 类典型回答 × 确定性断言）+ live-LLM 抽检（默认 deselect），首次把"诊断有效性"纳入可观测范围 |
 | **证据检索为本地启发式** | v5.0 简历证据检索是本地关键词 + 优先级加权，非语义向量检索；中文分词粒度受限，同义/模糊表述可能漏命中，仅作证据提示不替代向量库；可调参数为代码级常量未下沉 `.env` | 引入轻量向量库（如 sqlite-vec / faiss）做语义召回；参数下沉配置 |
 | **知识库为关键词检索且未接入业务流** | v6.0 `knowledge_store.py` 为命名空间隔离的本地关键词检索（对标向量 RAG 的降级实现），同义表述可能漏命中；v6.4 已补齐 tracked 去重接口（`augment_prompt_tracked`），但业务检索仍只走 `ResumeRetriever` 一线，知识库注入暂无生产调用方 | 接入职业规划/出题的 Prompt 增强；知识规模大时升级向量索引 |
 | **next_action 依赖模型自觉** | v6.0 三态推进决策采信模型声明，模型误判"回答合格"时可能少追问；已用"回答过短仍强制追问"硬兜底 + 未声明时回退阈值规则，且追问次数上限不受影响 | 用真实面试样本统计 next_action 与人工判断的一致率后再决定是否提升模型话语权 |
@@ -474,7 +501,7 @@ AUTH_SECRET=...      # 可选；不配置时自动生成并持久化到 data/.au
 | **输出检测仅监控不阻断** | `security.check_output()` 检测到泄漏仅记日志、不拦截、不脱敏，泄漏内容原样返回前端，属可观测性而非输出安全边界 | 需要时做输出脱敏/阻断（产品化阶段事项） |
 | **职业规划路径未经验证** | v3.2 的路径推理为单次 LLM 生成，阶段划分/顺序/里程碑合理性未做 A/B 或专家校验；LLM 失败时走启发式三段式兜底 | 用真实职业样本做专家评审；将"路径可行性"纳入黄金样本回归评测 |
 
-> **关键结论**："50 个测试用例通过"不等于"核心功能被验证"。核心诊断质量依赖 LLM，当前测试套件验证的是**工程正确性**，而非**诊断有效性**。
+> **关键结论**："50 个测试用例通过"不等于"核心功能被验证"。核心诊断质量依赖 LLM，测试套件验证的是**工程正确性**；v7.0.3 起新增**黄金样本回归**与 **live-LLM 抽检**（`tests/test_diagnosis_golden.py`），首次把**诊断有效性**纳入可观测范围。
 
 ---
 
@@ -492,20 +519,28 @@ AUTH_SECRET=...      # 可选；不配置时自动生成并持久化到 data/.au
 ### 宪章与契约（v3.2）
 
 - [不变硬约束 CHARTER.md](CHARTER.md)：架构原则 / 诊断五维度 / L1-L4 分层规则 / 决策记录卡模板 / 已知局限
-- [版本迭代叙事 CHANGELOG.md](CHANGELOG.md)：v2 → v6.3 各轮新增、推翻、修复
+- [版本迭代叙事 CHANGELOG.md](CHANGELOG.md)：v2 → v7.1 各轮新增、推翻、修复
 - [.importlinter](.importlinter)：分层依赖契约文件（INI 格式，与 CHARTER 约束同步）
 
 ### 自动化测试
 
+测试策略见上文「测试策略与工程保障」。常用命令：
+
 ```bash
-# 运行全部测试
+# 运行全部测试（约 900 用例，全绿）
 pytest tests/ -v
+
+# 仅跑黄金样本评测（确定性回归，默认运行）
+pytest tests/test_diagnosis_golden.py -v
+
+# 黄金样本 + 真实 LLM 抽检（需 GOLDEN_LIVE_LLM=1 + 真实 Key，烧 token，仅手动触发）
+$env:GOLDEN_LIVE_LLM="1"; $env:GOLDEN_LIVE_LLM_API_KEY="sk-..."; pytest tests/test_diagnosis_golden.py -v
 
 # 覆盖率报告
 pytest tests/ --cov=backend --cov-report=term-missing
 ```
 
-测试覆盖：Schema 验证 / API 路由 / Gap 分析器 / 维度权重 / 简历解析 / 报告生成 / 安全防护 / Web 研究 / 技能匹配 / 市场数据 / 职业规划 / 收尾强控 / 追问点提取 / 输出净化 / 任务级模型绑定 / 逐题拆解
+测试覆盖：Schema 验证 / API 路由 / Gap 分析器 / 维度权重 / 简历解析 / 报告生成 / 安全防护 / Web 研究 / 技能匹配 / 市场数据 / 职业规划 / 收尾强控 / 追问点提取 / 输出净化 / 任务级模型绑定 / 逐题拆解 / 黄金样本评测
 
 ### 分层依赖检查
 

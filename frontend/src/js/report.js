@@ -211,7 +211,7 @@ function renderReport(report) {
       el('div', { className: 'report-tag-cloud', style: 'display:flex;flex-wrap:wrap;gap:8px;' },
         ...report.weakness_tag_summary.map(item => el('span', {
           className: 'report-tag',
-          style: 'padding:4px 12px;border-radius:14px;background:#FEF2F2;color:#DC2626;font-size:.8rem;font-weight:500;',
+          style: 'padding:4px 12px;border-radius:14px;background:var(--red-50);color:var(--indigo-800);font-size:.8rem;font-weight:500;',
           textContent: `${item.tag} ×${item.count}`,
         })),
       ),
@@ -418,7 +418,7 @@ function renderPointList(title, items) {
 /** 单题拆解卡片：分数 + 薄弱维度 + 思考时长 + 真实面试影响 */
 function renderQaItem(qa) {
   const score = Number(qa.overall_score) || 0;
-  const scoreColor = score >= 4 ? '#16A34A' : (score >= 3 ? '#F59E0B' : '#DC2626');
+  const scoreColor = score >= 4 ? '#16A34A' : (score >= 3 ? 'var(--warning)' : 'var(--indigo-800)');
   const children = [
     el('div', { style: 'display:flex;align-items:center;justify-content:space-between;gap:8px;' },
       el('div', {
@@ -444,13 +444,13 @@ function renderQaItem(qa) {
   ];
   if (qa.real_interview_impact) {
     children.push(el('div', {
-      style: 'margin-top:6px;font-size:.84rem;line-height:1.6;padding:8px 10px;background:#FFF7ED;border-radius:8px;',
+      style: 'margin-top:6px;font-size:.84rem;line-height:1.6;padding:8px 10px;background:var(--amber-50);border-radius:8px;',
       textContent: `🎯 对真实面试的影响：${qa.real_interview_impact}`,
     }));
   }
   if (qa.risk_points?.length) {
     children.push(el('div', {
-      style: 'margin-top:6px;font-size:.8rem;color:#DC2626;line-height:1.6;',
+      style: 'margin-top:6px;font-size:.8rem;color:var(--indigo-800);line-height:1.6;',
       textContent: `⚠️ ${qa.risk_points.join('；')}`,
     }));
   }
@@ -491,8 +491,8 @@ function renderGapAnalysis(container, gap) {
 
   const dims = gap.dimensions;
   const overall = gap.overall_score || 0;
-  const riskColors = { '低': '#10B981', '中': '#F59E0B', '高': '#EF4444' };
-  const riskColor = riskColors[gap.risk_level] || '#6B7280';
+  const riskColors = { '低': 'var(--success)', '中': 'var(--warning)', '高': 'var(--danger)' };
+  const riskColor = riskColors[gap.risk_level] || 'var(--ink-soft)';
 
   // 总分卡片
   container.appendChild(el('div', { className: 'card' },
@@ -506,7 +506,7 @@ function renderGapAnalysis(container, gap) {
       ),
       el('div', { style: 'text-align:center;' },
         el('div', {
-          style: `font-size:2.5rem;font-weight:700;color:${overall >= 3 ? '#4F46E5' : '#EF4444'};line-height:1.2;`,
+          style: `font-size:2.5rem;font-weight:700;color:${overall >= 3 ? 'var(--primary)' : 'var(--danger)'};line-height:1.2;`,
           textContent: overall.toFixed(1),
         }),
         el('div', { style: 'font-size:.75rem;color:var(--text-muted);', textContent: '综合匹配度 / 5' }),
@@ -521,7 +521,7 @@ function renderGapAnalysis(container, gap) {
     el('div', { style: 'margin-top:16px;' },
       ...dims.map(d => {
         const pct = (d.score / 5) * 100;
-        const barColor = d.score >= 4 ? '#10B981' : d.score >= 3 ? '#F59E0B' : '#EF4444';
+        const barColor = d.score >= 4 ? 'var(--success)' : d.score >= 3 ? 'var(--warning)' : 'var(--danger)';
         return el('div', { style: 'margin-bottom:12px;' },
           el('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;' },
             el('div', { style: 'font-size:.85rem;font-weight:600;' },
@@ -530,7 +530,7 @@ function renderGapAnalysis(container, gap) {
             ),
             el('div', { style: 'font-size:.85rem;font-weight:700;color:' + barColor + ';', textContent: `${d.score}/5` }),
           ),
-          el('div', { style: 'height:8px;background:#E5E7EB;border-radius:4px;overflow:hidden;' },
+          el('div', { style: 'height:8px;background:var(--line);border-radius:4px;overflow:hidden;' },
             el('div', { style: `height:100%;width:${pct}%;background:${barColor};border-radius:4px;transition:width .6s ease;` }),
           ),
           d.evidence ? el('div', {
@@ -538,7 +538,7 @@ function renderGapAnalysis(container, gap) {
             textContent: `📌 ${d.evidence}`,
           }) : '',
           d.suggestion ? el('div', {
-            style: 'font-size:.75rem;color:#4F46E5;font-weight:500;margin-top:2px;',
+            style: 'font-size:.75rem;color:var(--primary);font-weight:500;margin-top:2px;',
             textContent: `💡 ${d.suggestion}`,
           }) : '',
         );
@@ -550,7 +550,7 @@ function renderGapAnalysis(container, gap) {
 
     // 整体评估
     gap.overall_assessment ? el('div', {
-      style: 'margin-top:16px;padding:12px;background:#EEF2FF;border-radius:8px;font-size:.9rem;color:#3730A3;line-height:1.6;',
+      style: 'margin-top:16px;padding:12px;background:var(--accent-light);border-radius:8px;font-size:.9rem;color:var(--indigo-800);line-height:1.6;',
     },
       el('strong', { textContent: '📝 综合评估：' }),
       el('span', { textContent: gap.overall_assessment }),
@@ -593,7 +593,7 @@ function drawRadarChart(report) {
   const roundCount = report.rounds?.length || 1;
   const dimDataset = report.dimension_trends;
 
-  const roundColors = ['#4F46E5', '#10B981', '#F59E0B'];
+  const roundColors = ['#C44F3A', '#3A7A6A', '#A08945'];  // v5.0 纸墨：印章红 / 青绿 / 黄铜
   const roundDatasets = [];
 
   for (let r = 0; r < roundCount; r++) {
@@ -602,10 +602,10 @@ function drawRadarChart(report) {
     roundDatasets.push({
       label: report.rounds?.[r]?.round_name || `第${r+1}轮`,
       data,
-      borderColor: roundColors[r] || '#4F46E5',
-      backgroundColor: (roundColors[r] || '#4F46E5') + '15',
+      borderColor: roundColors[r] || '#C44F3A',
+      backgroundColor: (roundColors[r] || '#C44F3A') + '15',
       borderWidth: 2,
-      pointBackgroundColor: roundColors[r] || '#4F46E5',
+      pointBackgroundColor: roundColors[r] || '#C44F3A',
       pointRadius: 4,
     });
   }
@@ -627,8 +627,8 @@ function drawRadarChart(report) {
           max: 5,
           ticks: { stepSize: 1, backdropColor: 'transparent', font: { size: 10 } },
           pointLabels: { font: { size: 12, weight: '500' } },
-          grid: { color: '#E2E8F0' },
-          angleLines: { color: '#E2E8F0' },
+          grid: { color: '#DAD6CC' },
+          angleLines: { color: '#DAD6CC' },
         },
       },
       plugins: {
@@ -679,7 +679,7 @@ function _buildCompareCard() {
 
 function _addCompareJD(container, defaultTitle = '') {
 	const idx = (container.children.length || 0);
-	const row = el('div', { className: 'compare-jd-row', style: 'margin-top:8px;border:1px solid var(--border);border-radius:8px;padding:10px;background:#F8FAFC;' });
+	const row = el('div', { className: 'compare-jd-row', style: 'margin-top:8px;border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--paper);' });
 
 	const titleInput = el('input', {
 		className: 'form-input', placeholder: `岗位${idx+1}名称`, value: defaultTitle,
@@ -693,7 +693,7 @@ function _addCompareJD(container, defaultTitle = '') {
 
 	const removeBtn = el('button', {
 		className: 'btn btn-sm', textContent: '✕ 删除',
-		style: 'margin-top:4px;font-size:.75rem;color:#EF4444;',
+		style: 'margin-top:4px;font-size:.75rem;color:var(--danger);',
 		onClick: () => row.remove(),
 	});
 
@@ -769,29 +769,29 @@ function _renderCompareResults(container, result) {
 
 	// 推荐语
 	fragments.push(el('div', {
-		style: 'margin-top:16px;padding:14px;background:linear-gradient(135deg,#EEF2FF,#F0FDF4);border-radius:10px;border:1px solid #C7D2FE;',
+		style: 'margin-top:16px;padding:14px;background:linear-gradient(135deg,var(--accent-light),var(--emerald-50));border-radius:10px;border:1px solid var(--indigo-100);',
 	}, el('div', { style: 'font-weight:700;color:var(--primary-dark);margin-bottom:6px;', textContent: '🏆 综合推荐' }),
 	   el('div', { style: 'font-size:.9rem;color:var(--text);line-height:1.6;', textContent: result.recommendation })));
 
 	// 排名柱状图
 	fragments.push(el('div', { style: 'margin-top:16px;font-weight:600;font-size:.9rem;', textContent: '📊 匹配度排名' }));
 	result.results.forEach((item, idx) => {
-		const barColor = idx === 0 ? '#10B981' : idx === result.results.length - 1 ? '#EF4444' : '#4F46E5';
+		const barColor = idx === 0 ? 'var(--success)' : idx === result.results.length - 1 ? 'var(--danger)' : 'var(--primary)';
 		const pct = (item.overall_score / 5) * 100;
 		fragments.push(el('div', { style: 'margin-top:10px;' },
 			el('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;' },
 				el('span', { style: 'font-weight:600;font-size:.85rem;', textContent: `${idx+1}. ${item.title}` }),
 				el('span', { style: `font-weight:700;color:${barColor};font-size:.85rem;`, textContent: `${item.overall_score}/5` }),
 			),
-			el('div', { style: 'height:8px;background:#E5E7EB;border-radius:4px;overflow:hidden;' },
+			el('div', { style: 'height:8px;background:var(--line);border-radius:4px;overflow:hidden;' },
 				el('div', { style: `height:100%;width:${pct}%;background:${barColor};border-radius:4px;` }),
 			),
 			// 风险等级
 			el('div', { style: 'font-size:.75rem;color:var(--text-muted);margin-top:4px;', textContent: `风险: ${item.risk_level}` }),
 			// 强项
-			item.key_strengths?.length ? el('div', { style: 'font-size:.75rem;color:#059669;margin-top:2px;', textContent: `✅ ${item.key_strengths.join(' · ')}` }) : '',
+			item.key_strengths?.length ? el('div', { style: 'font-size:.75rem;color:var(--emerald-600);margin-top:2px;', textContent: `✅ ${item.key_strengths.join(' · ')}` }) : '',
 			// 短板
-			item.key_gaps?.length ? el('div', { style: 'font-size:.75rem;color:#DC2626;margin-top:2px;', textContent: `⚠ ${item.key_gaps.join(' · ')}` }) : '',
+			item.key_gaps?.length ? el('div', { style: 'font-size:.75rem;color:var(--indigo-800);margin-top:2px;', textContent: `⚠ ${item.key_gaps.join(' · ')}` }) : '',
 		));
 	});
 

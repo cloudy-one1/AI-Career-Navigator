@@ -8,8 +8,8 @@ import { $, el } from './utils.js';
 let liveChart = null;
 let mounted = false;
 
-const AVG_COLOR = '#4F46E5';
-const LATEST_COLOR = '#F59E0B';
+const AVG_COLOR = '#C44F3A';     // v5.0 纸墨：印章红
+const LATEST_COLOR = '#A08945';  // v5.0 纸墨：黄铜
 
 /**
  * 在指定容器中创建实时雷达卡片（幂等，重复调用只创建一次）
@@ -103,8 +103,8 @@ export function updateLiveRadar(snapshot) {
           max: 5,
           ticks: { stepSize: 1, backdropColor: 'transparent', font: { size: 10 } },
           pointLabels: { font: { size: 12, weight: '500' } },
-          grid: { color: '#E2E8F0' },
-          angleLines: { color: '#E2E8F0' },
+          grid: { color: '#DAD6CC' },
+          angleLines: { color: '#DAD6CC' },
         },
       },
       plugins: {

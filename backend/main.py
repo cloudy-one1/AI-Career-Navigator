@@ -1224,7 +1224,7 @@ def _get_city_map():
 async def market_crawl(
     request: Request,
     keyword: str = Form(..., min_length=1, max_length=50),
-    cities: List[str] = Form(..., min_length=1),
+    cities: Optional[List[str]] = Form(None),  # 不传 = 全国范围搜索（底层 scrape_jobs 支持）
     pages: int = Form(3),
     sort_type: str = Form("0"),
     token: Optional[str] = Form(None),
@@ -1236,6 +1236,7 @@ async def market_crawl(
     """
     if config.MARKET_CRAWL_TOKEN and token != config.MARKET_CRAWL_TOKEN:
         raise HTTPException(401, "采集口令不正确")
+    cities = [c for c in (cities or []) if c and c.strip()]  # 归一化：不传/空串 → []（全国）
     if len(cities) > config.MARKET_CRAWL_CITY_LIMIT:
         raise HTTPException(400, f"单次最多选择 {config.MARKET_CRAWL_CITY_LIMIT} 个城市")
     if not (1 <= pages <= config.MARKET_CRAWL_PAGE_LIMIT):
@@ -1272,6 +1273,20 @@ async def market_job_detail(job_id: int):
     if job is None:
         raise HTTPException(404, "岗位不存在")
     return {"job": job, "jd_text": build_jd_text(job)}
+
+
+@app.post("/api/market/jobs/{job_id}/interest")
+async def market_toggle_interest(job_id: int):
+    """切换岗位「感兴趣」收藏状态（持久化到 market.db）。
+
+    与题库收藏（question_bank.is_favorited）同模式：全局标记、不区分用户，
+    因为本项目 market.db 为单机单用户库且支持免登录使用。
+    返回新状态；岗位不存在返回 404。
+    """
+    state = await market_store.toggle_interest(job_id)
+    if state is None:
+        raise HTTPException(404, "岗位不存在")
+    return {"job_id": job_id, "is_interested": state}
 
 
 # ===== v3.1: Gap 分析 API =====

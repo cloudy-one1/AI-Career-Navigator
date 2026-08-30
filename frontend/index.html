@@ -4,6 +4,8 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI面试官与职业规划 v3.2</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700;900&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
   <link rel="stylesheet" href="/src/css/tokens.css">
   <link rel="stylesheet" href="/src/css/base.css">
   <link rel="stylesheet" href="/src/css/components.css">
@@ -15,6 +17,11 @@
   <link rel="stylesheet" href="/src/css/pages/memory.css">
   <link rel="stylesheet" href="/src/css/pages/auth.css">
   <link rel="stylesheet" href="/src/css/style.css">
+  <link rel="stylesheet" href="/src/css/theme.css">
+  <script>
+    /* 防 FOUC：body 绘制前先套用已记忆的主题，避免闪白（对齐 job-crawler） */
+    try { if (localStorage.getItem('theme') === 'dark') { document.documentElement.classList.add('theme-dark'); } } catch (e) {}
+  </script>
 </head>
 <body>
 
@@ -28,6 +35,8 @@
     <span class="version-badge">v3.2</span>
   </div>
   <div class="header-right">
+    <!-- v5.0: 页面风格切换（米色 / 深色），对齐 job-crawler -->
+    <button id="theme-toggle" class="theme-toggle" type="button" title="切换页面风格（米色 / 深色）">🌙 深色风</button>
     <button id="interview-status" class="status-light hidden" type="button" aria-label="返回面试中">
       <span class="status-dot" aria-hidden="true"></span>
       <span>面试中 · 返回</span>

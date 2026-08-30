@@ -1569,7 +1569,7 @@ function showRoundSummary(area, data) {
       : `本轮加权均分 ${q.avg_score}/5，未达阈值 ${q.threshold}`
         + (q.weak_dimension_name ? `，薄弱环节：${q.weak_dimension_name}` : '');
     qualityHtml = `
-      <div style="margin-top:8px;padding:8px 12px;background:${q.passed ? '#e8f5e9' : '#fff3e0'};border-radius:8px;font-size:.85rem;">
+      <div style="margin-top:8px;padding:8px 12px;background:${q.passed ? 'var(--emerald-50)' : 'var(--amber-50)'};border-radius:8px;font-size:.85rem;">
         ${icon} ${summary}
       </div>`;
   }
@@ -1597,7 +1597,7 @@ function showQualityCheck(area, data) {
 
   const passed = data.passed;
   const icon = passed ? '✅' : '⚠️';
-  const bg = passed ? '#e8f5e9' : '#fff3e0';
+  const bg = passed ? 'var(--emerald-50)' : 'var(--amber-50)';
   const border = passed ? 'var(--success)' : 'var(--warning)';
 
   const reason = passed
@@ -1619,7 +1619,7 @@ function showExtraQuestion(area, data) {
   // 显示追加提示
   area.appendChild(el('div', {
     className: 'card',
-    style: 'border-left:4px solid var(--warning);background:#fff3e0;margin-bottom:8px;',
+    style: 'border-left:4px solid var(--warning);background:var(--amber-50);margin-bottom:8px;',
     innerHTML: `
       <div style="font-size:.85rem;color:var(--text-secondary);">⚠️ 本轮质量未达标，面试官追加一题</div>
       <div style="font-size:.8rem;color:var(--text-secondary);margin-top:2px;">

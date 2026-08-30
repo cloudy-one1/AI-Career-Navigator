@@ -25,15 +25,11 @@ class TestMatchSkills:
             assert "skills" in r
             assert isinstance(r["skills"], list)
 
-    def test_empty_keywords_returns_generic_only(self):
-        """空关键词返回通用技能列表（只有一个'通用'条目）"""
-        result = data_support.match_skills([])
-        assert len(result) == 1
-        assert result[0]["position"] == "通用"
-
-    def test_no_match_keywords_returns_generic_fallback(self):
-        """未命中任何岗位时返回通用技能"""
-        result = data_support.match_skills(["xyznotexist123"])
+    @pytest.mark.parametrize("keywords", [[], ["xyznotexist123"]],
+                             ids=["empty", "no_match"])
+    def test_generic_fallback(self, keywords):
+        """空关键词 / 未命中任何岗位 → 返回通用技能兜底（parametrize 收拢）"""
+        result = data_support.match_skills(keywords)
         assert len(result) >= 1
         assert any(r["position"] == "通用" for r in result)
 

@@ -31,6 +31,8 @@ frontend/dist/
 /test_output.txt
 /docs/AI对话存档/
 .import_linter_cache/
+.coverage
+htmlcov/
 
 # === 二进制 / 产品文档（不入库） ===
 *.docx
@@ -48,6 +50,13 @@ frontend/dist/
 
 # === CodeBuddy AI 辅助 ===
 .codebuddy/
+
+# === 其它 AI 辅助工具（临时扫描脚本与产物） ===
+.agnes/
+
+# === 对话上传附件（不入库） ===
+upload_*.jpg
+upload_*.png
 
 # === 操作系统 ===
 # macOS

@@ -86,7 +86,7 @@
 .drawer-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.45);
+  background: rgba(var(--ink-rgb), 0.45);
   z-index: 100;
   opacity: 0;
   pointer-events: none;
@@ -103,7 +103,7 @@
   height: 100%;
   background: var(--color-surface);
   z-index: 101;
-  box-shadow: -16px 0 40px rgba(15, 23, 42, 0.16);
+  box-shadow: -16px 0 40px rgba(var(--ink-rgb), 0.16);
   transition: right var(--dur-base) var(--ease-out);
   display: flex;
   flex-direction: column;

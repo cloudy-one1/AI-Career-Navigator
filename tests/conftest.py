@@ -14,6 +14,10 @@ import pytest
 import pytest_asyncio
 from fastapi.testclient import TestClient
 
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", "live_llm: 真实 LLM 抽检，默认不运行（需 GOLDEN_LIVE_LLM=1 且配置真实 Key）")
+
 # 确保 backend 在 import 路径中
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 

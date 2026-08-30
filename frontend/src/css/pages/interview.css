@@ -293,7 +293,7 @@
 
 @keyframes weak-pulse {
   0%, 100% { background-color: var(--red-50); }
-  50% { background-color: #fecaca; }
+  50% { background-color: rgba(var(--danger-rgb), 0.25); }
 }
 
 .dim-weak-badge {

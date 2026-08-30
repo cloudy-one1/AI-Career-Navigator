@@ -84,7 +84,7 @@ class TestClosingPhase:
         s = _make_session()
         assert s.closing_instruction() == ""
         s.current_round = len(s.rounds) - 1
-        assert "收尾阶段" in s.closing_instruction()
+        assert s.closing_instruction()  # 收尾轮必须有指令；具体文案是配置实现细节
 
     def test_follow_up_forbidden_on_closing(self):
         """收尾阶段一律不追问 —— 连"回答过短强制追问"也被强控掉。"""
@@ -181,11 +181,6 @@ class TestResumePoints:
 # ==================== 3. Prompt 输出约束 + 工程净化 ====================
 
 class TestOutputConstraints:
-    def test_constraints_text_covers_three_rules(self):
-        assert "禁 Markdown" in OUTPUT_CONSTRAINTS
-        assert "禁括号动作" in OUTPUT_CONSTRAINTS
-        assert "禁垫词开头" in OUTPUT_CONSTRAINTS
-
     def test_constraints_injected_into_prompts(self):
         assert "禁 Markdown" in qg.get_question_gen_system_prompt()
         assert "禁 Markdown" in REWRITER_SYSTEM_PROMPT

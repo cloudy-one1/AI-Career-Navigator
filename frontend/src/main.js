@@ -7,4 +7,5 @@
 import Chart from 'chart.js/auto';
 window.Chart = Chart;
 
+import './js/themeToggle.js'; // v5.0 双风格切换（米色 / 深色 + 语义色）
 import './js/app.js';

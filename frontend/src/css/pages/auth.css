@@ -38,9 +38,9 @@
   border: 1px solid var(--border);
 }
 .lib-badge.ok {
-  background: rgba(16, 185, 129, .10);
+  background: rgba(var(--success-rgb), .10);
   color: var(--success, #10b981);
-  border-color: rgba(16, 185, 129, .3);
+  border-color: rgba(var(--success-rgb), .3);
 }
 
 .library-card-meta {
@@ -84,7 +84,7 @@
 .source-option:active { transform: scale(0.98); }
 .source-option.selected {
   border-color: var(--primary);
-  background: rgba(79, 70, 229, .06);
+  background: rgba(var(--primary-rgb), .06);
   color: var(--primary);
   font-weight: 600;
 }
@@ -143,7 +143,7 @@
 /* ===== v7.0: 招聘端分享页（share.html）===== */
 
 .share-body {
-  background: linear-gradient(180deg, #F8FAFC 0%, #EEF2FF 100%);
+  background: linear-gradient(180deg, var(--slate-50) 0%, var(--accent-light) 100%);
   min-height: 100vh;
 }
 .share-wrap {
@@ -178,8 +178,8 @@
   margin-top: 10px;
   display: inline-block;
   font-size: .74rem; color: var(--text-secondary);
-  background: rgba(37, 99, 235, .07);
-  border: 1px solid rgba(37, 99, 235, .18);
+  background: rgba(var(--primary-rgb), .07);
+  border: 1px solid rgba(var(--primary-rgb), .18);
   border-radius: 999px;
   padding: 4px 12px;
 }
@@ -196,8 +196,8 @@
 
 .share-score-card {
   display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
-  background: linear-gradient(135deg, rgba(37, 99, 235, .06), rgba(37, 99, 235, .02));
-  border-color: rgba(37, 99, 235, .18);
+  background: linear-gradient(135deg, rgba(var(--primary-rgb), .06), rgba(var(--primary-rgb), .02));
+  border-color: rgba(var(--primary-rgb), .18);
 }
 .share-score { text-align: center; min-width: 120px; }
 .share-score-value {
@@ -258,7 +258,7 @@
 }
 .share-qa-index {
   font-size: .72rem; font-weight: 700; color: var(--primary);
-  background: rgba(37, 99, 235, .08); border-radius: 6px; padding: 1px 8px;
+  background: rgba(var(--primary-rgb), .08); border-radius: 6px; padding: 1px 8px;
 }
 .share-qa-round { font-size: .76rem; color: var(--text-secondary); flex: 1; }
 .share-qa-score { font-size: .95rem; font-weight: 700; color: var(--text); }
@@ -356,7 +356,7 @@
 .auth-error {
   font-size: .82rem;
   color: var(--danger, #ef4444);
-  background: rgba(239, 68, 68, .08);
+  background: rgba(var(--danger-rgb), .08);
   border-radius: 6px;
   padding: 8px 12px;
   margin-bottom: 12px;
@@ -383,7 +383,7 @@
 .role-seg-btn:active { transform: scale(0.98); }
 .role-seg-btn.selected {
   border-color: var(--primary);
-  background: rgba(79, 70, 229, .06);
+  background: rgba(var(--primary-rgb), .06);
   color: var(--primary);
   font-weight: 600;
 }

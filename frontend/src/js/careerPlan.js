@@ -150,8 +150,8 @@ function renderPlan(container, plan) {
 
 /** 现状基线卡片：你现在的位置 */
 function renderBaseline(gap) {
-  const riskColors = { '低': '#10B981', '中': '#F59E0B', '高': '#EF4444' };
-  const riskColor = riskColors[gap.risk_level] || '#6B7280';
+  const riskColors = { '低': 'var(--success)', '中': '#F59E0B', '高': 'var(--danger)' };
+  const riskColor = riskColors[gap.risk_level] || 'var(--ink-soft)';
 
   return el('div', { className: 'card career-baseline' },
     el('div', { style: 'display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;' },
@@ -174,7 +174,7 @@ function renderBaseline(gap) {
         return el('div', { className: 'career-dim-row' },
           el('div', { className: 'career-dim-head' },
             el('span', { className: 'career-dim-name', textContent: d.name }),
-            el('span', { className: 'career-dim-score', style: `color:${d.score >= 4 ? '#10B981' : d.score >= 3 ? '#F59E0B' : '#EF4444'};`, textContent: `${d.score}/5` }),
+            el('span', { className: 'career-dim-score', style: `color:${d.score >= 4 ? 'var(--success)' : d.score >= 3 ? '#F59E0B' : 'var(--danger)'};`, textContent: `${d.score}/5` }),
           ),
           el('div', { className: 'dim-bar' },
             el('div', { className: `dim-bar-fill ${barClass}`, style: `width:${pct}%;` }),
@@ -183,7 +183,7 @@ function renderBaseline(gap) {
       }),
     ),
     gap.overall_assessment ? el('div', {
-      style: 'margin-top:12px;padding:10px 14px;background:#EEF2FF;border-radius:8px;font-size:.82rem;color:#3730A3;line-height:1.6;',
+      style: 'margin-top:12px;padding:10px 14px;background:var(--accent-light);border-radius:8px;font-size:.82rem;color:var(--indigo-800);line-height:1.6;',
     },
       el('strong', { textContent: '📝 现状评估：' }),
       el('span', { textContent: gap.overall_assessment }),
@@ -283,7 +283,7 @@ function drawSkillChart(stages) {
         label: '累计需补技能数',
         data,
         backgroundColor: labels.map((_, i) => {
-          const palette = ['#4F46E5', '#3B82F6', '#10B981', '#F59E0B', '#EF4444', '#8B5CF6', '#EC4899'];
+          const palette = ['#C44F3A', '#3A7A6A', '#A08945', '#2C6455', '#9B3025', '#8B9FFF', '#B48CFF']; // v5.0 纸墨调色板
           return palette[i % palette.length];
         }),
         borderRadius: 6,
@@ -295,7 +295,7 @@ function drawSkillChart(stages) {
       maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: {
-        y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: '#E2E8F0' } },
+        y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: '#DAD6CC' } },
         x: { grid: { display: false } },
       },
     },
@@ -304,9 +304,9 @@ function drawSkillChart(stages) {
 
 /** 总结与风险 */
 function renderSummary(plan) {
-  const riskColors = { '低': '#10B981', '中': '#F59E0B', '高': '#EF4444' };
+  const riskColors = { '低': 'var(--success)', '中': '#F59E0B', '高': 'var(--danger)' };
   const riskBg = { '低': 'rgba(16,185,129,.1)', '中': 'rgba(245,158,11,.1)', '高': 'rgba(239,68,68,.1)' };
-  const riskColor = riskColors[plan.risk_level] || '#6B7280';
+  const riskColor = riskColors[plan.risk_level] || 'var(--ink-soft)';
 
   return el('div', { className: 'card career-summary' },
     el('div', { className: 'card-title', textContent: '🧾 路径总结' }),

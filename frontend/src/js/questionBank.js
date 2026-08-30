@@ -47,7 +47,7 @@ export function initQuestionBank() {
           onInput: () => { currentFilters.search = $('#qb-filter-search').value; loadQuestions(); } }),
       el('button', {
         id: 'qb-filter-fav', className: 'btn btn-sm',
-        style: `background:${currentFilters.favorited ? '#fef3c7' : 'var(--bg-secondary)'};border:1px solid var(--border);`,
+        style: `background:${currentFilters.favorited ? 'var(--amber-50)' : 'var(--bg-secondary)'};border:1px solid var(--border);`,
         textContent: currentFilters.favorited ? '⭐ 已收藏' : '☆ 收藏',
         onClick: () => { currentFilters.favorited = !currentFilters.favorited; loadQuestions(); },
       }),
@@ -74,7 +74,7 @@ async function loadQuestions() {
   // 更新收藏按钮样式
   const favBtn = $('#qb-filter-fav');
   if (favBtn) {
-    favBtn.style.background = currentFilters.favorited ? '#fef3c7' : 'var(--bg-secondary)';
+    favBtn.style.background = currentFilters.favorited ? 'var(--amber-50)' : 'var(--bg-secondary)';
     favBtn.textContent = currentFilters.favorited ? '⭐ 已收藏' : '☆ 收藏';
   }
 

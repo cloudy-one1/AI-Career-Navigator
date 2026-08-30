@@ -1,6 +1,116 @@
 # 变更日志（CHANGELOG）
 
-> 记录 v2 → v7.0 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+> 记录 v2 → v7.1 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+
+---
+
+## v7.1.0 全站 UI 统一为 job-crawler「纸墨印章」风格（2026-08-30）
+
+> 起因是市场数据 Tab 的前端与开源项目 job-crawler 不一致；澄清后范围扩大为**全站 11 个 Tab 统一视觉语言**——功能布局与 DOM 结构保留，只重做视觉。因 job-crawler 仅有「采集 / 列表 / 详情」三类页面，其余 Tab 无模板可抄，故以其**设计 Token + 组件规范**重新拼装，而非字面复制结构。
+
+### 1. 设计基线（可复用资产）
+
+- 新增 `docs/job-crawler-UI设计系统规格.md`：从 job-crawler 源码（`base.html` / `theme-dark.css` / `theme-toggle.js` / `input.html` / `data.html` / `job_detail.html` / `collect.html`）一次性抽取的权威规格，含 12 个米色 Token、字体三件套、组件完整 CSS（navbar / card + `data-no` 角标 / stamp / eyebrow / btn 族 / interest-btn / form / table / alert / data-row / tag-chip …）、深色覆盖表、语义色四色值与页面骨架。**后续改造以此文档为唯一基线**，避免反复读源文件导致细节遗漏。
+
+### 2. 改造策略：Token 重映射（而非逐行重写）
+
+- `tokens.css` 重写：**变量名保持不变，仅重映射色值**。全站引用的 `--card` / `--primary` / `--indigo-*` / `--slate-*` 等自动切换为纸墨色（印章红 `#C44F3A` / 米纸 `#F4F2ED` / 墨色 `#1F2320` / 青绿 `#3A7A6A` / 黄铜 `#A08945`），1162 行 `style.css` 与各页 CSS 无需改名即整体换肤。
+- 新增 `--primary-rgb` / `--success-rgb` / `--warning-rgb` / `--danger-rgb` / `--ink-rgb` 三元组：把 `style.css` 中约 50 处字面 `rgba(79,70,229,α)` 与 hex 字面色改为 `rgba(var(--primary-rgb), α)`，**双主题自动跟随**。
+- 字体：`--font-family` 改 Noto Sans SC，新增 `--font-serif`（Noto Serif SC，标题/品牌）、`--font-mono`（JetBrains Mono）；`index.html` 引入 Google Fonts 三件套。
+
+### 3. 双主题机制（对齐 job-crawler）
+
+- 新增 `themeToggle.js` + `theme.css`：切换改为**手动切换 `html.theme-dark`**（原为跟随系统 `prefers-color-scheme`），localStorage 记忆、内联防 FOUC 脚本、派发 `theme:changed` 事件；深色下挂载**青/粉/金/紫语义色切换器**（写 `--accent-from/--accent-to`，sessionStorage 记忆）。
+- 废弃 `pages/dark.css`：其 Indigo 时代的硬编码深色修正会覆盖变量驱动的正确取值、造成深浅割裂，已清空并注明原委。
+
+### 4. 框架与各页
+
+- `components.css`：品牌标识改**圆形印章**（`rotate(-6deg)`）、导航项改 22px 胶囊、侧栏/底栏深色毛玻璃。
+- `base.css`：标题统一 Noto Serif SC / 900。
+- 逐页清理字面色：`market.css`（`--mkt-*` 全部指向全局 Token，深色块选择器改 `html.theme-dark #market-panel`）、`auth.css`、`interview.css`、`history.css`。
+- **JS 内联与图表配色**：`report.js`（21 处）、`careerPlan.js`、`liveRadar.js`、`interview.js`、`questionBank.js`、`marketData.js` 中，内联 style 颜色改 `var()`（自动跟随主题），Chart.js canvas 颜色改纸墨调色板（canvas 不解析 `var()`，必须给具体值）。
+- `marketData.js` 移除自研主题逻辑（`applyTheme` / `applyAccent` / `toggleTheme` 与本地切换按钮），市场数据 Tab 主题统一由全局切换器控制，消除"Tab 内另有一套主题"的割裂。
+
+### 5. 市场数据 Tab：DOM 级 1:1 复刻（对齐规格文档）
+
+- **采集视图**（对齐 `input.html`）：Hero（`eyebrow「招聘市场数据分析」` + h1「招聘信息实时数据分析系统」+ subtitle）→ `card[data-no="查询与采集"]`；表单字段与文案逐项照搬（岗位名称 / 排序方式 / 实时采集页数 1~5）。城市选择改为 job-crawler 的**省份 select → 城市 select →「＋ 添加城市」→ 已选 `tag-chip`** 级联（原为"选省份后点城市 chip"），交互与文案一致。
+- **岗位列表视图**（对齐 `data.html`）：`eyebrow「数据展示」` + h2「招聘数据档案」；`card[data-no="共 N 条记录"]`（角标随筛选实时更新）+ 表格列照搬（职位 / 公司 / 城市 / 最低薪资(千元) / 最高薪资(千元) / 发布时间 / 感兴趣）；`.data-row` **整行悬停上浮 `translateY(-3px) scale(1.02)` 并变蓝、点击整行跳详情**（复刻）；翻页改为「← 上一页 / 第 X / Y 页 / 下一页 →」。
+- **岗位详情视图**（对齐 `job_detail.html`）：`eyebrow「岗位详情」` + h2「职位档案详情」→ 卡片左侧 4px 青绿描边 + 标题行（h3 职位 / 🏢公司 · 📍地区）+ 信息网格（薪资范围用等宽青绿大字 / 学历要求 / 经验要求 / 发布时间）+ 职位描述（限高 400px 可滚动）。
+- **增强并存**（未因 1:1 而丢失）：行首多选框 → 跨岗位对比（勾选后行描边，点选框 `stopPropagation` 不触发整行跳转）；统计概览卡（岗位总量 / 平均薪资 / 热门技能 TOP5 / 样本城市）；学历 + 薪资区间筛选（job-crawler 无，作为第二行扩展）；采集进度轮询条；详情页 Gap 分析卡。
+- **「感兴趣」前端化**：job-crawler 走后端 `/toggle_interest`(CSRF)，本项目无此接口——复刻 `.interest-btn` 视觉与「感兴趣 ⇄ 已收藏」交互，状态存 `localStorage['_mkt_interested']`，零后端改动。
+- **一处必要取舍**：job-crawler 文案为「选择城市（可选，不选则全国范围搜索）」，但本项目后端 `POST /api/market/crawl` 的 `cities` 是 `Form(..., min_length=1)`（强制非空），故文案改为「选择城市（可多选）」并保留必选校验，避免误导用户触发 400。
+
+### 6. 后端配套改动（上一节两处取舍的收口）
+
+- **放开「不选城市 = 全国搜索」**：`scrape_jobs` 底层本就支持（空列表 fallback 到 `("全国","000000")`），API 层的强制非空是后来加的保守限制。改 `main.py` 的 `cities` 为 `Optional[List[str]] = Form(None)` 并在函数内归一化，改 `tasks.validate` 去掉 `not cities` 判断（保留 >5 上限）。`api.js` 用 `cities.forEach` 传参，空数组时自然不传该字段，无需改动。前端文案恢复为 job-crawler 原文「选择城市（可选，不选则全国范围搜索）」，未选城市时提示"将按全国范围采集"。
+- **收藏持久化到 market.db**：新增 `job_postings.is_interested` 字段（含基于 `PRAGMA table_info` 的幂等迁移——“`CREATE TABLE IF NOT EXISTS` 改不动已存在的库”）+ `store.toggle_interest()` + `POST /api/market/jobs/{job_id}/interest`。采用与题库 `question_bank.is_favorited` **完全相同的模式：全局标记、不区分用户**（market.db 为单机单用户库，且项目支持免登录使用）。刻意不更新 `updated_at` —— 收藏是用户态，不应改写数据时间戳。前端 `isInterested(job)` 直接读接口返回的 `job.is_interested`，不再用 localStorage。
+- **不覆盖收藏的保证**：`upsert_jobs` 的 INSERT 与 `ON CONFLICT DO UPDATE SET` 均不含 `is_interested`，故重新采集不会清空已有收藏。
+- **测试**：全量 **982 passed + 1 skipped**，与改造前基线一致，零回归（`TestValidate` 原本未断言"空 cities 必须报错"，故放开不受影响）。
+
+### 7. 验证
+
+- `npm run build` 通过，lint 0 错误；接口实测：`TOGGLE true → false` 正确切换，列表返回 `is_interested` 字段，978 条数据完好；数据库迁移幂等（`HAS_FLAG: True`）。
+
+### 8. 补齐遗漏组件 + 死代码清理（对齐规格 §7 检查清单）
+
+> 上节改造后逐项核对规格文档 §7 的 13 项检查清单，发现 7 项未落实，本轮补齐。
+
+**补齐的组件（market.css + marketData.js）**
+
+| 组件 | 规格 | 落地 |
+|---|---|---|
+| `.stamp` 印章 | §4.3 | 64px 圆形、`rotate(-9deg)`、2px 印章红描边；用于详情页标题左侧（文案「档案」）；深色下转青描边 |
+| `.alert` / `.alert-danger` / `.alert-info` | §4.8 | 采集结果用 `alert-info`（含「查看刚采集的数据 →」）、错误用 `alert-danger`；**取代原自研 `.mkt-error`**，显隐统一由 `.visible` 控制 |
+| `.btn-detail` | §4.15 | 详情页「🔗 查看详情」加该类，橙色渐变 `135deg,#FF6B35,#F7931E`；深色下转语义色渐变 |
+| `.fade-up` 入场动效 | §4.11 | `home-wrap` / `home-card` / `home-feature-grid` 三层递进；`prefers-reduced-motion` 下自动降级 |
+| `.home-feature-grid` / `.home-feature-card` | §4.12 | 采集视图底部三张入口卡：📊 岗位档案（切岗位库视图）、🎯 职业规划、📚 岗位库（后两者复用全局导航项跨 Tab 跳转） |
+| `.restored-badge` | §4.9 | 已补齐样式备用（当前无"恢复上次结果"场景，默认隐藏） |
+| 深色卡片左侧 4px 渐变光条 | §5 | `html.theme-dark #market-panel .card::after`，用 `::after` 避开 `data-no` 的 `::before` 冲突 |
+
+- **跨 Tab 跳转**统一走 `goToTab(tab)` → 触发 `.nav-item[data-tab]` 的 click，不重复实现路由。
+- 三张入口卡用 `<button>` 而非 `<a>`（需执行 JS 跳转），CSS 已补 `cursor` / `text-align` / `font-family` / `width` 使其与 `a` 视觉等价。
+
+**死代码清理（market.css 1877 → 1280 行，−597 行）**
+
+改造时保留了旧的自研 `--mkt-*` 体系，其中一批类在 DOM 复刻后已无人引用。逐个在 `frontend/src` 全目录验证"仅存在于 market.css"后删除：
+
+- 采集视图旧体系：`.mkt-banner`（含 `::after` 水印）/ `.mkt-count-badge` / `.mkt-form-grid` / `.mkt-field` / `.mkt-input` / `.mkt-select` / `.mkt-city-row` / `.mkt-city-chips` / `.mkt-chip` / `@keyframes mkt-pop`
+- 列表旧体系：`.mkt-table-wrap` / `.mkt-table` 全家桶 / `.mkt-cell-*` / `.mkt-salary` / `.mkt-date` / `.mkt-link-51` / `.mkt-row-check` / `.mkt-checkbox` / `.mkt-pagination` / `.mkt-page-btn`
+- 详情旧体系：`.mkt-detail-back` / `.mkt-detail-head` / `.mkt-detail-company` / `.mkt-detail-title` / `.mkt-detail-badge` / `.mkt-detail-info` / `.mkt-info-cell` / `.mkt-info-value` / `.mkt-detail-grid` / `.mkt-desc`（含 `h3` / `.mkt-desc-text`）
+- 主题切换旧体系：`.mkt-theme-zone` / `.mkt-theme-toggle` / `.mkt-accent-picker` / `.mkt-accent-dot` / `.theme-cyan|pink|gold|purple`（v7.1.0 已移交全局 `themeToggle.js`）
+- 其它：`.mkt-error` / `.mkt-card-sub` / `.mkt-btn-block` / `.mkt-actions`，以及深色覆盖层与响应式断点中引用上述类的选择器
+
+**保留**（仍在用）：`.mkt-topbar` 顶栏 / `.mkt-progress*` 进度条 / `.mkt-stats-row` 统计卡 / `.mkt-filters` / `.mkt-compare-bar` / `.mkt-gap-*` / `.mkt-dim-*` / `.mkt-rank-*` / `.mkt-loading` / `.mkt-empty` / `.mkt-btn*` / `.mkt-card*` / `.mkt-resume-ta` / `.mkt-info-label` 等增强组件。
+
+### 9. 验证（本轮）
+
+- `npm run build` 通过（4.33s），lint 0 错误；新增组件 JS/CSS 配对已逐项核对（`home-feature-card` / `fc-arrow` / `btn-detail` / `fade-up` 在两边均存在）。
+- 其余 10 个 Tab 零改动：本轮仅改 `market.css` 与 `marketData.js`，且新增样式全部位于 `#market-panel` 作用域内。
+
+---
+
+## v7.0.3 测试策略 v2：行为化精简 + 黄金样本回归（2026-08-30）
+
+> 按《测试用例审计与精简方案》执行（先评估修正口径，未盲追数字）。审计显示 ~45% 的测试"锁 prompt 文案"且"诊断准不准"零覆盖——本轮把**测错对象的测试**收拢为行为断言，并首次补齐**诊断准确性**缺口。评估与执行差异记录在方案文档 §八。
+
+### 1. 行为化精简（删脆弱、保行为）
+
+- **`test_security.py` 56 → 37 函数**：5 组同构案例 parametrize（8 条注入句式 / 3 条输出泄露 / 6 条非法质量 / 5 条记忆污染 / 2 条歧义词），每条保留独立 ids 与注释，case 数不减少。
+- **borrowings 三文件行为化**：追问链断言改为"从配置取链断言"（等价改写 prompt 不再爆红）；收尾指令断言改配置派生；合并重复的"约束文本覆盖/注入"用例；删除低价值静态字符串断言。**未按原案砍到 50→20——实读发现这些文件 85% 是有效行为测试**（评分修正/压力题库/恢复红线/TTS 缓存/语音降级），硬砍会误删真实覆盖。
+- **`test_data_support.py`**：空/未命中兜底案例 parametrize。
+
+### 2. 黄金样本回归（新增，首次覆盖"诊断准不准"）
+
+- `tests/fixtures/golden_answers.json`：4 类典型回答人工标注（量化充分但 STAR 欠缺 / 全篇口号 / STAR 完整且量化充分 / 甩锅避答），每份含人工诊断 JSON + expected 区间。
+- `tests/test_diagnosis_golden.py` 两层：
+  - **确定性回归**（默认跑，8 用例）：固定答案 + 固定标注 → 断言 `run_diagnosis → normalize_result` 链路的**总分区间 / 最弱维度 / 加扣分项命中 / 引用必须是原回答字面子串**。
+  - **live-LLM 抽检**（`@pytest.mark.live_llm`，默认 deselect）：真实模型结构软断言，分数交人工比对。运行：`GOLDEN_LIVE_LLM=1 GOLDEN_LIVE_LLM_API_KEY=sk-... pytest tests/test_diagnosis_golden.py -v`。
+- **方法论修正**：原案"FakeLLM 下断言 ±0.5 分"自相矛盾（诊断打分在 LLM 里）——落地为"确定性回归 + live 抽检"两层。
+
+### 3. 测试
+
+- 全量 **982 passed + 1 skipped**（live_llm 预期跳过），0 失败；函数级 903 → 890。
+- 覆盖度不降：`security.py 97% / score_adjustments.py 91% / diagnosis_engine.py 76%`。
 
 ---
 

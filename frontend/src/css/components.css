@@ -21,19 +21,25 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  font-weight: 700;
+  font-family: var(--font-serif);   /* v5.0 纸墨：品牌用衬线 */
+  font-weight: 900;
   font-size: var(--text-md);
   color: var(--color-text);
 }
 
+/* v5.0 纸墨：品牌标识改为圆形印章（对齐 job-crawler .navbar-brand::before） */
 .brand-logo {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
-  background: linear-gradient(135deg, var(--indigo-600), var(--indigo-400));
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--stamp);
   display: grid;
   place-items: center;
   color: #fff;
+  font-family: var(--font-serif);
+  font-weight: 900;
+  transform: rotate(-6deg);
+  flex-shrink: 0;
 }
 
 .version-badge {
@@ -118,7 +124,7 @@
   width: 100%;
   padding: 10px 12px;
   border: none;
-  border-radius: var(--radius-md);
+  border-radius: 22px;   /* v5.0 纸墨：胶囊导航项（对齐 job-crawler 22px） */
   background: transparent;
   color: var(--color-text-secondary);
   font-size: var(--text-base);
