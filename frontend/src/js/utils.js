@@ -168,3 +168,31 @@ export function shake(target) {
   target.classList.add('shake');
   setTimeout(() => target.classList.remove('shake'), 500);
 }
+
+/**
+ * v7.3: 评分揭晓的径向粒子爆发（motion.css particle-fly 驱动）。
+ * tier 决定色板：good=墨青/黄铜/朱砂，mid=黄铜/朱砂，poor=深红/黄铜。
+ * JS 驱动的动效必须显式读 prefers-reduced-motion（动效纪律第 2 条）。
+ * anchor 需为定位上下文（调用方给 position:relative）。
+ */
+export function burstParticles(anchor, tier = 'good', { count = 16 } = {}) {
+  if (!anchor) return;
+  if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  const palette = {
+    good: ['var(--teal)', 'var(--brass)', 'var(--stamp)'],
+    mid: ['var(--brass)', 'var(--stamp)'],
+    poor: ['var(--indigo-800)', 'var(--brass)'],
+  }[tier] || ['var(--stamp)'];
+  const layer = el('div', { className: 'particle-layer', 'aria-hidden': 'true' });
+  for (let i = 0; i < count; i++) {
+    const p = el('span', { className: 'particle' });
+    p.style.setProperty('--ang', `${Math.round(Math.random() * 360)}deg`);
+    p.style.setProperty('--dist', `${44 + Math.round(Math.random() * 52)}px`);
+    p.style.setProperty('--pd', `${Math.round(Math.random() * 160)}ms`);
+    p.style.setProperty('--pc', palette[i % palette.length]);
+    if (i % 3 === 0) { p.style.width = '4px'; p.style.height = '4px'; }
+    layer.appendChild(p);
+  }
+  anchor.appendChild(layer);
+  setTimeout(() => layer.remove(), 1400);
+}

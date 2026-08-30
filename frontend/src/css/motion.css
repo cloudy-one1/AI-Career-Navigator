@@ -224,6 +224,79 @@
 }
 
 /* ===================================================
+   8. 评分揭晓仪式感（v7.3）：粒子爆发 + 五维卡片弹入
+   =================================================== */
+
+/* 径向粒子层（JS burstParticles 创建，落定后自动移除） */
+.particle-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: visible;
+  z-index: 5;
+}
+.particle {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--pc, var(--stamp));
+  transform: translate(-50%, -50%);
+  animation: particle-fly var(--dur-reveal) var(--ease-out) both;
+  animation-delay: var(--pd, 0ms);
+}
+@keyframes particle-fly {
+  0%   { opacity: 0; transform: translate(-50%, -50%) rotate(var(--ang, 0deg)) translateX(0) scale(1); }
+  15%  { opacity: 1; }
+  100% { opacity: 0; transform: translate(-50%, -50%) rotate(var(--ang, 0deg)) translateX(var(--dist, 60px)) scale(0.4); }
+}
+
+/* 卡片弹入（五维总览逐个登场，配 --popd 错峰） */
+.pop-in {
+  animation: pop-spring 480ms var(--ease-spring) both;
+  animation-delay: var(--popd, 0ms);
+}
+@keyframes pop-spring {
+  0%   { opacity: 0; transform: scale(0.85) translateY(10px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+/* ===================================================
+   9. Quote 证据引用（v7.3）：黄铜左边条 + 扫描线
+   「AI 在审视你的原话」的视觉化——仅在证据块首次出现时扫一次
+   =================================================== */
+.quote-evidence {
+  margin-top: 6px;
+  padding: 7px 10px 7px 12px;
+  border-left: 3px solid var(--brass);
+  background: rgba(var(--warning-rgb), 0.07);
+  border-radius: 0 8px 8px 0;
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  position: relative;
+  overflow: hidden;
+}
+.quote-scan::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg,
+    transparent 25%,
+    rgba(var(--warning-rgb), 0.25) 50%,
+    transparent 75%);
+  background-size: 250% 100%;
+  animation: quote-sweep 0.9s var(--ease-standard) 0.4s both;
+  pointer-events: none;
+}
+@keyframes quote-sweep {
+  from { background-position: 130% 0; }
+  to   { background-position: -130% 0; }
+}
+
+/* ===================================================
    7. 降级：偏好减弱动效时全站静默（承接 base.css 全局机制）
    =================================================== */
 @media (prefers-reduced-motion: reduce) {
@@ -236,11 +309,17 @@
   .skeleton-line,
   .shimmer-bar::after,
   .stream-box::before,
+  .particle,
+  .pop-in,
+  .quote-scan::after,
   .btn-press::after {
     animation: none !important;
   }
   ::view-transition-old(root),
   ::view-transition-new(root) {
     animation: none !important;
+  }
+  .particle-layer {
+    display: none;
   }
 }

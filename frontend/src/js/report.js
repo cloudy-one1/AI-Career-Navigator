@@ -2,8 +2,9 @@
 // report.js — 综合报告 + Chart.js 雷达图
 // ===================================================
 
-import { $, el, toast, DIM_NAMES, escHtml, countUp, skeletonBlock } from './utils.js';
+import { $, el, toast, DIM_NAMES, escHtml, countUp, skeletonBlock, burstParticles, scoreClass } from './utils.js';
 import { getReport, exportReview, getGapAnalysis, crossJobCompare, request } from './api.js';
+import { getToken } from './auth.js';
 
 let chartInstance = null;
 
@@ -92,6 +93,7 @@ function renderReport(report) {
   content.appendChild(el('div', { className: 'report-hero card' },
     el('div', {
       className: 'report-hero-ring',
+      style: 'position:relative;',   // v7.3: 粒子层定位上下文
       innerHTML: `
         <svg class="score-ring ring-draw" viewBox="0 0 120 120" width="110" height="110" role="img" aria-label="综合评分 ${oAvg.toFixed(1)} 分（满分 5 分）">
           <circle class="ring-track" cx="60" cy="60" r="52"></circle>
@@ -111,12 +113,15 @@ function renderReport(report) {
         },
       }) : '',
       // v6.1: HTML 导出（借鉴 offerMaster 的 MD→HTML 渲染，浏览器打印即得 PDF）
+      // v7.3: 顶层导航带不了 Authorization 头，登录态以 query token 兜底（与 WS 同权衡）
       sessionId ? el('button', {
         className: 'btn btn-secondary btn-sm',
         style: 'margin-top:8px;width:fit-content;',
         textContent: '🖨 打印 / 存为 PDF',
         onClick: () => {
-          window.open(`${location.origin}/api/reports/${sessionId}/export.html`, '_blank');
+          const t = getToken();
+          const q = t ? `?token=${encodeURIComponent(t)}` : '';
+          window.open(`${location.origin}/api/reports/${sessionId}/export.html${q}`, '_blank');
         },
       }) : '',
     ),
@@ -124,6 +129,32 @@ function renderReport(report) {
 
   // v7.2: 评分揭晓仪式感——环形描边绘制 + 分数滚动（motion.css ring-draw）
   countUp(content.querySelector('.report-hero-ring .ring-text'), oAvg, { decimals: 1, duration: 900 });
+
+  // v7.3: 数字落定瞬间，径向粒子爆发（颜色随分数分级，动效纪律：揭示时刻专属）
+  const tier = oAvg >= 4 ? 'good' : oAvg >= 3 ? 'mid' : 'poor';
+  setTimeout(() => burstParticles(content.querySelector('.report-hero-ring'), tier), 950);
+
+  // v7.3: 五维总览（与分享页 share-dim 同脸）——逐卡弹入
+  const dimAvgs = report.dimension_averages || {};
+  const dimEntries = Object.entries(DIM_NAMES)
+    .filter(([key]) => dimAvgs[key] != null)
+    .map(([key, name]) => [key, name, Number(dimAvgs[key])]);
+  if (dimEntries.length) {
+    content.appendChild(el('div', { className: 'report-dims' },
+      ...dimEntries.map(([key, name, avg], i) => el('div', {
+        className: 'report-dim-card card-hover pop-in',
+        style: `--popd:${110 * i}ms;`,
+      },
+        el('div', { className: 'report-dim-name', textContent: name }),
+        el('div', { className: 'report-dim-score', textContent: avg.toFixed(1) }),
+        el('div', { className: 'report-dim-bar' },
+          el('div', {
+            className: `report-dim-bar-fill ${scoreClass(avg)}`,
+            style: `width:${Math.min(100, avg * 20)}%;`,
+          })),
+      )),
+    ));
+  }
 
   // v4.0: 关键指标条
   const totalQ = (report.rounds || []).reduce((a, r) => a + (r.questions_count || 0), 0);

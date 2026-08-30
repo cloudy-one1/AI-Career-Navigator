@@ -138,13 +138,57 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ── v7.3: 五维总览（与分享页 share-dim 同脸，逐卡弹入见 motion.css pop-in）── */
+.report-dims {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.report-dim-card {
+  padding: 14px 16px;
+  margin-bottom: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.report-dim-name {
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  letter-spacing: 0.04em;
+}
+.report-dim-score {
+  font-family: var(--font-mono);
+  font-size: var(--text-xl);
+  font-weight: 700;
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+.report-dim-bar {
+  height: 5px;
+  border-radius: 3px;
+  background: var(--slate-100);
+  overflow: hidden;
+}
+.report-dim-bar-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width var(--dur-slow) var(--ease-out);
+}
+.report-dim-bar-fill.high { background: var(--teal); }
+.report-dim-bar-fill.mid  { background: var(--brass); }
+.report-dim-bar-fill.low  { background: var(--stamp); }
+
 /* ── 响应式 ── */
 @media (max-width: 1024px) {
   .report-grid-2 { grid-template-columns: 1fr; }
   .report-metrics { grid-template-columns: repeat(2, 1fr); }
+  .report-dims { grid-template-columns: repeat(3, 1fr); }
 }
 
 @media (max-width: 767px) {
   .report-hero { flex-direction: column; text-align: center; padding: 24px 20px; }
   .report-hero-info { align-items: center; }
+  .report-dims { grid-template-columns: repeat(2, 1fr); }
 }
