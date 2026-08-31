@@ -436,6 +436,12 @@ class CareerPlanRequest(BaseModel):
     target_role: str = Field(..., min_length=2, description="目标岗位/角色")
     jd_text: str = Field(default="", description="目标岗位 JD（可选，更精准）")
     timeframe_years: int = Field(default=3, ge=1, le=10, description="目标年限（1-10 年）")
+    # v8.0: 长期薄弱点上下文。可选字段是为了向后兼容——既有调用方与测试零影响，
+    # 由 /api/career-plan 路由从档案服务注入，让规划器第一次"知道用户练过什么"。
+    weakness_context: str = Field(default="", description="长期薄弱点上下文（档案服务注入）")
+    # v8.1: 支持以简历库档案为规划起点；以及简历技能 vs 市场热门技能的缺口上下文。
+    resume_id: str = Field(default="", description="简历库 id（可选，为空则用 resume_text）")
+    skill_gap_context: str = Field(default="", description="技能缺口上下文（档案服务注入）")
 
 
 class CareerPlanResponse(BaseModel):
@@ -444,6 +450,38 @@ class CareerPlanResponse(BaseModel):
     stages: list[CareerStage] = []                   # 时间轴阶段（从近到远）
     summary: str = ""                                # 一句话路径总结
     risk_level: str = ""                             # 路径可行度风险（低/中/高）
+
+
+# ===== v8.0 求职档案（Job-Seeking Profile）=====
+
+class NextAction(BaseModel):
+    """下一步最佳动作（NBA）：规则表产出，确定性、零延迟、可解释。
+
+    为什么不用 LLM 决策：用户每天都要看这一句，延迟与不确定性都不可接受；
+    而且"为什么是这一步"必须讲得清，规则表天然可解释。
+    """
+    action: str = Field(default="", description="展示给用户的动作指令（一句）")
+    target_tab: str = Field(default="", description="直达的前端 tab（与 navConfig 的 tab 名一致）")
+    reason: str = Field(default="", description="为什么是这一步（可信度来源）")
+    urgency: str = Field(default="normal", description="high | normal | low")
+    dimension: str = Field(default="", description="针对某薄弱维度时填维度 key，否则为空")
+
+
+class ProfileResponse(BaseModel):
+    """求职档案：四组状态 + 下一步最佳动作。
+
+    档案是"投影层"而非新真相源，任一段都可能因数据缺失而为空——
+    degraded 字段如实记录降了哪些段，供前端诚实提示而非假装数据完整。
+    """
+    identity: dict = Field(default_factory=dict, description="我是谁（简历画像）")
+    target: dict = Field(default_factory=dict, description="我要去哪（目标岗位 + 市场基准）")
+    level: dict = Field(default_factory=dict, description="我现在什么水平（五维能力 + 环比）")
+    gaps: list[dict] = Field(default_factory=list, description="待提升项（排序行动项）")
+    # v8.1: 五步主线完成度（steps 的 state 取值 done/current/todo）
+    journey: dict = Field(default_factory=dict, description="五步主线完成度")
+    next_action: Optional[NextAction] = None
+    updated_at: str = ""
+    degraded: list[str] = Field(default_factory=list, description="降级的段名（供前端诚实提示）")
 
 
 # ===== v6.3 长期记忆闭环 =====

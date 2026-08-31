@@ -8,14 +8,18 @@
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700;900&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
   <link rel="stylesheet" href="/src/css/tokens.css">
   <link rel="stylesheet" href="/src/css/base.css">
+  <!-- v7.6 壳层布局独立成层（自 components.css 抽出）：Header/旅程侧栏/容器/进度条/底部导航 -->
+  <link rel="stylesheet" href="/src/css/layout.css">
   <!-- v7.2.2 组件层合流：原 style.css 全文并入 components.css（含已剔除的 17 条死规则）。
-       components 必须位于 pages/*.css 之后（承接原 style.css 的层叠位置），motion/theme 仍在其后。 -->
+       components 必须位于 pages/*.css 之后（承接原 style.css 的层叠位置），motion/theme 仍在其后。
+       v7.6 起壳层规则（原文件头 279 行）已迁至 layout.css。 -->
   <link rel="stylesheet" href="/src/css/pages/interview.css">
   <link rel="stylesheet" href="/src/css/pages/report.css">
   <link rel="stylesheet" href="/src/css/pages/history.css">
   <link rel="stylesheet" href="/src/css/pages/market.css">
   <link rel="stylesheet" href="/src/css/pages/memory.css">
   <link rel="stylesheet" href="/src/css/pages/auth.css">
+  <link rel="stylesheet" href="/src/css/pages/profile.css">
   <link rel="stylesheet" href="/src/css/components.css">
   <link rel="stylesheet" href="/src/css/motion.css">
   <link rel="stylesheet" href="/src/css/theme.css">
@@ -51,59 +55,16 @@
 </header>
 
 <div class="app-body">
-  <!-- 侧边导航（桌面 / 平板） -->
-  <nav class="app-nav" role="navigation" aria-label="主导航">
-    <!-- v7.3: 侧边栏旅程分组——备战 / 演练 / 洞察 / 账户（见 docs/产品定位延伸_全流程求职陪跑.md） -->
-    <div class="nav-group-label">备战</div>
-    <button class="nav-item" data-tab="resume-library">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-      <span class="nav-label">简历库</span>
-    </button>
-    <button class="nav-item" data-tab="position-library">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
-      <span class="nav-label">岗位库</span>
-    </button>
-    <button class="nav-item" data-tab="market-data">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
-      <span class="nav-label">市场数据</span>
-    </button>
-    <div class="nav-group-label">演练</div>
-    <button class="nav-item active" data-tab="interview" aria-current="page">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
-      <span class="nav-label">模拟面试</span>
-    </button>
-    <button class="nav-item" data-tab="question-bank">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-      <span class="nav-label">题库</span>
-    </button>
-    <button class="nav-item" data-tab="history">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      <span class="nav-label">历史记录</span>
-    </button>
-    <div class="nav-group-label">洞察</div>
-    <button class="nav-item" data-tab="report">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-      <span class="nav-label">综合报告</span>
-    </button>
-    <button class="nav-item" data-tab="memory">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="4.5" cy="7" r="2"/><circle cx="19.5" cy="7" r="2"/><circle cx="4.5" cy="17" r="2"/><circle cx="19.5" cy="17" r="2"/><line x1="6.3" y1="8.2" x2="9.6" y2="10.6"/><line x1="17.7" y1="8.2" x2="14.4" y2="10.6"/><line x1="6.3" y1="15.8" x2="9.6" y2="13.4"/><line x1="17.7" y1="15.8" x2="14.4" y2="13.4"/></svg>
-      <span class="nav-label">长期记忆</span>
-    </button>
-    <button class="nav-item" data-tab="career-plan">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
-      <span class="nav-label">职业规划</span>
-    </button>
-    <!-- v7.0: 账户（登录/注册） -->
-    <div class="nav-group-label">账户</div>
-    <button class="nav-item" data-tab="account">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-      <span class="nav-label">账户</span>
-    </button>
-  </nav>
+  <!-- 侧边导航（桌面 / 平板）：v7.6 起由 navConfig.js 渲染五步旅程时间线 -->
+  <nav class="app-nav" id="app-nav" role="navigation" aria-label="主导航"></nav>
 
   <!-- 主内容 -->
   <main class="container">
-    <section id="interview-panel" class="panel active"></section>
+    <!-- v7.6: 旅程进度条（navConfig.js 渲染；账户等非旅程页自动隐藏） -->
+    <div id="journey-progress" class="journey-progress" hidden></div>
+    <!-- v8.0: 能力档案（求职档案首屏，默认 tab） -->
+    <section id="home-panel" class="panel active"></section>
+    <section id="interview-panel" class="panel"></section>
     <section id="report-panel" class="panel"></section>
     <section id="history-panel" class="panel"></section>
     <section id="question-bank-panel" class="panel"></section>
@@ -118,50 +79,8 @@
   </main>
 </div>
 
-<!-- 移动端底部导航（v7.3 按旅程顺序：备战 → 演练 → 洞察 → 账户） -->
-<nav class="bottom-nav" role="navigation" aria-label="底部导航">
-  <button class="nav-item" data-tab="resume-library">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg>
-    <span>简历</span>
-  </button>
-  <button class="nav-item" data-tab="position-library">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/></svg>
-    <span>岗位</span>
-  </button>
-  <button class="nav-item" data-tab="market-data">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg>
-    <span>市场</span>
-  </button>
-  <button class="nav-item active" data-tab="interview" aria-current="page">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>
-    <span>面试</span>
-  </button>
-  <button class="nav-item" data-tab="question-bank">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>
-    <span>题库</span>
-  </button>
-  <button class="nav-item" data-tab="history">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-    <span>历史</span>
-  </button>
-  <button class="nav-item" data-tab="report">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-    <span>报告</span>
-  </button>
-  <button class="nav-item" data-tab="memory">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><circle cx="4.5" cy="7" r="2"/><circle cx="19.5" cy="7" r="2"/><circle cx="4.5" cy="17" r="2"/><circle cx="19.5" cy="17" r="2"/><line x1="6.3" y1="8.2" x2="9.6" y2="10.6"/><line x1="17.7" y1="8.2" x2="14.4" y2="10.6"/><line x1="6.3" y1="15.8" x2="9.6" y2="13.4"/><line x1="17.7" y1="15.8" x2="14.4" y2="13.4"/></svg>
-    <span>记忆</span>
-  </button>
-  <button class="nav-item" data-tab="career-plan">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg>
-    <span>规划</span>
-  </button>
-  <!-- v7.0: 账户 -->
-  <button class="nav-item" data-tab="account">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-    <span>账户</span>
-  </button>
-</nav>
+<!-- 移动端底部导航：v7.6 起由 navConfig.js 渲染（五步旅程顺序 + 账户） -->
+<nav class="bottom-nav" id="bottom-nav" role="navigation" aria-label="底部导航"></nav>
 
 <script type="module" src="/src/main.js"></script>
 </body>

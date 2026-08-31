@@ -814,7 +814,7 @@ function renderDetail(body, job, jdText) {
           ),
         ),
       ),
-      el('div', { style: 'display:flex; gap:8px; flex-wrap:wrap; align-items:center;' },
+      el('div', { className: 'mkt-detail-actions', style: 'display:flex; gap:8px; flex-wrap:wrap; align-items:center;' },
         el('button', { className: 'btn btn-default', style: 'font-size:14px;', textContent: '← 返回列表', onClick: () => switchView('jobs') }),
         el('button', {
           className: `interest-btn${fav ? ' interested' : ''}`,

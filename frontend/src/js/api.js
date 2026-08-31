@@ -278,6 +278,32 @@ export async function getMarketStats(keyword = '') {
   return request('GET', `/api/market/stats?${params.toString()}`);
 }
 
+/**
+ * [v8.0] 求职档案（能力档案首屏数据源）。
+ * 失败返回 null 而非抛出——档案是首屏，取不到就降级渲染，绝不能挡住其他功能。
+ */
+export async function fetchProfile() {
+  try {
+    return await request('GET', '/api/profile');
+  } catch (e) {
+    console.warn('[档案] 拉取失败，首屏降级:', e && e.message);
+    return null;
+  }
+}
+
+/**
+ * [v8.0] 让服务端档案缓存失效（面试出报告后调用）。
+ * 没有它，完成一场面试后要等最多 60 秒才在能力档案看到更新——而"练完档案就变"
+ * 恰恰是陪跑闭环最需要被看见的那一刻。静默失败：最坏情况是继续用旧缓存。
+ */
+export async function refreshProfile() {
+  try {
+    await request('POST', '/api/profile/refresh');
+  } catch (e) {
+    console.warn('[档案] 缓存失效失败（不影响使用）:', e && e.message);
+  }
+}
+
 // ===== v3.2: 职业规划 =====
 
 /** 职业路径规划（时间轴多阶段） */

@@ -69,6 +69,27 @@ def _build_user_prompt(req: CareerPlanRequest, baseline: dict) -> str:
         risk = baseline.get("risk_level", "?")
         baseline_block += f"\n综合风险等级: {risk}"
 
+    # v8.0: 长期薄弱点（来自历次模拟面试的长期记忆）。
+    # 这是"陪跑"闭环的落点——规划不再只看静态简历，而是看用户真实练出来的短板。
+    weakness_block = ""
+    ctx = getattr(req, "weakness_context", "") or ""
+    if ctx.strip():
+        weakness_block = f"""
+候选人长期薄弱点（来自历次模拟面试的长期记忆，EMA 累积，越靠前越需优先解决）：
+{ctx.strip()}
+
+要求：第一阶段必须落在上述真实短板上，并在 rationale 里说明"为什么先补它"。
+不要规划候选人已经掌握的内容。"""
+
+    # v8.1: 技能缺口（简历 vs 目标岗位的市场热门技能）。
+    # 与薄弱点的分工：那边是"表达与能力维度"的短板，这边是"硬技能"的缺口。
+    skill_block = ""
+    skill_ctx = getattr(req, "skill_gap_context", "") or ""
+    if skill_ctx.strip():
+        skill_block = f"""
+技能缺口（简历与目标岗位市场热门技能的比对结果）：
+{skill_ctx.strip()}"""
+
     return f"""候选人简历：
 {req.resume_text}
 
@@ -76,6 +97,8 @@ def _build_user_prompt(req: CareerPlanRequest, baseline: dict) -> str:
 
 候选人现状基线（六维匹配评分，来自 Gap 分析）：
 {baseline_block}
+{weakness_block}
+{skill_block}
 
 请基于以上信息，规划一条从现状到目标的时间轴路径。每个阶段的安排要贴合候选人的起点，第一阶段必须针对现状最薄弱的维度。"""
 
@@ -109,9 +132,44 @@ def _parse_stages(raw: dict) -> list[CareerStage]:
     return stages
 
 
+def _first_weakness_name(context: str) -> str:
+    """从薄弱点上下文里取最前面那条维度名（形如"- 量化程度：长期薄弱度 62…"）。
+
+    LLM 失败走降级模板时，第一阶段也应落在真实短板上——闭环不能只在
+    LLM 可用时成立。
+    """
+    first_line = (context or "").strip().splitlines()
+    if not first_line:
+        return ""
+    head = first_line[0].lstrip("- ").strip()
+    return head.split("：")[0].split(":")[0].strip()
+
+
+def _missing_skills(context: str) -> list[str]:
+    """从技能缺口上下文里解析"未体现的技能"清单（供降级模板使用）。"""
+    for line in (context or "").splitlines():
+        if "未体现的技能" not in line:
+            continue
+        tail = line.split("：", 1)[-1]
+        # 去掉括号内的排序说明，只留技能名
+        tail = tail.split("（")[0]
+        return [s.strip() for s in tail.split("、") if s.strip()]
+    return []
+
+
 def _fallback_plan(req: CareerPlanRequest, baseline: dict | None) -> CareerPlanResponse:
-    """LLM 失败时的降级路径：基于基线的固定三段式建议（诚实标注为启发式）。"""
-    if baseline:
+    """LLM 失败时的降级路径：基于基线的固定三段式建议（诚实标注为启发式）。
+
+    v8.0：有长期薄弱点时优先以它为第一阶段主题（以真实短板为起点）。
+    v8.1：技能缺口并入第一阶段的补技能清单——降级模板也要用得上真实数据。
+    """
+    if getattr(req, "weakness_context", ""):
+        first_focus = _first_weakness_name(req.weakness_context) or "岗位相关性"
+        first_skills = "针对该维度做专项演练（用模拟面试复测至达标）"
+        gap_skills = _missing_skills(getattr(req, "skill_gap_context", ""))
+        if gap_skills:
+            first_skills = f"补足市场热门技能：{'、'.join(gap_skills[:3])}；" + first_skills
+    elif baseline:
         dims = baseline.get("dimensions", [])
         weakest = min(dims, key=lambda d: d.get("score", 5), default=None) if dims else None
         first_focus = weakest.get("name", "岗位相关性") if weakest else "岗位相关性"

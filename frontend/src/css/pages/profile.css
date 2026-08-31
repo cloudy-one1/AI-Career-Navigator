@@ -1,0 +1,282 @@
+/* ===================================================
+   profile.css — 能力档案：求职档案首屏（v8.0 引入，v8.1 定名）
+   气质：一份摊在桌上的个人作战档案——档案感、克制、有分量。
+   配色沿用纸墨印章（印章红强调 / 青绿正向 / 黄铜辅助）。
+   =================================================== */
+
+/* ── 顶部摘要条：我是谁 / 我要去哪 / 市场基准 ── */
+.profile-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-bottom: var(--space-4);
+}
+.profile-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 6px 14px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  max-width: 100%;
+}
+.profile-chip .chip-label {
+  color: var(--slate-400);
+  letter-spacing: .08em;
+  flex-shrink: 0;
+}
+.profile-chip .chip-value {
+  color: var(--ink);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.profile-chip.is-warn {
+  border-color: var(--stamp);
+  background: var(--accent-light);
+}
+.profile-chip.is-warn .chip-value { color: var(--stamp); }
+
+/* ── 区块一：下一步最佳动作（NBA）── */
+.nba-card {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  margin-bottom: var(--space-5);
+  padding: var(--space-5) var(--space-5);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-left: 5px solid var(--teal);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  transition: box-shadow var(--dur-fast) var(--ease-standard),
+              transform var(--dur-fast) var(--ease-standard);
+}
+.nba-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-2px);
+}
+.nba-card.urgency-high { border-left-color: var(--stamp); }
+.nba-card.urgency-normal { border-left-color: var(--teal); }
+.nba-card.urgency-low { border-left-color: var(--brass); }
+
+/* 印章标记：呼应「盖章」母题 */
+.nba-mark {
+  flex-shrink: 0;
+  font-family: var(--font-serif);
+  font-weight: 900;
+  font-size: 13px;
+  letter-spacing: .1em;
+  color: #fff;
+  background: var(--stamp);
+  padding: 8px 10px;
+  border-radius: var(--radius-sm);
+  transform: rotate(-6deg);
+  writing-mode: vertical-rl;
+  line-height: 1.1;
+}
+.nba-body { flex: 1; min-width: 0; }
+.nba-action {
+  font-family: var(--font-serif);
+  font-size: var(--text-lg);
+  font-weight: 700;
+  color: var(--ink);
+  line-height: 1.4;
+}
+.nba-reason {
+  margin-top: 4px;
+  font-size: var(--text-sm);
+  color: var(--ink-soft);
+}
+.nba-go {
+  flex-shrink: 0;
+  padding: 10px 22px;
+  border: none;
+  border-radius: var(--radius-full);
+  background: var(--stamp);
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.nba-go:hover { background: var(--indigo-700); }
+
+/* ── 区块二 + 三：雷达 / 差距（7:5 分栏）── */
+.war-grid {
+  display: grid;
+  grid-template-columns: 7fr 5fr;
+  gap: var(--space-5);
+  margin-bottom: var(--space-5);
+  align-items: start;
+}
+.war-radar, .war-gaps { margin-bottom: 0; }
+
+.war-radar-meta {
+  font-size: var(--text-xs);
+  color: var(--slate-400);
+  margin-bottom: var(--space-2);
+}
+
+/* 环比变化：提升青绿 / 退步印章红 */
+.war-delta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: var(--space-3);
+}
+.war-delta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  font-size: var(--text-xs);
+  border: 1px solid var(--line);
+  background: var(--paper);
+}
+.war-delta-name { color: var(--ink-soft); }
+.war-delta.is-up .war-delta-val { color: var(--teal); font-weight: 600; }
+.war-delta.is-down .war-delta-val { color: var(--stamp); font-weight: 600; }
+.war-delta-empty {
+  margin-top: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--slate-400);
+}
+
+/* ── 能力趋势（成长曲线）── */
+.war-curve-head {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px dashed var(--line);
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: var(--text-base);
+  color: var(--ink);
+}
+/* maintainAspectRatio:false 的图表必须有高度确定的容器，否则画布高度算不出来 */
+.war-curve-wrap {
+  height: 180px;
+  margin-top: var(--space-3);
+}
+.war-curve-empty {
+  margin-top: var(--space-3);
+  padding: 14px 16px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+  font-size: var(--text-xs);
+  color: var(--ink-soft);
+}
+.war-curve-foot {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  color: var(--slate-400);
+}
+
+/* ── 差距清单 ── */
+.gap-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--paper);
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-standard),
+              box-shadow var(--dur-fast) var(--ease-standard),
+              border-color var(--dur-fast) var(--ease-standard);
+}
+.gap-item:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-sm);
+  border-color: var(--brass);
+}
+.gap-no {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: 12px;
+  color: #fff;
+  background: var(--brass);
+}
+.gap-main { flex: 1; min-width: 0; }
+.gap-title {
+  font-weight: 600;
+  font-size: var(--text-base);
+  color: var(--ink);
+}
+.gap-desc {
+  font-size: var(--text-xs);
+  color: var(--ink-soft);
+  margin-top: 2px;
+}
+.gap-sev {
+  flex-shrink: 0;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--stamp);
+  font-weight: 600;
+}
+
+/* ── 区块四：三大能力入口 ── */
+.war-caps {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+}
+.war-cap {
+  margin-bottom: 0;
+  cursor: pointer;
+  text-align: center;
+}
+.war-cap-icon { font-size: 26px; margin-bottom: 6px; }
+.war-cap-title {
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: var(--text-md);
+  color: var(--ink);
+  margin-bottom: 4px;
+}
+.war-cap-desc {
+  font-size: var(--text-xs);
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+
+/* ── 降级提示 ── */
+.war-degraded {
+  margin-top: var(--space-4);
+  padding: 10px 16px;
+  border: 1px dashed var(--brass);
+  border-radius: var(--radius-md);
+  background: var(--amber-50);
+  font-size: var(--text-xs);
+  color: var(--amber-600);
+}
+
+/* ── 响应式 ── */
+@media (max-width: 1024px) {
+  .war-grid { grid-template-columns: 1fr; }
+  .war-caps { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 767px) {
+  .nba-card {
+    flex-wrap: wrap;
+    padding: var(--space-4);
+  }
+  .nba-mark { writing-mode: horizontal-tb; transform: rotate(-4deg); }
+  .nba-go { width: 100%; }
+  .war-caps { grid-template-columns: 1fr; }
+  .profile-chip { max-width: 100%; }
+}

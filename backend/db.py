@@ -214,11 +214,24 @@ async def init_db():
             "CREATE INDEX IF NOT EXISTS idx_positions_owner ON positions(owner_id)"
         )
 
+        # v8.1: 旅程关键动作打点。
+        # 设计取舍——**能推导的就不落库**：五步里前四步都能从档案实时算出来
+        # （有简历 / 有目标岗位 / 开过场 / 出过报告），只有"是否已生成发展路径"
+        # 无法推导，才需要这张极小的表。避免一张冗余宽表与双写一致性问题。
+        await db.execute("""
+            CREATE TABLE IF NOT EXISTS journey_marks (
+                owner_id TEXT NOT NULL,
+                step_key TEXT NOT NULL,
+                marked_at TEXT DEFAULT (datetime('now', 'localtime')),
+                PRIMARY KEY (owner_id, step_key)
+            )
+        """)
+
         # v7.0: 老库升级（给已有表加列必须走 PRAGMA+ALTER 迁移，不能用 CREATE 覆盖）
         await _ensure_owner_columns(db)
 
         await db.commit()
-        logger.info("数据库初始化完成（含 question_bank、diagnosis_feedback、weakness_profile、jd_weights_cache、users、resumes、positions 表）")
+        logger.info("数据库初始化完成（含 question_bank、diagnosis_feedback、weakness_profile、jd_weights_cache、users、resumes、positions、journey_marks 表）")
     finally:
         await db.close()
 
@@ -404,6 +417,71 @@ async def get_report(session_id: str) -> Optional[dict]:
         ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
+    finally:
+        await db.close()
+
+
+async def mark_journey_step(owner_id: str, step_key: str) -> None:
+    """打点一个旅程关键动作（幂等：同一步重复写入只更新，不报错）。
+
+    未登录（owner_id 为空）一律**不落库**——匿名进度由档案实时推导即可，
+    若用 '__anon__' 之类的哨兵键会把所有匿名用户的数据混在一起。
+    """
+    if not owner_id or not step_key:
+        return
+    db = await get_db()
+    try:
+        await db.execute(
+            "INSERT INTO journey_marks (owner_id, step_key) VALUES (?, ?) "
+            "ON CONFLICT(owner_id, step_key) DO UPDATE SET marked_at = datetime('now', 'localtime')",
+            (owner_id, step_key),
+        )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def list_journey_marks(owner_id: str | None) -> dict:
+    """读取已打点的旅程步骤 → {step_key: marked_at}。未登录返回空。"""
+    if not owner_id:
+        return {}
+    db = await get_db()
+    try:
+        async with db.execute(
+            "SELECT step_key, marked_at FROM journey_marks WHERE owner_id = ?",
+            (owner_id,),
+        ) as cur:
+            return {row[0]: row[1] for row in await cur.fetchall()}
+    finally:
+        await db.close()
+
+
+async def list_recent_reports(owner_id: str | None = None,
+                              limit: int = 10) -> list[dict]:
+    """最近 N 份报告（含时间与 JSON），按时间倒序。
+
+    为什么必须一次 JOIN 取回：能力成长曲线要的是"每场一份"的历史序列，
+    若沿用 get_report 逐份查询，N 场就是 N 次 IO（N+1 问题）。
+    `reports` 表**没有 owner 列**，归属只能靠 JOIN `sessions` 判定——
+    这与 list_sessions 一致：owner_id 为空时不过滤（匿名模式，等同 v8.0 之前）。
+    """
+    db = await get_db()
+    try:
+        if owner_id is None:
+            sql = """SELECT r.session_id, r.report_json, r.created_at
+                     FROM reports r
+                     JOIN sessions s ON s.id = r.session_id
+                     ORDER BY r.created_at DESC LIMIT ?"""
+            params = (limit,)
+        else:
+            sql = """SELECT r.session_id, r.report_json, r.created_at
+                     FROM reports r
+                     JOIN sessions s ON s.id = r.session_id
+                     WHERE s.owner_id = ?
+                     ORDER BY r.created_at DESC LIMIT ?"""
+            params = (owner_id, limit)
+        async with db.execute(sql, params) as cur:
+            return [dict(row) for row in await cur.fetchall()]
     finally:
         await db.close()
 

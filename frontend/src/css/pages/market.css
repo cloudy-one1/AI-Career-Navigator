@@ -176,11 +176,11 @@
 }
 #market-data-panel .btn:disabled { opacity: .55; cursor: not-allowed; }
 
-/* ── 感兴趣收藏药丸（对齐 .interest-btn）── */
+/* ── 感兴趣收藏药丸（v7.6.1：蓝色残留 → 纸墨青绿，跟随深色主题）── */
 #market-data-panel .interest-btn {
-  border: 1.5px solid #2563eb;
+  border: 1.5px solid var(--teal);
   background: transparent;
-  color: #2563eb;
+  color: var(--teal);
   border-radius: 999px;
   padding: 4px 12px;
   font-size: 12px;
@@ -191,15 +191,21 @@
   font-family: var(--mkt-sans);
 }
 #market-data-panel .interest-btn:hover {
-  background: #2563eb;
+  background: var(--teal);
   color: #fff;
   transform: scale(1.06);
 }
 #market-data-panel .interest-btn.interested {
-  background: #2563eb;
+  background: var(--teal);
   color: #fff;
-  border-color: #2563eb;
-  box-shadow: 0 4px 12px rgba(37, 99, 235, .3);
+  border-color: var(--teal);
+  box-shadow: 0 4px 12px rgba(var(--success-rgb), .3);
+}
+/* v7.6.1: 详情页标题行——与两侧 .btn 对齐同规格（表格里保持小药丸） */
+#market-data-panel .mkt-detail-actions .interest-btn {
+  padding: 12px 28px;
+  font-size: 14px;
+  border-radius: 26px;
 }
 
 /* ── 表格（th 用 JetBrains Mono 大写 + 墨线）── */

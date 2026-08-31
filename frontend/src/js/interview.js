@@ -9,6 +9,7 @@ import { $, $$, el, toast, DIM_NAMES, scoreClass, escHtml } from './utils.js';
 import {
   createInterviewWS, request,
   getCompanyProfiles, uploadResume, uploadJd, generateQuestions,
+  refreshProfile,   // v8.0: 出报告后让能力档案的缓存失效
 } from './api.js';
 import {
   voiceSupport, speak, stopSpeaking, isSpeaking,
@@ -1842,6 +1843,10 @@ function finishInterview(data) {
   const report = data?.report || data;
   window._latestReport = report;
   window._latestSessionId = report?.session_id || currentSessionId;
+
+  // v8.0: 本场产生了新的能力数据 —— 让档案缓存立即失效，
+  // 切回能力档案时看到的就是本场演练之后的状态（否则最多延迟 60 秒）。
+  refreshProfile();
 
   resetLiveRadar();
 }

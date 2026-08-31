@@ -1,0 +1,490 @@
+/* ===================================================
+   layout.css — 壳层布局（v7.6「旅程主线」改版）
+   ---------------------------------------------------
+   自 components.css 整体抽出壳层规则并重构为五步旅程时间线：
+   Header / 侧边旅程导航 / 主容器 / 旅程进度条 / 底部导航 / 响应式。
+   组件层（components.css）不再含壳层规则。
+   =================================================== */
+
+/* ── Header ── */
+.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 56px;
+  padding: 0 24px;
+  background: var(--color-surface);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-family: var(--font-serif);   /* v5.0 纸墨：品牌用衬线 */
+  font-weight: 900;
+  font-size: var(--text-md);
+  color: var(--color-text);
+}
+
+/* v5.0 纸墨：品牌标识改为圆形印章（对齐 job-crawler .navbar-brand::before）
+   v7.2: hover 轻微回正放大，呼应「盖章」母题 */
+.brand-logo {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--stamp);
+  display: grid;
+  place-items: center;
+  color: #fff;
+  font-family: var(--font-serif);
+  font-weight: 900;
+  transform: rotate(-6deg);
+  flex-shrink: 0;
+  transition: transform var(--dur-base) var(--ease-spring);
+}
+.brand-logo:hover { transform: rotate(0deg) scale(1.08); }
+
+.version-badge {
+  font-size: var(--text-xs);
+  color: var(--indigo-700);
+  background: var(--indigo-50);
+  border: 1px solid var(--indigo-100);
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-weight: 500;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* ── 面试状态灯 ── */
+.status-light {
+  display: none;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  padding: 5px 12px;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.status-light.visible {
+  display: inline-flex;
+}
+
+.status-light:hover {
+  border-color: var(--green-500);
+  color: var(--color-text);
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green-500);
+  animation: status-pulse 2s infinite;
+}
+
+@keyframes status-pulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.5); }
+  50% { box-shadow: 0 0 0 4px rgba(16, 185, 129, 0); }
+}
+
+/* ── App 主体（导航 + 内容）── */
+.app-body {
+  display: flex;
+  align-items: flex-start;
+}
+
+/* ── 侧边旅程导航（v7.6 五步时间线）── */
+.app-nav {
+  width: 220px;
+  flex-shrink: 0;
+  position: sticky;
+  top: 56px;
+  height: calc(100vh - 56px);
+  overflow-y: auto;
+  padding: var(--space-4) var(--space-3);
+  background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* 旅程步骤容器：节点间的竖向连接线（末步不画） */
+.journey-step {
+  position: relative;
+}
+.journey-step:not(:last-of-type)::before {
+  content: '';
+  position: absolute;
+  left: 24px;
+  top: 34px;
+  bottom: -8px;
+  width: 1.5px;
+  background: var(--slate-200);
+}
+
+/* 步骤头：印章数字节点 + 旅程阶段名 */
+.journey-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px 6px 0;
+}
+.journey-num {
+  width: 26px;
+  height: 26px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--slate-300);
+  background: var(--card);
+  color: var(--slate-400);
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: 12px;
+  line-height: 1;
+  display: grid;
+  place-items: center;
+  transition: background var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out),
+              box-shadow var(--dur-fast) var(--ease-out);
+}
+.journey-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--slate-400);
+  user-select: none;
+}
+/* 当前步骤（选中态）：印章红外环 + 标题提亮。
+   为什么不用实心填充：v8.1 起"已完成"用青绿实心表达，两者若都用填充会互相覆盖；
+   选中是"你在看哪一步"（瞬时），完成度是"你走到了哪一步"（持久），视觉上必须能叠加。 */
+.journey-step.current .journey-num {
+  box-shadow: 0 0 0 3px rgba(var(--primary-rgb), .18);
+}
+.journey-step.current .journey-title {
+  color: var(--stamp);
+}
+
+/* ── v8.1 五步完成度三态：done（青绿实心+勾）/ current（印章红描边）/ todo（灰）── */
+.journey-num-check {
+  display: none;
+  width: 14px;
+  height: 14px;
+}
+.journey-step.is-done .journey-num-text,
+.jp-step.is-done .journey-num-text { display: none; }
+.journey-step.is-done .journey-num-check,
+.jp-step.is-done .journey-num-check { display: block; }
+
+.journey-step.is-done .journey-num,
+.jp-step.is-done .jp-dot {
+  background: var(--teal);
+  border-color: var(--teal);
+  color: #fff;
+}
+.journey-step.is-current .journey-num,
+.jp-step.is-current .jp-dot {
+  border-color: var(--stamp);
+  color: var(--stamp);
+}
+.journey-step.is-todo .journey-num,
+.jp-step.is-todo .jp-dot {
+  border-color: var(--slate-300);
+  color: var(--slate-400);
+}
+/* 已完成区间：连接线转青绿实线，让"走到哪"一眼可见 */
+.journey-step.is-done:not(:last-of-type)::before {
+  background: var(--teal);
+  opacity: .55;
+}
+/* 进度条完成计数 */
+.jp-counter {
+  font-size: var(--text-xs);
+  color: var(--slate-400);
+  margin-right: 2px;
+  white-space: nowrap;
+}
+
+/* 步骤子入口：缩进让出连接线所在列 */
+.journey-sub {
+  width: auto;
+  margin-left: 34px;
+  padding: 8px 12px 8px 10px;
+  font-size: var(--text-sm);
+}
+
+/* 能力档案（v8.0 引入，v8.1 定名）：全局视图入口，与下面的旅程步骤区分开 */
+.nav-overview {
+  margin-bottom: 6px;
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--line);
+  font-weight: 600;
+  color: var(--ink);
+}
+
+/* 账户：独立入口，钉在侧栏底部 */
+.nav-account {
+  margin-top: auto;
+  border-top: 1px dashed var(--line);
+  padding-top: 12px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: none;
+  border-radius: 22px;   /* v5.0 纸墨：胶囊导航项（对齐 job-crawler 22px） */
+  background: transparent;
+  color: var(--color-text-secondary);
+  font-size: var(--text-base);
+  font-weight: 500;
+  text-align: left;
+  position: relative;
+  transition: background var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.nav-item svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.nav-item:hover {
+  background: var(--slate-100);
+  color: var(--color-text);
+}
+
+.nav-item.active {
+  background: var(--indigo-50);
+  color: var(--indigo-700);
+  font-weight: 600;
+}
+
+.nav-item.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 8px;
+  bottom: 8px;
+  width: 3px;
+  border-radius: var(--radius-full);
+  background: var(--indigo-600);
+}
+
+/* ── 主内容容器 ── */
+.container {
+  flex: 1;
+  min-width: 0;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: var(--space-6) var(--space-5);
+}
+
+/* ── 面板显隐 ── */
+.panel { display: none; }
+.panel.active { display: block; }
+
+/* ── 旅程进度条（主区顶部，v7.6）── */
+.journey-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: var(--space-5);
+  padding: 8px 18px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-full);
+  box-shadow: var(--shadow-xs);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+.journey-progress[hidden] { display: none; }
+
+.jp-step {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.jp-dot {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 1.5px solid var(--slate-300);
+  background: var(--card);
+  color: var(--slate-400);
+  font-family: var(--font-serif);
+  font-weight: 700;
+  font-size: 11px;
+  font-style: normal;
+  display: grid;
+  place-items: center;
+  transition: background var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out),
+              box-shadow var(--dur-fast) var(--ease-out);
+}
+.jp-line {
+  flex: 0 0 18px;
+  height: 1.5px;
+  background: var(--slate-200);
+}
+.jp-step.current .jp-dot {
+  background: var(--stamp);
+  border-color: var(--stamp);
+  color: #fff;
+  box-shadow: var(--shadow-glow);
+}
+.jp-step.current {
+  color: var(--stamp);
+}
+.jp-step.current .jp-label {
+  font-weight: 600;
+}
+
+/* ── 底部导航（移动端）── */
+.bottom-nav {
+  display: none;
+}
+
+/* ── 响应式 ── */
+
+/* 平板：图标栏 */
+@media (min-width: 768px) and (max-width: 1024px) {
+  .app-nav {
+    width: 64px;
+    padding: var(--space-4) var(--space-2);
+    align-items: center;
+  }
+
+  .nav-item {
+    justify-content: center;
+    padding: 10px;
+  }
+
+  .nav-item .nav-label {
+    display: none;
+  }
+
+  /* 平板只保留印章数字节点作为步骤分隔 */
+  .journey-head {
+    padding: 4px 0;
+    justify-content: center;
+  }
+  .journey-title {
+    display: none;
+  }
+  .journey-sub {
+    margin-left: 0;
+    justify-content: center;
+  }
+  .journey-step:not(:last-of-type)::before {
+    left: 20px;
+    top: 30px;
+  }
+  .nav-account {
+    padding-top: 0;
+  }
+
+  .nav-item.active::before {
+    left: auto;
+    right: -1px;
+  }
+
+  /* 平板隐藏进度条（侧栏数字节点已承担定位） */
+  .journey-progress {
+    display: none;
+  }
+
+  .container {
+    padding: var(--space-5) var(--space-4);
+  }
+}
+
+/* 移动端：底部 Tab 导航，隐藏侧边栏 */
+@media (max-width: 767px) {
+  .app-nav {
+    display: none;
+  }
+
+  .app-body {
+    display: block;
+  }
+
+  /* 移动端隐藏进度条（底部导航承担定位） */
+  .journey-progress {
+    display: none;
+  }
+
+  .container {
+    padding: var(--space-5) var(--space-4);
+  }
+
+  body {
+    padding-bottom: calc(56px + env(safe-area-inset-bottom, 0px));
+  }
+
+  .bottom-nav {
+    display: flex;
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    height: calc(56px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    background: var(--color-surface);
+    border-top: 1px solid var(--color-border);
+    /* v8.0: 入口增至 11 个，窄屏一律 flex:1 会把每项压到 34px（点不准），
+       改为横向滑动——入口一个不少，但每项保底 60px 可点区域。 */
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+  }
+  .bottom-nav::-webkit-scrollbar { display: none; }
+
+  .bottom-nav .nav-item {
+    flex: 0 0 auto;
+    min-width: 60px;
+    flex-direction: column;
+    gap: 2px;
+    justify-content: center;
+    text-align: center;
+    font-size: var(--text-xs);
+    padding: 6px 4px;
+  }
+
+  .bottom-nav .nav-item svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .bottom-nav .nav-item.active::before {
+    display: none;
+  }
+
+  .bottom-nav .nav-item.active {
+    color: var(--indigo-700);
+  }
+}
