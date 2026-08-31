@@ -187,7 +187,9 @@ class TestCareerPlanApi:
             }],
             "summary": "先补技能再跃迁", "risk_level": "低",
         }
-        with patch("backend.main.career_planner.plan_career",
+        # v7.2.2: 路由拆分后 patch 源模块本身（不再经由 backend.main 间接寻址，
+        # 对路由层任何未来重构都稳健）
+        with patch("backend.career_planner.plan_career",
                    new=AsyncMock(return_value=fake_response)):
             resp = client.post("/api/career-plan", json={
                 "resume_text": "3年Python后端开发经验",
