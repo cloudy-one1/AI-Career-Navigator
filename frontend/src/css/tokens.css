@@ -3,7 +3,8 @@
    视觉基线：docs/job-crawler-UI设计系统规格.md
    ---------------------------------------------------
    改造策略：**变量名保持不变，仅重映射色值**。
-   - 全站 CSS（style.css / pages/*.css / components.css）
+   - 全站 CSS（components.css / pages/*.css；v7.2.2 起原 style.css
+     已并入 components.css）
      引用的 --card / --primary / --indigo-* / --slate-* 等
      全部自动切换为纸墨色，无需逐行改名。
    - 深色由「跟随系统 prefers-color-scheme」改为
@@ -143,7 +144,7 @@
 }
 
 /* ===================================================
-   旧变量别名（迁移期兼容 style.css / pages CSS 既有组件）
+   旧变量别名（迁移期兼容 components.css / pages CSS 既有组件）
    变量名保持原样，值全部指向纸墨 Token
    =================================================== */
 :root {
@@ -256,7 +257,7 @@ html.theme-dark {
   --color-info:#5FA896;
   --color-accent:#C9A961;
 
-  /* ── 旧别名同步（style.css 大量引用，必须覆盖）── */
+  /* ── 旧别名同步（components.css 基础组件层大量引用，必须覆盖）── */
   --primary:#E06A52;
   --primary-light:#EC8169;
   --primary-dark:#FF8A75;
