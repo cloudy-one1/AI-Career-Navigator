@@ -1,5 +1,5 @@
 # ============================================================
-# AI模拟面试官 v2.6 — Docker Compose 标准化部署
+# AI求职陪跑 v7.3 — Docker Compose 标准化部署
 # 
 # 使用方式:
 #   1. cp .env.example .env   # 编辑 .env，填入 API KEY

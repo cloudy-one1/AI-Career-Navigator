@@ -1,5 +1,5 @@
 """
-[AI模拟面试官][B档内嵌] job-crawler 实时采集子包。
+[AI求职陪跑][B档内嵌] job-crawler 实时采集子包。
 
 从开源项目 job-crawler (https://github.com/cloudy-one1/job-crawler) 内嵌整合，
 提供 51job 实时采集能力：

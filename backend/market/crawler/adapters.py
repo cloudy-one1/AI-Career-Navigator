@@ -1,5 +1,5 @@
 """
-[AI模拟面试官] 采集原始数据 → 标准岗位 dict 适配层。
+[AI求职陪跑] 采集原始数据 → 标准岗位 dict 适配层。
 
 字段对齐 ``backend.market.store.upsert_jobs`` 的输入契约
 （与 ``importer._map_data_row`` 的输出结构一致，便于后续统一消费）。
