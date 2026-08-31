@@ -1,8 +1,8 @@
 
-<h1 align="center">🤖 AI 模拟面试官与职业规划</h1>
+<h1 align="center">🤖 AI 求职陪跑平台</h1>
 
 <p align="center">
-  <strong>v7.2 — 动效体系（View Transitions / 骨架屏 / 盖章仪式感）+ 深色「墨夜纸墨」重构 + 市场页样式作用域修复</strong>
+  <strong>v7.3 — 产品定位延伸：全流程求职陪跑平台（六步旅程叙事 + 导航旅程分组 + 品牌统一）</strong>
 </p>
 
 <p align="center">
@@ -14,19 +14,21 @@
 </p>
 
 <p align="center">
-  基于大语言模型的多轮模拟面试系统<br>
-  支持简历解析、双 Agent 诊断、流式反馈、语音交互、题库管理、职业路径规划
+  从定方向到拿 Offer 的全流程 AI 求职陪跑<br>
+  市场洞察 · 简历岗位资产 · AI 多轮面试演练 · 五维诊断报告 · 长期记忆 · 职业规划 · 招聘者对接
 </p>
 
 ---
 
 ## 📖 项目简介
 
-AI 模拟面试官是一个面向求职者的智能面试练习平台。上传简历后，AI 会模拟大厂面试流程（6 阶段拟真模式 / 5 轮次传统模式），围绕 **STAR 完整性、量化程度、逻辑连贯性、岗位相关性、专业深度** 五个维度进行实时诊断，提供改写建议和综合评分报告。
+AI 求职陪跑平台是一个面向求职者的全流程 AI 陪跑系统，按六步主线旅程组织（v7.3 定位延伸，功能零增删）：
+
+**定方向**（市场数据 + 岗位库）→ **备弹药**（简历库）→ **演练**（AI 多轮模拟面试：6 阶段拟真模式 / 5 轮次传统模式）→ **诊弱点**（围绕 **STAR 完整性、量化程度、逻辑连贯性、岗位相关性、专业深度** 五个维度实时诊断，生成改写建议与综合评分报告 + 长期记忆图谱）→ **定规划**（时间轴职业路径）→ **连机会**（报告分享给招聘者只读查看）。
 
 ### 核心亮点
 
-- **动效体系与页面仪式感（v7.2）**：新增 `motion.css` 动效基建层——面板切换优先走 **View Transitions API**（降级 fade+slide）、同屏子元素 stagger 错峰入场、骨架屏（纸纹 shimmer）替代 spinner、登录成功**印章盖章**反馈、报告评分环描边绘制 + 分数滚动、表单错误 shake、按钮按压墨点涟漪；全部动效挂 `prefers-reduced-motion` 降级（评审全文见 `docs/UI评审_v7.2_动效与高级感升级.md`）
+- **产品定位延伸为「全流程求职陪跑平台」（v7.3）**：15 个功能域全部归入六步旅程、零增删——侧边栏按旅程重组为 备战 / 演练 / 洞察 / 连接 + 账户（桌面与移动端同步重排，默认落地页仍为模拟面试），品牌统一为「AI 求职陪跑」（主界面 / 分享页 / 导出页 / FastAPI title）；决策记录见 CHARTER **DC-07**，方案全文见 `docs/产品定位延伸_全流程求职陪跑.md`- **动效体系与页面仪式感（v7.2）**：新增 `motion.css` 动效基建层——面板切换优先走 **View Transitions API**（降级 fade+slide）、同屏子元素 stagger 错峰入场、骨架屏（纸纹 shimmer）替代 spinner、登录成功**印章盖章**反馈、报告评分环描边绘制 + 分数滚动、表单错误 shake、按钮按压墨点涟漪；全部动效挂 `prefers-reduced-motion` 降级（评审全文见 `docs/UI评审_v7.2_动效与高级感升级.md`）
 - **深色主题重构为「墨夜纸墨」（v7.2）**：推翻 v7.1 赛博蓝紫（青/粉/金/紫四色切换器一并移除）——深色与浅色同源：炭墨纸底 + 朱砂 `#E06A52` / 黄铜 `#C9A961` / 墨青 `#5FA896`，同一枚印章在夜里的样子；旧变量名保留为兼容别名自动跟随
 - **侧边栏信息架构分组（v7.2）**：11 个入口平铺 → 面试域 / 资产域 / 洞察域 / 招聘端 + 账户四组分区，组标题随登录身份联动显隐
 - **修复市场页设计系统从未生效（v7.2）**：v7.1 的 `market.css` 全部样式作用域误写为 `#market-panel`（真实 id 为 `#market-data-panel`），约 600 条规则自引入起即为死规则——市场页其实一直以「无设计系统」状态渲染；修正后纸墨印章 1:1 复刻才真正上线，深色残留的赛博蓝紫硬编码一并清理
@@ -236,7 +238,10 @@ AI-simulated-interviewer/
 ├── .env.example                  # 环境变量模板
 │
 ├── backend/                      # Python 后端
-│   ├── main.py                   # FastAPI 入口 + HTTP/WebSocket 路由 + 频率限制
+│   ├── main.py                   # FastAPI 应用装配（中间件/限流/startup/静态挂载）
+│   ├── routers/                  # [v7.2.2 NEW] HTTP/WS 路由域拆分（system/auth/voice/sessions/
+│   │                             #   assets/reports/share/question_bank/diagnostics/market/
+│   │                             #   analytics/interview_ws + state 单例 + deps 依赖）
 │   ├── config.py                 # 配置 + 面试官风格 + 轮次定义
 │   ├── logger.py                 # 集中日志配置（RotatingFileHandler）
 │   ├── llm_client.py             # 多 AI 后端客户端（含流式）
@@ -306,7 +311,7 @@ AI-simulated-interviewer/
 │           ├── theme.css         # [v7.1 NEW] 主题切换相关样式（html.theme-dark；v7.2 重写为「墨夜纸墨」覆盖层）
 │           ├── motion.css        # [v7.2 NEW] 动效基建层（面板过渡/stagger/骨架屏/盖章/countup/shake/降级）
 │           ├── base.css          # reset + 排版
-│           ├── components.css    # 框架组件
+│           ├── components.css    # 组件层（v7.2.2 并入原 style.css，332 条规则合流去重）
 │           └── pages/            # 领域样式（含 market.css 纸墨印章 / memory.css 记忆图谱）
 │
 ├── tests/                        # 自动化测试（约 1000 用例 + 1 live_llm 抽检，本机非 LLM 类全绿）

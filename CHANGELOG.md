@@ -1,6 +1,51 @@
 # 变更日志（CHANGELOG）
 
-> 记录 v2 → v7.2 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+> 记录 v2 → v7.3 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+
+---
+
+## v7.3.0 产品定位延伸：全流程求职陪跑平台（2026-08-31）
+
+> 起因是项目复盘中的一个直感："功能是不是太多且太独立了，给人一种很混乱的感觉"。全量盘点结论：「功能太多」成立、「各自为政」不成立（api.js/tokens.css/身份联动等共享基建与跨功能数据链路已经很统一）——混乱来自"产品边界失控的叙事"：一个月七期竞品借鉴堆出 15 个功能域，产品名仍叫"模拟面试官"。本轮范围纪律：**功能零增删、后端业务逻辑零改动**（main.py 路由拆分与 CSS 双轨合流已由同日的 v7.2.2 工程整改完成），只动叙事、导航与品牌。
+
+### 1. 定位与决策
+
+- 产品定位向上延伸：「AI 模拟面试官与职业规划」→「**AI 求职陪跑平台**」，一句话定位"从定方向到拿 Offer 的全流程 AI 求职陪跑"；原命题的"诊断 + 规划"两条产品线成为六步旅程中的两步（诊弱点 / 定规划），命题不废、向上生长。方案全文见 `docs/产品定位延伸_全流程求职陪跑.md`，决策记录见 CHARTER **DC-07**（放弃的替代方案：收缩定位砍孤岛功能 / 维持原定位仅做文档修补）。
+
+### 2. 信息架构（导航重组）
+
+- 侧边栏域分组（面试域/资产域/洞察域/招聘端）→ 旅程分组：**备战**（简历库/岗位库/市场数据）/ **演练**（模拟面试/题库/历史记录）/ **洞察**（综合报告/长期记忆/职业规划）/ **连接**（收到的报告）+ 账户；成员按旅程顺序重排，默认落地面板仍为模拟面试，分组随身份显隐机制（`data-audience`）不变。
+- 移动端底部导航按同一旅程顺序重排（简历→岗位→市场→面试→题库→历史→报告→记忆→规划→收件箱→账户）。
+
+### 3. 品牌文案统一
+
+- `index.html` 标题与 Header 品牌、`share.html` 品牌行与免责声明、报告导出页品牌（`backend/routers/reports.py`）、FastAPI title（"AI 面试官 v3.1" 自 v3.1 起失更，一并修正为 "AI 求职陪跑平台"，version 7.3.0）与启动日志、题库模板头（`questionBank.js`）、采集子包 docstring、`docker-compose.yml` 注释、`frontend/package.json` description——全部统一为「AI 求职陪跑」；版本徽标 v7.2 → v7.3。
+- 主文档同步：CHARTER（产品命题改写 + DC-07）、README（标题/标语/简介/亮点置顶条目）、CODEBUDDY（定位/当前版本/结构树补齐 6 个缺失前端文件与 routers/）。
+
+---
+
+## v7.2.2 工程整改：main.py 路由域拆分 + CSS 双轨合流 + 临时文件治本（2026-08-31）
+
+> 起因是外部评审点名的三笔结构债：66 条路由挤在 main.py 单体（2109 行）、style.css 与 components.css 双轨并存 + dark.css 自述废弃却仍在引入链、临时脚本反复误提交（git 历史两次专门清理）。本轮全部为**零行为变更**的结构整改——路由表逐条对账 + 全量测试回归验证。
+
+### 1. 后端：main.py 拆分为装配层 + 路由域包
+
+- 新增 `backend/routers/`（L4，与 main 同层登记进 .importlinter）：`state.py`（全局单例收敛：llm_client / diagnosis_engine / active_sessions / 限流器——switch_provider 的重赋值改走属性赋值，消除跨模块 import 旧实例的漂移风险）+ `deps.py`（认证依赖与归属断言的组合点）+ 11 个域路由（system / auth / voice / sessions / assets / reports / share / question_bank / diagnostics / market / analytics）+ `interview_ws.py`（WS 主循环整体迁出）。
+- main.py 从 2109 行减至约 150 行纯装配：中间件、startup、include_router（保持原域顺序）、静态挂载。
+- **零行为变更验证**：拆分前后路由表逐条 diff（65 条全对上，新增 4 条为 FastAPI 自带 /docs 族）；`run.py lint` 通过；全量 pytest 回归唯一失败是 test_career_planner 里 `patch("backend.main.career_planner...")` 的间接寻址——改为直接 patch 源模块 `backend.career_planner.plan_career`（对路由层未来重构更稳健）。
+- 文档同步：CHARTER 约束 2 的 L4 行、README 项目结构。
+
+### 2. 前端：CSS 双轨合流（数据驱动，零层叠位移）
+
+- **实测推翻"style.css 是死遗留"的直觉**：320 条规则中 299 条在用——它是现役基础组件层，真正的债是双轨边界不明 + 21 条死规则 + dark.css 空文件。
+- **合并采用零层叠位移路径**：style.css 全文并入 components.css，且 components 的 `<link>` 从页面样式之前**移到之后**（承接原 style.css 的加载位次）——逐文件验证选择器重叠：components 原内容与 pages/*.css 零真实重叠、style 与 auth 零真实重叠、与 motion 仅 2 处非冲突属性互补，故合流后所有层叠胜负与拆分前逐位等价。
+- 剔除 21 条死选择器（17 个规则块，删除前用全量递归词法扫描二次校验，有出入即中止）；dark.css（659 字节纯注释自述废弃）摘链删除。
+- tokens.css / market.css 中 4 处架构注释同步；dist 已重建。
+
+### 3. 临时文件治本（针对"反复发作"）
+
+- .gitignore 临时段从一次性清单通用化：根目录 `_` 前缀文件/目录一律不入库（`/_*`）。
+- 新增 `tests/test_repo_hygiene.py`（3 条断言：根目录无 `_` 前缀跟踪文件 / 无散落 test_*.py / 无 .log/.db 运行产物）钉进 CI 全量测试——今后误提交在 push 阶段红灯，不再依赖事后人肉发现。
 
 ---
 

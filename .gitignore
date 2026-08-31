@@ -24,10 +24,11 @@ node_modules/
 frontend/dist/
 
 # === 临时测试 / 调试文件 ===
-/_interview_result.json
-/_test_run.py
-/interview_error.txt
-/interview_output.txt
+# 约定（v7.2.2 通用化）：仓库根目录 `_` 前缀的文件/目录一律视为临时产物，不入库。
+# 历史教训：_commit.py、_tmp_convert/ 曾被误提交（git 历史两次专门清理）——
+# 这是反复发作的老毛病，除本规则外配套 tests/test_repo_hygiene.py 在 CI 断言兜底。
+/_*
+/interview_*.txt
 /test_output.txt
 /docs/AI对话存档/
 .import_linter_cache/
