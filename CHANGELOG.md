@@ -6,7 +6,7 @@
 
 ## v7.3.0 产品定位延伸：全流程求职陪跑平台（2026-08-31）
 
-> 起因是项目复盘中的一个直感："功能是不是太多且太独立了，给人一种很混乱的感觉"。全量盘点结论：「功能太多」成立、「各自为政」不成立（api.js/tokens.css/身份联动等共享基建与跨功能数据链路已经很统一）——混乱来自"产品边界失控的叙事"：一个月七期竞品借鉴堆出 15 个功能域，产品名仍叫"模拟面试官"。本轮范围纪律：**功能零增删、后端业务逻辑零改动**（main.py 路由拆分与 CSS 双轨合流已由同日的 v7.2.2 工程整改完成），只动叙事、导航与品牌。
+> 起因是项目复盘中的一个直感："功能是不是太多且太独立了，给人一种很混乱的感觉"。全量盘点结论：「功能太多」成立、「各自为政」不成立（api.js/tokens.css/身份联动等共享基建与跨功能数据链路已经很统一）——混乱来自"产品边界失控的叙事"：一个月七期专项迭代堆出 15 个功能域，产品名仍叫"模拟面试官"。本轮范围纪律：**功能零增删、后端业务逻辑零改动**（main.py 路由拆分与 CSS 双轨合流已由同日的 v7.2.2 工程整改完成），只动叙事、导航与品牌。
 
 ### 1. 定位与决策
 
@@ -21,6 +21,36 @@
 
 - `index.html` 标题与 Header 品牌、`share.html` 品牌行与免责声明、报告导出页品牌（`backend/routers/reports.py`）、FastAPI title（"AI 面试官 v3.1" 自 v3.1 起失更，一并修正为 "AI 求职陪跑平台"，version 7.3.0）与启动日志、题库模板头（`questionBank.js`）、采集子包 docstring、`docker-compose.yml` 注释、`frontend/package.json` description——全部统一为「AI 求职陪跑」；版本徽标 v7.2 → v7.3。
 - 主文档同步：CHARTER（产品命题改写 + DC-07）、README（标题/标语/简介/亮点置顶条目）、CODEBUDDY（定位/当前版本/结构树补齐 6 个缺失前端文件与 routers/）。
+
+---
+
+## v7.3.1 品牌尾巴收尾 + 面试主循环测试补位（2026-08-31）
+
+> 起因是收尾清单里的三类遗留：版本号在横幅 / 健康检查 / FastAPI title 三处漂移；v7.2.2 路由拆分后 `interview_ws.py`（面试主循环）成为唯一没有测试直接钉住的核心路径；构建期两条 import 噪音。本轮范围：**功能零增删**，只做品牌/版本统一、测试补位，以及过程中暴露的一处真实缺陷修复。
+
+### 1. 品牌与版本号统一（P0）
+
+- 新增 L1 单点版本源 `config.APP_VERSION`，`main.py`（FastAPI title/version + 启动日志）、`routers/system.py` 的 `/api/health`、`run.py` 启动横幅三处统一引用。此前横幅写死「AI面试官 v3.1」、health 硬编码返回 `"3.1"`，与实际版本脱节——这正是"品牌统一"声称完成后仍留下的一条尾巴。
+- `main.py` 启动生命周期由已弃用的 `@app.on_event("startup")` 迁移到 `lifespan`。
+- `run.py` 横幅与 `frontend/src/css/components.css` 残留的 v2 时代旧名注释统一为「AI 求职陪跑」。
+- README「参考答案背诵面板未渲染」局限描述改写：如实说明 `detailed_qa` 当前只进 Markdown 复盘导出，报告 Tab 渲染的是 `qa_breakdown`（含「✍️ 含改写示范」徽标但不展示答案正文），避免把两者混为一谈。
+
+### 2. 修复：流程状态「显式化」从未真正落库（补测试时暴露的真实缺陷）
+
+- **问题本质**：`interview_ws._mark_flow()` 是 `async`，但 5 处调用（WAITING_ANSWER / GENERATING_FOLLOW_UP / DECIDING_NEXT / ADVANCING_ROUND / FINISHED）**全部漏写 `await`**——只创建协程对象后丢弃。后果是 v7.0 引以为傲的「流程状态显式化」从未写入过一行库数据，`set_flow_state()` / `update_session_flow()` 一次都没执行；运行时仅表现为 `RuntimeWarning: coroutine was never awaited`，不中断、不报错，完全静默。
+- **修复**：5 处补 `await`。这是本轮唯一的行为变更，也是"补测试"直接换来的收益——桩对象缺属性才把它逼出来。
+- **教训（测试基建）**：`TestClient` 的 `receive_json()` 会无限阻塞，桩一旦发生契约漂移，测试表现为"跑很久"而非失败，极难定位。已给读帧加 10s 超时（`_recv_with_timeout`），把永久挂起转成带排查线索的快速失败；同一文件耗时从"挂起"降到 4.9s。
+
+### 3. 测试补位（P1）
+
+- 新增 `tests/test_interview_ws.py`（6 例）：真实 FastAPI WS 管线 + 最小 `FakeSession` 桩（只实现 WS 层实际触碰的接口，本身就是 WS 层对会话层的隐性契约清单）。钉住 ping/pong、switch_mode（合法切换 / 非法模式报错但不断连）、结束口令（跳过诊断、照常生成完整报告）、断连（落部分报告 + `finally` 清理 `active_sessions`），外加握手契约（4001 未授权 / 4000 会话不存在）。`interview_ws.py` 覆盖率 **8% → 61%**。
+- 新增 `tests/test_market_store.py`（5 例）：upsert 幂等（重复采集不增行）、收藏不覆盖（钉住 v7.1「重新采集不清空感兴趣」的落库承诺）、收藏只翻标记且不改写数据时间戳、空库友好空态、过滤与分页。TTL 清理不在此处——那是采集任务表的职责，已由 `test_market_crawler_tasks.py` 覆盖。
+- 全量套件 **1028 passed / 1 skipped**（原 1017）。
+
+### 4. 工程噪音清理（P2）
+
+- 消除 Vite 构建的两条 dynamic/static import 警告：`api.js` 对 `auth.js`（`auth.js` 只依赖 `utils.js`，不存在原注释所担心的循环依赖）、`interview.js` 对 `api.js`（顶部已静态引用，却又在 4 处 `await import()`）的动态导入全部收敛为静态导入——两者都已无法拆出独立 chunk，动态化零收益。构建恢复干净输出。
+- `CHARTER.md` 决策记录卡按 DC-01 ~ DC-07 重排（此前 DC-06 误排在 DC-05 之前）。
 
 ---
 
@@ -117,13 +147,13 @@
 
 ---
 
-## v7.1.0 全站 UI 统一为 job-crawler「纸墨印章」风格（2026-08-30）
+## v7.1.0 全站 UI 统一为「纸墨印章」风格（2026-08-30）
 
-> 起因是市场数据 Tab 的前端与开源项目 job-crawler 不一致；澄清后范围扩大为**全站 11 个 Tab 统一视觉语言**——功能布局与 DOM 结构保留，只重做视觉。因 job-crawler 仅有「采集 / 列表 / 详情」三类页面，其余 Tab 无模板可抄，故以其**设计 Token + 组件规范**重新拼装，而非字面复制结构。
+> 起因是市场数据 Tab 的前端视觉与站内「纸墨印章」设计规格不一致；澄清后范围扩大为**全站 11 个 Tab 统一视觉语言**——功能布局与 DOM 结构保留，只重做视觉。因规格文档源自「采集 / 列表 / 详情」三类页面，其余 8 个 Tab 无现成模板，故以其**设计 Token + 组件规范**重新拼装，而非字面复制结构。
 
 ### 1. 设计基线（可复用资产）
 
-- 新增 `docs/job-crawler-UI设计系统规格.md`：从 job-crawler 源码（`base.html` / `theme-dark.css` / `theme-toggle.js` / `input.html` / `data.html` / `job_detail.html` / `collect.html`）一次性抽取的权威规格，含 12 个米色 Token、字体三件套、组件完整 CSS（navbar / card + `data-no` 角标 / stamp / eyebrow / btn 族 / interest-btn / form / table / alert / data-row / tag-chip …）、深色覆盖表、语义色四色值与页面骨架。**后续改造以此文档为唯一基线**，避免反复读源文件导致细节遗漏。
+- 新增 `docs/job-crawler-UI设计系统规格.md`：从既有页面源码（`base.html` / `theme-dark.css` / `theme-toggle.js` / `input.html` / `data.html` / `job_detail.html` / `collect.html`）一次性抽取的权威规格，含 12 个米色 Token、字体三件套、组件完整 CSS（navbar / card + `data-no` 角标 / stamp / eyebrow / btn 族 / interest-btn / form / table / alert / data-row / tag-chip …）、深色覆盖表、语义色四色值与页面骨架。**后续改造以此文档为唯一基线**，避免反复读源文件导致细节遗漏。
 
 ### 2. 改造策略：Token 重映射（而非逐行重写）
 
@@ -131,7 +161,7 @@
 - 新增 `--primary-rgb` / `--success-rgb` / `--warning-rgb` / `--danger-rgb` / `--ink-rgb` 三元组：把 `style.css` 中约 50 处字面 `rgba(79,70,229,α)` 与 hex 字面色改为 `rgba(var(--primary-rgb), α)`，**双主题自动跟随**。
 - 字体：`--font-family` 改 Noto Sans SC，新增 `--font-serif`（Noto Serif SC，标题/品牌）、`--font-mono`（JetBrains Mono）；`index.html` 引入 Google Fonts 三件套。
 
-### 3. 双主题机制（对齐 job-crawler）
+### 3. 双主题机制（对齐设计规格）
 
 - 新增 `themeToggle.js` + `theme.css`：切换改为**手动切换 `html.theme-dark`**（原为跟随系统 `prefers-color-scheme`），localStorage 记忆、内联防 FOUC 脚本、派发 `theme:changed` 事件；深色下挂载**青/粉/金/紫语义色切换器**（写 `--accent-from/--accent-to`，sessionStorage 记忆）。
 - 废弃 `pages/dark.css`：其 Indigo 时代的硬编码深色修正会覆盖变量驱动的正确取值、造成深浅割裂，已清空并注明原委。
@@ -144,18 +174,18 @@
 - **JS 内联与图表配色**：`report.js`（21 处）、`careerPlan.js`、`liveRadar.js`、`interview.js`、`questionBank.js`、`marketData.js` 中，内联 style 颜色改 `var()`（自动跟随主题），Chart.js canvas 颜色改纸墨调色板（canvas 不解析 `var()`，必须给具体值）。
 - `marketData.js` 移除自研主题逻辑（`applyTheme` / `applyAccent` / `toggleTheme` 与本地切换按钮），市场数据 Tab 主题统一由全局切换器控制，消除"Tab 内另有一套主题"的割裂。
 
-### 5. 市场数据 Tab：DOM 级 1:1 复刻（对齐规格文档）
+### 5. 市场数据 Tab：DOM 结构与交互对齐规格文档
 
-- **采集视图**（对齐 `input.html`）：Hero（`eyebrow「招聘市场数据分析」` + h1「招聘信息实时数据分析系统」+ subtitle）→ `card[data-no="查询与采集"]`；表单字段与文案逐项照搬（岗位名称 / 排序方式 / 实时采集页数 1~5）。城市选择改为 job-crawler 的**省份 select → 城市 select →「＋ 添加城市」→ 已选 `tag-chip`** 级联（原为"选省份后点城市 chip"），交互与文案一致。
-- **岗位列表视图**（对齐 `data.html`）：`eyebrow「数据展示」` + h2「招聘数据档案」；`card[data-no="共 N 条记录"]`（角标随筛选实时更新）+ 表格列照搬（职位 / 公司 / 城市 / 最低薪资(千元) / 最高薪资(千元) / 发布时间 / 感兴趣）；`.data-row` **整行悬停上浮 `translateY(-3px) scale(1.02)` 并变蓝、点击整行跳详情**（复刻）；翻页改为「← 上一页 / 第 X / Y 页 / 下一页 →」。
+- **采集视图**（对齐 `input.html`）：Hero（`eyebrow「招聘市场数据分析」` + h1「招聘信息实时数据分析系统」+ subtitle）→ `card[data-no="查询与采集"]`；表单字段与文案沿用（岗位名称 / 排序方式 / 实时采集页数 1~5）。城市选择改为**省份 select → 城市 select →「＋ 添加城市」→ 已选 `tag-chip`** 级联（原为"选省份后点城市 chip"），交互与文案一致。
+- **岗位列表视图**（对齐 `data.html`）：`eyebrow「数据展示」` + h2「招聘数据档案」；`card[data-no="共 N 条记录"]`（角标随筛选实时更新）+ 表格列沿用（职位 / 公司 / 城市 / 最低薪资(千元) / 最高薪资(千元) / 发布时间 / 感兴趣）；`.data-row` **整行悬停上浮 `translateY(-3px) scale(1.02)` 并变蓝、点击整行跳详情**；翻页改为「← 上一页 / 第 X / Y 页 / 下一页 →」。
 - **岗位详情视图**（对齐 `job_detail.html`）：`eyebrow「岗位详情」` + h2「职位档案详情」→ 卡片左侧 4px 青绿描边 + 标题行（h3 职位 / 🏢公司 · 📍地区）+ 信息网格（薪资范围用等宽青绿大字 / 学历要求 / 经验要求 / 发布时间）+ 职位描述（限高 400px 可滚动）。
-- **增强并存**（未因 1:1 而丢失）：行首多选框 → 跨岗位对比（勾选后行描边，点选框 `stopPropagation` 不触发整行跳转）；统计概览卡（岗位总量 / 平均薪资 / 热门技能 TOP5 / 样本城市）；学历 + 薪资区间筛选（job-crawler 无，作为第二行扩展）；采集进度轮询条；详情页 Gap 分析卡。
-- **「感兴趣」前端化**：job-crawler 走后端 `/toggle_interest`(CSRF)，本项目无此接口——复刻 `.interest-btn` 视觉与「感兴趣 ⇄ 已收藏」交互，状态存 `localStorage['_mkt_interested']`，零后端改动。
-- **一处必要取舍**：job-crawler 文案为「选择城市（可选，不选则全国范围搜索）」，但本项目后端 `POST /api/market/crawl` 的 `cities` 是 `Form(..., min_length=1)`（强制非空），故文案改为「选择城市（可多选）」并保留必选校验，避免误导用户触发 400。
+- **增强并存**（未因 1:1 而丢失）：行首多选框 → 跨岗位对比（勾选后行描边，点选框 `stopPropagation` 不触发整行跳转）；统计概览卡（岗位总量 / 平均薪资 / 热门技能 TOP5 / 样本城市）；学历 + 薪资区间筛选（原规格无，作为第二行扩展）；采集进度轮询条；详情页 Gap 分析卡。
+- **「感兴趣」前端化**：原页面走后端 `/toggle_interest`(CSRF)，本项目无此接口——沿用 `.interest-btn` 视觉与「感兴趣 ⇄ 已收藏」交互，状态存 `localStorage['_mkt_interested']`，零后端改动。
+- **一处必要取舍**：原页面文案为「选择城市（可选，不选则全国范围搜索）」，但本项目后端 `POST /api/market/crawl` 的 `cities` 是 `Form(..., min_length=1)`（强制非空），故文案改为「选择城市（可多选）」并保留必选校验，避免误导用户触发 400。
 
 ### 6. 后端配套改动（上一节两处取舍的收口）
 
-- **放开「不选城市 = 全国搜索」**：`scrape_jobs` 底层本就支持（空列表 fallback 到 `("全国","000000")`），API 层的强制非空是后来加的保守限制。改 `main.py` 的 `cities` 为 `Optional[List[str]] = Form(None)` 并在函数内归一化，改 `tasks.validate` 去掉 `not cities` 判断（保留 >5 上限）。`api.js` 用 `cities.forEach` 传参，空数组时自然不传该字段，无需改动。前端文案恢复为 job-crawler 原文「选择城市（可选，不选则全国范围搜索）」，未选城市时提示"将按全国范围采集"。
+- **放开「不选城市 = 全国搜索」**：`scrape_jobs` 底层本就支持（空列表 fallback 到 `("全国","000000")`），API 层的强制非空是后来加的保守限制。改 `main.py` 的 `cities` 为 `Optional[List[str]] = Form(None)` 并在函数内归一化，改 `tasks.validate` 去掉 `not cities` 判断（保留 >5 上限）。`api.js` 用 `cities.forEach` 传参，空数组时自然不传该字段，无需改动。前端文案恢复为「选择城市（可选，不选则全国范围搜索）」，未选城市时提示"将按全国范围采集"。
 - **收藏持久化到 market.db**：新增 `job_postings.is_interested` 字段（含基于 `PRAGMA table_info` 的幂等迁移——“`CREATE TABLE IF NOT EXISTS` 改不动已存在的库”）+ `store.toggle_interest()` + `POST /api/market/jobs/{job_id}/interest`。采用与题库 `question_bank.is_favorited` **完全相同的模式：全局标记、不区分用户**（market.db 为单机单用户库，且项目支持免登录使用）。刻意不更新 `updated_at` —— 收藏是用户态，不应改写数据时间戳。前端 `isInterested(job)` 直接读接口返回的 `job.is_interested`，不再用 localStorage。
 - **不覆盖收藏的保证**：`upsert_jobs` 的 INSERT 与 `ON CONFLICT DO UPDATE SET` 均不含 `is_interested`，故重新采集不会清空已有收藏。
 - **测试**：全量 **982 passed + 1 skipped**，与改造前基线一致，零回归（`TestValidate` 原本未断言"空 cities 必须报错"，故放开不受影响）。
@@ -185,7 +215,7 @@
 
 **死代码清理（market.css 1877 → 1280 行，−597 行）**
 
-改造时保留了旧的自研 `--mkt-*` 体系，其中一批类在 DOM 复刻后已无人引用。逐个在 `frontend/src` 全目录验证"仅存在于 market.css"后删除：
+改造时保留了旧的自研 `--mkt-*` 体系，其中一批类在 DOM 改造后已无人引用。逐个在 `frontend/src` 全目录验证"仅存在于 market.css"后删除：
 
 - 采集视图旧体系：`.mkt-banner`（含 `::after` 水印）/ `.mkt-count-badge` / `.mkt-form-grid` / `.mkt-field` / `.mkt-input` / `.mkt-select` / `.mkt-city-row` / `.mkt-city-chips` / `.mkt-chip` / `@keyframes mkt-pop`
 - 列表旧体系：`.mkt-table-wrap` / `.mkt-table` 全家桶 / `.mkt-cell-*` / `.mkt-salary` / `.mkt-date` / `.mkt-link-51` / `.mkt-row-check` / `.mkt-checkbox` / `.mkt-pagination` / `.mkt-page-btn`
@@ -278,7 +308,7 @@
 
 ## v7.0 双端平台化：认证与资源归属 + 三实体 + 报告分享 + 流程状态显式化（2026-08-29）
 
-> 本轮把项目定位从"单端课程项目"转向"工程化平台"（DC-06）：求职者自主练习的产品命题**不变**，在外围加一层"身份与归属"，让同一套诊断内核可以服务"招聘者只读查看报告"这第二端。诊断链路（五维/双 Agent/追问）零改动。设计依据来自对 Gua-AI-interview 的深度研读（`docs/Gua-AI-interview-深度研读.md`）。
+> 本轮把项目定位从"单端课程项目"转向"工程化平台"（DC-06）：求职者自主练习的产品命题**不变**，在外围加一层"身份与归属"，让同一套诊断内核可以服务"招聘者只读查看报告"这第二端。诊断链路（五维/双 Agent/追问）零改动。
 
 ### 1. 认证与资源归属（`backend/auth.py`，L2 新增）
 
@@ -292,7 +322,7 @@
 ### 2. 简历库 / 岗位库（可复用输入资产）
 
 - 简历此前**不落库**（每次开练重新上传、重新调 LLM 解析）；岗位 JD 每次重新粘贴。新增 `resumes` / `positions` 两张表（`CREATE TABLE IF NOT EXISTS`，老库自动生效），CRUD + 归属过滤沿用"一个可空 owner_id 参数"的统一约定。
-- `sessions` 表加列走 `_ensure_owner_columns`（照抄 `_ensure_weakness_columns` 的 PRAGMA+ALTER 范式）。**SQLite 的 `ALTER TABLE ADD COLUMN` 不支持 `REFERENCES`**，owner_id 不带外键，完整性由应用层保证——这是硬限制，已在注释中写明。
+- `sessions` 表加列走 `_ensure_owner_columns`（沿用 `_ensure_weakness_columns` 的 PRAGMA+ALTER 范式）。**SQLite 的 `ALTER TABLE ADD COLUMN` 不支持 `REFERENCES`**，owner_id 不带外键，完整性由应用层保证——这是硬限制，已在注释中写明。
 - 上传入库走**新端点** `POST /api/resumes/upload`（不截断）：旧的 `/api/sessions/upload` 为兼容前端截断到 5000 字，入库场景沿用会静默丢失内容，且截断发生在用户看不见的地方。旧端点行为原样保留（有回归测试钉住）。
 - 面试面板新增"来源切换"：库内选用 / 粘贴上传。**库只是填充器**——选中后把文本写进同一个编辑框，用户手改即脱离库关联（提交内容以编辑框为准，避免"选了 A 简历却发出去手改内容且仍标记成 A"）。
 
@@ -315,7 +345,7 @@
 
 ### 5. 诊断评分强制引用原话（evidence 引用）
 
-- 借鉴 Gua-AI-interview 的 evidenceQuote：每个维度除 score/comment 外，必须输出 `quote`——从候选人回答中**原样摘录**的支撑片段（≤30 字，不得改写/概括/编造）。把主观打分锚定到文本证据，让"分数怎么来的"可复核。
+- 每个维度除 score/comment 外，必须输出 `quote`——从候选人回答中**原样摘录**的支撑片段（≤30 字，不得改写/概括/编造）。把主观打分锚定到文本证据，让"分数怎么来的"可复核。
 - 字段名用 `quote` 而非 `evidence`：项目里已有"简历证据包（evidence package）"概念（注入给模型的素材），两者方向相反，同名会造成"证据"一词指两件事。
 - 容错：模型未返回 quote 一律补空串——引用是增强项，缺失不阻断诊断（`tests/test_diagnosis_engine.py::TestQuoteEvidence`）。
 
@@ -332,17 +362,17 @@
 
 ---
 
-## v6.6 竞品借鉴专项七期：interviewerAgent P1 三项落地——记忆衰减 + 技能状态机 + 动态难度（2026-08-29）
+## v6.6 迭代专项七期：长期薄弱点衰减 + 面试技能状态机 + 动态难度（2026-08-29）
 
-> 承接 v6.5（同一来源的 P0 两项），落地研读报告 §17 的 **P1 三项**。本轮的共性是：**三项都不是新功能，而是给既有能力补上"时间维度""状态维度""强度维度"**——v6.4 建成的长期记忆闭环里跑的是裸计数器，模式切换没有结束条件，出题难度恒定不变。
+> 承接 v6.5 的两项改造，本轮继续补齐**三项能力缺口**。本轮的共性是：**三项都不是新功能，而是给既有能力补上"时间维度""状态维度""强度维度"**——v6.4 建成的长期记忆闭环里跑的是裸计数器，模式切换没有结束条件，出题难度恒定不变。
 
 ### 1. 长期薄弱点：EMA 衰减 + 30 天过期 + 中性区不动（`backend/weakness_memory.py`，L2）
 
-借鉴 `internal/memory/service.go` 的 `updateWeakness`，把 v6.4 的 `_weakness_counts[t] += 1` 升级为有强度的长期记忆：
+把 v6.4 的 `_weakness_counts[t] += 1` 裸计数器升级为有强度的长期记忆：
 
-- **阈值换算**：对方 0-100 分制 → 我们五维 1-5 分，先映射薄弱度 `(5-score)/4×100`，阈值 **<3.0 加重 / >4.5 减轻 / 3.0–4.5 中性**；加重用 EMA（α=0.4，10 次迭代残差 0.6%），减轻按比例衰减（×0.7），计数归零即删除。
-- **岗位权重放大（相对原设计的增量）**：`weight/0.2` 夹 0.5–2.0 倍——岗位越看重的维度，同样失分越要命。复用 v2.6 的 JD 动态权重，对方无此概念。
-- **保留原版语义**：中性区连 `last_seen` 都不续期 → "30 天没再暴露严重短板即视为已改善"，衰减靠时间而非练习次数。
+- **阈值换算**：五维 1-5 分先映射为薄弱度 `(5-score)/4×100`，阈值 **<3.0 加重 / >4.5 减轻 / 3.0–4.5 中性**；加重用 EMA（α=0.4，10 次迭代残差 0.6%），减轻按比例衰减（×0.7），计数归零即删除。
+- **岗位权重放大**：`weight/0.2` 夹 0.5–2.0 倍——岗位越看重的维度，同样失分越要命。复用 v2.6 的 JD 动态权重。
+- **衰减靠时间而非练习次数**：中性区连 `last_seen` 都不续期 → "30 天没再暴露严重短板即视为已改善"。
 - **存储分工**：`weakness_profile`=历史流水（图谱/建议），新增 `weakness_memory`=当前状态（每维度一行，新表用 `CREATE TABLE IF NOT EXISTS` 即可，无需 ALTER 迁移）。
 - **升级兼容**：新表为空时回注入与复习建议**回退 v6.3 口径**——否则老库升级后首场面试会静默丢掉记忆回注入。
 - 回注入 prompt 同步升级：从"历史均分 X"改为"最近得分 X，**累计失分 N 次**"，让模型区分"反复失分"与"一次失手"。
@@ -352,18 +382,18 @@
 补上"临时插入、有步骤、有完成条件"的能力层——区别于既有 `switch_mode`（整场设定、无结束条件）：
 
 - **接口**：`SkillBase{name/description/priority/can_activate/build_prompt/on_turn_end/is_complete}` + `SkillRegistry`（按 priority 降序，match 取首个命中；单技能判定抛异常不影响其它技能）。
-- **两点刻意不照抄原版**：
-  - **触发**：原版纯关键词 `strings.Contains`（穷举 `"和…的区别"` 变体）会把普通回答误判为触发；本项目**默认显式触发**（WS `skill` 消息），`can_activate` 仅在开启自动匹配时参与。
-  - **结束**：原版完成只清字段不告知用户；本项目返回 `closing_message`，工程层推送"已回到正式面试"。
+- **两个关键的刻意选择**：
+  - **触发**：纯关键词匹配（穷举 `"和…的区别"` 变体）会把普通回答误判为触发；因此**默认显式触发**（WS `skill` 消息），`can_activate` 仅在开启自动匹配时参与。
+  - **结束**：技能完成不能只清字段而沉默结束——返回 `closing_message`，工程层推送"已回到正式面试"。
 - **技能轮不进诊断**：测验答案（"B"）不是面试作答，打五维分只会污染报告 → 技能轮单独维护 `skill_history`，不写 `all_diagnoses`/`answer_history`。
-- **内置 3 个**：`quick_quiz`（5 题即时判分，P80）、`concept_teach`（苏格拉底讲解 ≤4 轮，P70）、`tech_compare`（5 维度对比，P50）。原版 4 个中的 `project_highlight` 未移植——与 STAR 诊断 + `resume_anchors` 高度重合。
+- **内置 3 个**：`quick_quiz`（5 题即时判分，P80）、`concept_teach`（苏格拉底讲解 ≤4 轮，P70）、`tech_compare`（5 维度对比，P50）。曾考虑的第 4 个 `project_highlight` 未纳入——与 STAR 诊断 + `resume_anchors` 高度重合。
 
 ### 3. 动态难度调度器（`backend/difficulty.py`，L2）
 
-- **只抄轮内自适应，不抄阶段推进**：对方的调度器同时决定难度与阶段；本项目阶段推进是 v6.2 的工程强控，让难度信号反向决定阶段流转等于把已收敛的可控性交回统计信号。本模块只回答"这道题出多难"。
-- **信号源纪律**（对方最大的坑）：它用"回复长度"代理评分，整套调度是噪声；我们直接用 `diagnosis_engine` 加权总分，且**无效分数（None/0/非数字）一律忽略**——诊断失败不是"得 0 分"，误记会把难度一路降到底档。
+- **只做轮内自适应，不接管阶段推进**：难度调度器不参与阶段流转——阶段推进是 v6.2 的工程强控，让难度信号反向决定阶段流转等于把已收敛的可控性交回统计信号。本模块只回答"这道题出多难"。
+- **信号源纪律**：不能用"回复长度"这类代理指标充当评分（整套调度会退化成噪声），直接取 `diagnosis_engine` 加权总分，且**无效分数（None/0/非数字）一律忽略**——诊断失败不是"得 0 分"，误记会把难度一路降到底档。
 - **归因披露（必须配套）**：难度改变出题分布但评分标准固定，分数变低时须能区分"变差了"与"难度升了" → `trace` 逐题记录档位进报告 `difficulty` 字段，变档时 WS 推 `difficulty_change`。
-- 出题 prompt 同步修正：原"第 1 题热身、最后 1 题深度挑战"与难度档指令自相矛盾，改为"有难度指令则按档位，否则按递进"。
+- 出题 prompt 同步修正：此前"第 1 题热身、最后 1 题深度挑战"与难度档指令自相矛盾，改为"有难度指令则按档位，否则按递进"。
 
 ### 4. 测试与契约
 
@@ -373,23 +403,23 @@
 
 ### 范围边界（诚实披露）
 
-- **AI Coding 专项题库（原 P2-8）不做**：与"诊断回答质量"命题距离远；原项目实现是无状态旁路（刷新即丢、无评估），引进需连会话引擎与报告一起改。
+- **AI Coding 专项题库不做**：与"诊断回答质量"命题距离远；做成无状态旁路（刷新即丢、无评估）没有价值，纳入则须连会话引擎与报告一起改。
 - ~~**技能未接前端 UI**~~ → **已补齐（同轮追加）**：面试页诊断侧边栏新增「🛠 面试技能」条——三个技能按钮显式激活（不靠关键词猜测）；激活中禁用其它按钮并显示 `技能名 步数/总步数` 与「退出技能」入口；技能轮发言经 `follow_up` 消息回带 `skill/step/total` 刷新进度；`difficulty_change` 以 toast 提示，让用户看见难度在动（否则分数变化无法归因）。`npm run build` 通过。
 - 难度**不影响**轮次推进与阶段判定，仅在出题 prompt 层生效。
 - 前端为 Vite 构建产物（`frontend/dist`），源码改动后需 `npm run build` 才会生效。
 
 ---
 
-## v6.5 竞品借鉴专项六期：interviewerAgent 两项落地——公司风格配置层 + PDF 文本两阶段修复（2026-08-29）
+## v6.5 迭代专项六期：公司风格配置层 + PDF 文本两阶段修复（2026-08-29）
 
-> 对标 [chenyongzhi1119/interviewerAgent](https://github.com/chenyongzhi1119/interviewerAgent)（Go 单二进制大厂面试模拟器，10 小时 AI 辅助完成）研读后，按《[interviewerAgent-深度研读.md](docs/interviewerAgent-深度研读.md)》§15 的 **P0 两项**落地。该项目"产品包装 90 分、内核 40 分"——三大增强系统（动态难度/Agent 记忆/Skill 注册中心）全部死于接线缺失（`estimateScore` 评错对象、`DiffPhase`/`UserID`/`Tags` 从未赋值），本轮只抄它**真正跑了**且**我们没有**的部分；同时以它的接线缺失为反面教材，新模块落地的同轮即补端到端断言测试。
+> 本轮在协作迭代中针对两处工程缺口落地改进：(1) 目标公司风格此前写死在代码常量里，加一家公司就要改码；(2) PDF 简历提取的换行损伤让后续解析与追问点提取质量不稳。共同原则是**配置外置 + 纯函数可测**：新增能力一律落成可单测的纯函数或可热加载的配置，且新模块落地的同轮即补端到端断言测试——功能"写了"和"接上了"是两件事。
 
 ### 1. 公司风格配置层（`backend/company_profiles.py`，L2 + `backend/company_profiles/*.yaml`）
 
-借鉴其 `loadCompanies` 扫目录热加载与 15 行 `CompanyProfile` 字段结构，**加 YAML 即加公司、零改码**：
+采用**扫目录热加载**的 YAML 配置层，**加 YAML 即加公司、零改码**：
 
-- **字段三层**：`role_description`（公司人格：评判标准/追问清单）+ `rounds[].match+instructions`（轮次行为）+ `evaluation_rubric`（评估量表，进报告 `company_rubric`）。内置字节/腾讯/阿里三份种子配置（内容按本项目诊断驱动风格改写，不照抄）。
-- **与原版的关键差异**：其轮次按键 `1/2/3` 索引，只兼容"一面/二面/三面"一种结构；本项目改为**轮次名关键词匹配**（"技术广度"/"技术一面"同时命中"技术"），拟真 6 阶段与传统 5 轮两种模式通吃。新增 `match_keywords` 按 JD 关键词命中数自动选定。
+- **字段三层**：`role_description`（公司人格：评判标准/追问清单）+ `rounds[].match+instructions`（轮次行为）+ `evaluation_rubric`（评估量表，进报告 `company_rubric`）。内置字节/腾讯/阿里三份种子配置（内容按本项目诊断驱动风格编写）。
+- **轮次匹配改用关键词**：按 `1/2/3` 数字键索引只兼容"一面/二面/三面"一种结构；本项目改为**轮次名关键词匹配**（"技术广度"/"技术一面"同时命中"技术"），拟真 6 阶段与传统 5 轮两种模式通吃。新增 `match_keywords` 按 JD 关键词命中数自动选定。
 - **解析优先级**：前端显式选择 > JD 自动匹配 > 不启用；`"none"` 哨兵值明确关闭；未知名称降级为自动匹配而非报错。
 - **注入点与顺序**：`get_interviewer_role_prompt()` 前置「公司人格 > 本轮公司指令 > 风格角色卡」——公司是外层人格，风格卡是内层语气，两者正交（修复过程中发现并修正 `parts` 列表被重建覆盖公司块的 bug，公司块必须 append 不能重建）。
 - **容错哲学**（与 v6.2 简历追问点同款）：pyyaml 缺失 / 目录不存在 / 单文件损坏 / 空壳配置 → 跳过或整体降级，**绝不阻断面试主流程**。
@@ -397,17 +427,17 @@
 
 ### 2. PDF 文本两阶段修复（`resume_parser.py`）
 
-移植其全仓库工程含量最高的 `internal/extract/pdf.go` 启发式，修复 PDF 提取文本的两类损伤（列宽切碎的软换行 / 标题条目与正文粘连）：
+针对 PDF 提取文本的两类损伤（列宽切碎的软换行 / 标题条目与正文粘连）设计两阶段启发式修复：
 
 - **Phase 1 逆拼接**：只认两种硬断信号（编号列表项、≥6 字母全大写标题——避免 API/SQL 被误判），其余全部拼回，仅 ASCII 单词相邻补空格；
 - **Phase 2 复原**：中文简历章节词表（22 词）前后插空行、`·` 前换行、`-` 后（允许隔空白）紧跟 CJK 换行（`2023-09` 日期与负数天然不含 CJK 不受影响）、嵌入正文的编号项前换行（`3.14`/`3.5` 小数排除）。
-- **对原版的一处改进**：行首 `N.` 判定额外排除点号后紧跟数字（`"3.5倍"` 不再被当编号拆行），与嵌入判定口径对齐（Go 原版此处偏松）；`-` 规则允许隔空白（Go 原版只处理 `-中文`，漏掉更常见的 `"- 负责xx"`）。
+- **两处边界收紧**：行首 `N.` 判定额外排除点号后紧跟数字（`"3.5倍"` 不再被当编号拆行），与嵌入判定口径对齐；`-` 规则允许隔空白（只处理 `-中文` 会漏掉更常见的 `"- 负责xx"`）。
 - 全部纯函数（`_rejoin_broken_lines` / `_restore_structure` / `_repair_pdf_text` 等），`parse_pdf` 尾部调用，PDF 库无关。
 
-### 3. 明确不抄（范围纪律）
+### 3. 明确不做（范围纪律）
 
-- **多模态图片只注入首条消息**：本项目后端无任何图片输入链路（全文检索 0 命中），没有可挂载的调用点，强行预埋就是该项目式死代码（其 `vision.go` + 后端 image 分支因前端改走 Tesseract 全部不可达）。
-- 动态难度调度器 / Skill 状态机 / 薄弱点 EMA：属研读报告 P1 改造项，非本轮范围。
+- **多模态图片注入不做**：本项目后端无任何图片输入链路，没有可挂载的调用点，强行预埋就是不可达的死代码。
+- 动态难度调度器 / 技能状态机 / 薄弱点 EMA：留待下一轮（见 v6.6）。
 
 ### 4. 测试与契约
 
@@ -417,40 +447,37 @@
 
 ---
 
-## v6.4 竞品借鉴专项五期：HakiMeet 八项落地——长期记忆闭环 + 前端成品感（2026-08-29）
+## v6.4 迭代专项五期：长期记忆闭环 + 前端成品感（2026-08-29）
 
-> 对标 [HakiMeet](https://github.com/zhaojunfei/HakiMeet)（Vue3 + FastAPI 语音面试平台）研读后，按《[HakiMeet-深度研读.md](docs/HakiMeet-深度研读.md)》§7 的 **P1 八项**逐项落地。它的产品感强、工程纪律弱：值得学的是长期记忆闭环可视化与真打断语义，必须规避的是内置 `hash()` 去重键不稳、2D/3D 图谱双轨并存、页面各自复制粘贴样式——本轮落地全部按改进版处理。其中后端四项已随 v6.3 提交窗口先行入库，本节补记完整叙事；前端四项为本节新增。
+> 本轮在协作迭代中做两件事：**让长期记忆真正闭环**（练 → 评 → 记 → 再练，且能看见收敛），以及**补齐前端成品感**（可视化记忆图谱、统一设计 token、状态机收敛）。八项落地中后端四项已随 v6.3 提交窗口先行入库，本节补记完整叙事；前端四项为本节新增。落地时主动规避三类常见工程债：去重键不稳、图谱 2D/3D 双轨并存、页面各自复制粘贴样式——本轮新增部分全部按统一口径处理。
 
 ### 后端（已随 v6.3 窗口入库，此处补记叙事）
 
-1. **RAG 注入去重**：`content_hash()`（blake2b 8 字节，跨进程稳定——HakiMeet 用内置 `hash()` 受 PYTHONHASHSEED 随机化影响，重启即失效）；`resume_retriever.select_context_tracked()` / `knowledge_store.retrieve(exclude_hashes)` / `augment_prompt_tracked()` 贯通去重参数，返回值携带指纹；两条纪律：**先过滤再走字符预算**（被排除的名额不得白占预算）、**耗尽必须回退**（长会话后期所有块都已注入，不回退则证据包恒空，去重反致能力退化）。
+1. **RAG 注入去重**：`content_hash()`（blake2b 8 字节，跨进程稳定——不能用内置 `hash()`，它受 PYTHONHASHSEED 随机化影响，重启即失效）；`resume_retriever.select_context_tracked()` / `knowledge_store.retrieve(exclude_hashes)` / `augment_prompt_tracked()` 贯通去重参数，返回值携带指纹；两条纪律：**先过滤再走字符预算**（被排除的名额不得白占预算）、**耗尽必须回退**（长会话后期所有块都已注入，不回退则证据包恒空，去重反致能力退化）。
 2. **备选题 / 换题**：会话层登记已问题目台账（文本 + 指纹），出题时以【已问题目清单·严禁重复】负向约束传入 `question_gen`；模型无视约束吐出重复题时，**把那道重复题追加进排除清单重试一次**（给出具体反例比反复强调规则有效，但只重试一次——重试是完整 LLM 往返）。
 3. **长期记忆闭环**：`weakness_profile` 幂等迁移补 `resolved` / `updated_at` 列（`CREATE TABLE IF NOT EXISTS` 不会给已存在的表补列，必须 PRAGMA 检查后 ALTER）；新增 `PUT /api/weakness-profile/{id}/resolve`、`GET /api/weakness-profile/{id}/suggestions`（静态段注册在 `/{session_id}` 之前防参数吞并）、`GET /api/weakness-profile/points`；首轮出题回注入历史未解决薄弱点（【历史薄弱点·优先考察】，仅首轮注入一次，后续轮次重复注入是纯 token 浪费）；拉取失败降级为"无历史记忆"，不阻断面试。
 4. **测试**：新增 `test_injection_dedup.py`（19 例）/ `test_alternate_question.py`（10 例）/ `test_weakness_memory.py`（17 例），覆盖指纹稳定性、去重与回退、迁移幂等（含老库升级）、resolved 闭环语义、换题重试上限。
 
 ### 前端（本轮新增）
 
-5. **Design token 补强**：`tokens.css` 补 `--shadow-xs/xl/inset` 六级阴影、玻璃态 `--glass-*`、`--ease-standard` 微交互缓动（与 `--ease-out` 的"入场"语义区分）；`style.css` 落地全局组件类 `card-hover / btn-press / stat-chip / glass-panel / empty-state 三件套 / confirm 弹窗 / btn-danger`——页面不得各自重写（对应 HakiMeet"视觉统一、实现复制"的反面教材）。
-6. **长期记忆页 + 2D SVG 记忆图谱**（新文件 `memoryGraph.js` + `pages/memory.css`）：中心"薄弱点图谱" → 维度环形分布 → 子节点确定性哈希散开（FNV-1a 种子，**刷新不跳位**）；节点颜色 = 严重度×未解决率（红/橙/蓝/灰四级，token 化深色自适应）；SVG 二次贝塞尔连线、hover 节点↔明细项双向联动、点击节点滚动定位明细；平移缩放走 transform 合成层（缩放不重算路径）；每维度最多渲染 6 个子节点（超出聚合 +N）；**只做 2D 一套**（HakiMeet 2D/3D 双轨并存是维护负担）。标记已解决即退出回注入与建议口径——闭环收敛动作。
-7. **面试页状态机收敛 + 语音真打断**：`interview.js` 收敛为 `PHASE` 四态 + `setPhase()` 单一入口（副作用如状态灯统一驱动），锁定/恢复 4 条路径统一走 `setInputLocked()`（保留"超时保留草稿 / 拦截清空聚焦"等语义差异）；删除三个死状态（`pendingFollowUp` 无读取、`currentInterviewerName` 无读取、`autoReadEnabled` 无写入恒真）；修复 `connectWS` 重置不全（补 voiceState/计时器/思考计时，防第二场面试继承污染）与 `finishInterview` 后 `ws` 未置空（旧 socket 静默吞消息）。`voice.js` 引入语音世代号：`stopSpeaking()` 先摘 `onended` 回调再 pause（HakiMeet `flush()` 同类缺陷的教训），修复 `browserSpeak` 对 canceled/interrupted 也触发 `onEnd`、以及打断后 MiMo 失败误降级续播；`autoReadQuestion` 打断时仅复位 UI 不触发连锁动作。
+5. **Design token 补强**：`tokens.css` 补 `--shadow-xs/xl/inset` 六级阴影、玻璃态 `--glass-*`、`--ease-standard` 微交互缓动（与 `--ease-out` 的"入场"语义区分）；`style.css` 落地全局组件类 `card-hover / btn-press / stat-chip / glass-panel / empty-state 三件套 / confirm 弹窗 / btn-danger`——页面不得各自重写（避免"视觉统一、实现却各自复制粘贴"）。
+6. **长期记忆页 + 2D SVG 记忆图谱**（新文件 `memoryGraph.js` + `pages/memory.css`）：中心"薄弱点图谱" → 维度环形分布 → 子节点确定性哈希散开（FNV-1a 种子，**刷新不跳位**）；节点颜色 = 严重度×未解决率（红/橙/蓝/灰四级，token 化深色自适应）；SVG 二次贝塞尔连线、hover 节点↔明细项双向联动、点击节点滚动定位明细；平移缩放走 transform 合成层（缩放不重算路径）；每维度最多渲染 6 个子节点（超出聚合 +N）；**只做 2D 一套**（2D/3D 双轨并存是维护负担）。标记已解决即退出回注入与建议口径——闭环收敛动作。
+7. **面试页状态机收敛 + 语音真打断**：`interview.js` 收敛为 `PHASE` 四态 + `setPhase()` 单一入口（副作用如状态灯统一驱动），锁定/恢复 4 条路径统一走 `setInputLocked()`（保留"超时保留草稿 / 拦截清空聚焦"等语义差异）；删除三个死状态（`pendingFollowUp` 无读取、`currentInterviewerName` 无读取、`autoReadEnabled` 无写入恒真）；修复 `connectWS` 重置不全（补 voiceState/计时器/思考计时，防第二场面试继承污染）与 `finishInterview` 后 `ws` 未置空（旧 socket 静默吞消息）。`voice.js` 引入语音世代号：`stopSpeaking()` 先摘 `onended` 回调再 pause，修复 `browserSpeak` 对 canceled/interrupted 也触发 `onEnd`、以及打断后 MiMo 失败误降级续播；`autoReadQuestion` 打断时仅复位 UI 不触发连锁动作。
 8. **Onboarding 细节**：题库页"📄 模板"一键下载（内联字段说明 + 真实示例题，Blob 触发）、空状态三件套接入题库页与记忆页、全局 Promise 化确认弹窗（删除薄弱点等不可逆操作二次确认）。
 
 ### 工程化
 - 全量 **655 例通过**、`run.py lint` 分层契约通过；前端零新依赖（图谱为原生 SVG/DOM）。
-- 文档：研读报告 §7 八项落实状态逐条标注。
 
 ### 范围与约束（诚实披露）
 - `knowledge_store` 的 tracked 去重接口仍是**前向储备**：业务检索当前只走 `ResumeRetriever` 一线，`augment_prompt_tracked` 暂无生产调用方（接口就绪，待职业规划/出题知识注入接线）。
 - 图谱子节点每维度最多 6 个（超出聚合 +N）；<768px 收起图例、双击复位代替滚轮缩放。
-- **Realtime 语音（研读报告 P2-9）明确不做**：端到端实时语音会让 `output_sanitizer` 与结构化评分无处挂载，与 v6.2 以来的核心优势冲突，如需引入应单独立项并配"转录后离线评分"兜底。
+- **端到端 Realtime 语音明确不做**：实时音频流会让 `output_sanitizer` 与结构化评分无处挂载，与 v6.2 以来的核心优势冲突，如需引入应单独立项并配"转录后离线评分"兜底。
 
 ---
 
-## v6.3 竞品借鉴专项四期：mock-interviewer 七项能力落地（2026-08-28）
+## v6.3 迭代专项四期：面试官角色卡 + 简历锚点分类 + 规则化评分七项能力（2026-08-28）
 
-> 对标 [crowscc/mock-interviewer](https://github.com/crowscc/mock-interviewer)（Agent Skills 开放标准的纯 Prompt 技能包，零代码，4 个 Markdown 文件）研读后，按《[mock-interviewer-深度研读.md](docs/mock-interviewer-深度研读.md)》第 10 节的 **P0 三项 + P1 四项**逐项落地。
->
-> 与前三期最大的不同：前三期借鉴的是**工程模式**（状态机、收尾强控、输出净化、JSON 容错），本期的对象**没有一行代码**，借鉴的是**内容资产**——面试官角色卡、锚点分类、追问范式、压力题库、评分 rubric。因此本轮改动以「数据结构 + Prompt 注入 + 确定性规则」为主，引擎控制流基本未动。新增测试 50 例，受影响面 326 例全绿，分层 lint 通过。
+> 与前三期最大的不同：前三期补的是**工程模式**（状态机、收尾强控、输出净化、JSON 容错），本轮补的是**内容资产**——面试官角色卡、锚点分类、追问范式、压力题库、评分 rubric。因此本轮改动以「数据结构 + Prompt 注入 + 确定性规则」为主，引擎控制流基本未动。新增测试 50 例，受影响面 326 例全绿，分层 lint 通过。
 
 ### P0：内容资产结构化（改动小、收益直接）
 
@@ -465,7 +492,7 @@
 
 3. **简历锚点五分类**（P0-3）
    - 新增 L2 模块 `backend/resume_anchors.py`：五类锚点（技术选型 / 量化数据 / 架构设计 / 业务决策 / 团队管理），每类绑定一条追问方向。原有 `deep/vague` 二分只能定位"哪里值得问"，五分类才回答"该往哪个方向问"。
-   - 采纳原书一条高性价比判断：**简历中出现的每个数字都是高价值追问点**（metric 类对数字加权）。
+   - 一条高性价比判断：**简历中出现的每个数字都是高价值追问点**（metric 类对数字加权）。
    - 双路径互为兜底：① `resume_parser` prompt 新增 `anchors` 输出（LLM 分类，质量高）；② `classify()` 关键词规则兜底（确定性，零成本）。LLM 未产出或格式不符时自动回落 ②，功能不退化。
    - 两条刻意的取舍：数字权重只 +1（+2 会让"带领 5 人团队"常与 team 打平）；**并列即弃权**（宁可不分类，也不注入错误的追问方向）。
 
@@ -491,7 +518,7 @@
 7. **恢复态红线 + 3 次阈值 + assisted 标记**（P1-4）
    - **绝不给答案**：`COACHING_RECOVERY_INSTRUCTION` 新增红线（禁"参考答案/正确答案/应该这样回答"等，只给"怎么想"与"从哪说起"）；`output_sanitizer` 新增 `contains_answer_leak()` 做工程兜底，命中则确定性替换为引导话术。边界说明：系统的「回答改写」是另一条独立通道（前端单独展示），不属于面试官话术。
    - **连续 3 次触发主动建议跳过**：`recovery_streak` 连续计数（正常回答归零），达阈值时由工程层用确定性话术覆盖模型追问，且**允许突破 `FOLLOW_UP_MAX_COUNT`**——否则这条保护恰好会被"第 3 次追问"拦掉，在最需要它的时刻失效。
-   - **assisted 标记**：原书做法是"教练对话不计入评分"，本项目**不做不计分**（评分是连续诊断链路的一部分，剔除会打断数据流），改为**标注**：分数照记，报告 `assistance_stats` 披露"全场有多少题是在提示下完成的"。占比过高本身就是诊断信号——说明当前难度/方向与该候选人不匹配。
+   - **assisted 标记**：**不做不计分**（评分是连续诊断链路的一部分，剔除会打断数据流），改为**标注**：分数照记，报告 `assistance_stats` 披露"全场有多少题是在提示下完成的"。占比过高本身就是诊断信号——说明当前难度/方向与该候选人不匹配。
 
 ### 工程化
 - **测试**：新增 `tests/test_mock_interviewer_borrowings.py`（50 例，覆盖角色卡完整性/追问 prompt 双自由度/锚点分类与兜底/加减分项各规则与封顶夹紧/JD gap 注入/压力题三道闸门与去重/恢复红线与阈值/assisted 标记与报告统计）；受影响面 326 例全绿，`run.py lint` 分层契约通过。
@@ -502,47 +529,47 @@
 - `tests/test_weakness_memory.py` 9 例失败修复：`weakness_profile.session_id` 有外键指向 `sessions(id)`，而测试的 `_seed()` 直接写子表未落父记录，导致 `FOREIGN KEY constraint failed`。新增 `_ensure_sessions()` 补齐父记录并开启 `PRAGMA foreign_keys`。属**既有缺陷**（v6.3 长期记忆闭环引入），与本轮改动无关，修复后 17 例全绿。
 
 ### 范围与约束（诚实披露）
-- **维度映射是近似的**：原作四维度含「表达结构」「应变能力」，本项目五维度（宪章约束 3）无对应项，故「甩锅」「过度防御」等应变类信号只能就近映射到 STAR 完整度 / 逻辑连贯性，语义上并非严格等价。
+- **维度映射是近似的**：「表达结构」「应变能力」这类维度在本项目五维体系（宪章约束 3）中没有对应项，故「甩锅」「过度防御」等应变类信号只能就近映射到 STAR 完整度 / 逻辑连贯性，语义上并非严格等价。
 - **存在双重惩罚风险**：模型若已因"没有数据"把量化程度打到 3 分，规则再 -1 即构成"模型与规则各扣一次"。缓解手段是封顶机制（非消除），换取的是可解释性；若模型已打到 1 分则夹紧后无额外惩罚。
 - **压力题前端标识**：`question` 消息透传 `is_pressure` / `pressure_topic`，前端 `showQuestion` 渲染「⚡ 压力题 · 类别」徽章（红色系但克制——提示"这是一道意外的问题"，不是警告用户答错了）。
 - `jd_gaps` 使会话创建多一次 LLM 往返（仅当有 JD 时）。失败静默降级为无缺口模式，不阻断会话创建。
 
 ---
 
-## v6.2 竞品借鉴专项三期：GrillMind 六项工程模式落地（2026-08-28）
+## v6.2 迭代专项三期：收尾强控 + 简历追问点 + 输出净化 + 任务级模型绑定 + 报告逐题拆解 + 语音链路（2026-08-28）
 
-> 对标 [GrillMind](https://github.com/1935417243/GrillMind)（React 19 + Electron + 阿里百炼 ASR/TTS 全双工语音）研读后，按《[GrillMind-深度研读.md](docs/GrillMind-深度研读.md)》第 9 节的 6 条建议逐项落地。原则延续前两期：**只借工程模式，不抄技术栈**——不引入 Electron 桌面壳（本项目定位 Web 服务平台），全双工语音不引入 WebSocket 音频流（MiMo 云端 ASR 为请求-响应协议，改造为流式需自研网关），改为在半双工链路上补齐 VAD 节流与"TTS 结束自动切回文字"这两个体验缺口。新增测试 50 例，全量 **559 例通过**、分层 lint 通过、前端 `vite build` 通过。
+> 本轮在协作迭代中定位到六处"能力已具备、工程约束缺失"的缺口并逐项补齐，原则：**只补工程模式，不动技术栈**——不引入桌面壳（本项目定位 Web 服务平台），全双工语音不引入 WebSocket 音频流（MiMo 云端 ASR 为请求-响应协议，改造为流式需自研网关），改为在半双工链路上补齐 VAD 节流与"TTS 结束自动切回文字"这两个体验缺口。新增测试 50 例，全量 **559 例通过**、分层 lint 通过、前端 `vite build` 通过。
 
 ### 新增（功能线）
 
-1. **面试状态机 closing 收尾强控**（借鉴点 1）
+1. **面试状态机 closing 收尾强控**
    - `config`：`INTERVIEW_ROUNDS` 末轮「反问收尾」与 `TRADITIONAL_ROUNDS` 末轮「自定义环节」新增 `closing: True`；新增 `CLOSING_INSTRUCTION`（内部收尾指令）与 `CLOSING_MESSAGE`（收束语文案，工程层确定性输出，不额外消耗 LLM 调用）。
    - `session`：`is_closing_round()`（轮次计数判定：显式 closing 标记或已推进到末轮）+ `closing_instruction()`；**工程强控** —— 收尾阶段 `should_follow_up()` 恒为 False（连"回答过短强制追问"一并强控）、`generate_extra_question()` 恒为 None。
    - `question_gen.generate_round_questions()` 新增 `closing_instruction` 参数并注入出题 prompt；`main.py` 末轮答完推送 `interview_closing` 事件，前端 `showClosingMessage()` 渲染收尾卡片。
    - 价值：收尾不再依赖模型自决，杜绝最后一题被无限追问拖住。
 
-2. **简历解析前置追问点 deepDivePoints / vaguePoints**（借鉴点 2）
+2. **简历解析前置追问点 deepDivePoints / vaguePoints**
    - `resume_parser` 新增 `extract_interview_points(resume_text, llm_client, jd_text)`：简历解析阶段一次性产出「值得深挖的点」（写了但细节不足，需考真伪与深度）与「可疑/模糊的点」（表述含糊、缺时间或量化）；输出经清洗（去空/去重/去列表符/丢弃超长项/每类上限 5 条）；**全流程降级** —— LLM 异常、正文过短（< `MIN_RESUME_CHARS=50`）、无可用线索一律返回 `{}`，不阻断会话创建。
    - 复用链路：`main.create_session` 提取 → `InterviewSession(resume_points=...)` → ① 出题时经 `build_resume_points_block()` 注入 prompt（补强题不注入，避免上下文冲突）；② 经 `_evidence_for()` 并入诊断证据包，使 `follow_up_question` 也有据可依。
 
-3. **Prompt 输出约束 + 工程净化兜底**（借鉴点 3）
+3. **Prompt 输出约束 + 工程净化兜底**
    - 新增 L2 模块 `backend/output_sanitizer.py`：
      - `OUTPUT_CONSTRAINTS`（禁 Markdown / 禁括号动作 / 禁垫词开头 / 纯文本平铺 / 术语保留原样），已注入出题、诊断、改写、追问四处 prompt。
      - `sanitize_spoken_text()` 确定性净化：**先去舞台提示再去 Markdown**（关键顺序——若先剥斜体标记，`*停顿*` 只剩"停顿"二字留在正文）；舞台提示支持括号形式 `（微笑）` 与强调形式 `*停顿*`，用动作词表命中，**不误删 `Redis（缓存）` 这类术语括号**；垫词剥离要求后随标点才生效，避免误伤"好问题，值得展开"。
    - 落点：题目 `question/intent`、诊断 `follow_up_question/overall_comment/real_interview_impact`、`rewritten_answer` 全部净化后再进 TTS 与前端渲染。
 
-4. **任务级模型绑定 + 面试禁思考**（借鉴点 4）
+4. **任务级模型绑定 + 面试禁思考**
    - `config`：新增 `LLM_TASK_MODELS`（`JSON` 环境变量，值支持 `"model"` 或 `"provider:model"`）、任务枚举 `LLM_TASKS`（parse/question/interview/diagnosis/rewrite/report/career/market）、实时链路集合 `REALTIME_TASKS`、`INTERVIEW_DISABLE_REASONING`（默认开）。解析失败/未知任务/未知 provider 一律跳过并告警，向后兼容（不配即无变化）。
    - `llm_client`：新增 `is_reasoning_model()`、`task_candidates(task)`、`resolve_task_model(task)`；`chat/chat_json/chat_stream/chat_stream_async` 新增可选 `task` 参数，内部候选池按任务解析（绑定模型置顶 → 全局池）。实时链路剔除推理类模型；**若剔除后无候选则保留原池并告警**（宁可慢，也不能无候选导致调用直接失败）。
    - 已接入：question / diagnosis / rewrite / interview（追问）/ parse（简历追问点、JD 权重）/ market（Gap、岗位画像）/ career（职业规划）。
 
-5. **报告结构：qaBreakdown + realInterviewImpact + thinkingSeconds**（借鉴点 5）
+5. **报告结构：qaBreakdown + realInterviewImpact + thinkingSeconds**
    - 诊断 prompt 新增 `real_interview_impact` 字段（"这段回答放到真实面试里会发生什么"），`normalize_result()` 透出；模型未产出时由 `report._fallback_impact()` 按"分数 × 思考时长"确定性兜底（措辞明确为规则结论，不伪装成面试官原话）。
    - `thinking_seconds`：前端记录题目/追问展示到提交的秒数（`elapsedSeconds()`），随 `answer` 上报；后端 `_normalize_thinking_seconds()` 规整（非法值/超 600s 归零），写入 `answer_history` 与诊断记录；追问补充**累加**到本题。
    - `report.build_report()` 新增 `qa_breakdown`（逐题：分数/五维/最薄弱维度/评语/真实面试影响/思考时长/风险点/是否含改写）、`thinking_stats`（均值/最大/最小/总时长/采集题数）、`resume_points`；`detailed_qa` 同步补齐同名字段，前端可复用一套渲染。
    - 前端 `report.js` 新增「📊 逐题拆解」与「🔎 简历追问线索」两张卡片。
 
-6. **语音链路：VAD 节流 + TTS 结束自动切回文字**（借鉴点 6）
+6. **语音链路：VAD 节流 + TTS 结束自动切回文字**
    - `voice.js` 新增 VAD：`AnalyserNode` 按 100ms 采样 RMS，连续静音 `silenceMs=2500` 且已采集到 ≥ `minSpeechMs=800` 语音 → 自动停录并转写；`maxDurationMs=120000` 硬上限兜底；Key 缺失/浏览器不支持时静默回退为手动停止。自动停止与手动停止共用同一 `stop()`，`cancelled` 标志保证只执行一次。
    - `autoReadQuestion()` 新增 `onEnd` 回调；题目与追问朗读结束后 `refocusAnswerInput()` 聚焦输入框、恢复占位提示，用户始终落回可打字状态（追问此前无自动朗读，本轮补齐）。
    - 说明：二进制音频直透已天然满足（TTS 返回音频 Blob → ObjectURL 直放，ASR 直传音频 Blob，均不经文本中转）；真正的全双工（边说边识别）受限于 MiMo 的请求-响应协议，未改造。
@@ -559,17 +586,17 @@
 
 ---
 
-## v6.1 竞品借鉴专项二期：ASR 容错评分 + 追问引用原话 + 结束面试口令 + 语音 Provider 抽象/缓存预取 + 报告 HTML 导出（2026-08-28）
+## v6.1 迭代专项二期：ASR 容错评分 + 追问引用原话 + 结束面试口令 + 语音 Provider 抽象/缓存预取 + 报告 HTML 导出（2026-08-28）
 
-> 对标 [offerMaster](https://github.com/heatnan/offerMaster)（Next.js 14 + FastAPI + LangGraph 功能节点 + MySQL + 本地 Whisper/Edge TTS）逐文件研读后落地的 5 项可借鉴设计。原则延续 v6.0：**只借工程模式，不抄技术栈**——对方"LangGraph 编排 + REST 状态机驱动"的取舍其核心价值在于"人类语音输入门控下不做全自动 Agent"（本项目 WebSocket 状态机已满足，不再引入 LangGraph）；PDF 报告不引入 weasyprint（GTK/Pango 在 Windows 部署成本高），降级为"HTML 打印模板 + 浏览器 Ctrl+P 即 PDF"。新增测试 18 例、受影响面 127 例全绿、分层 lint 通过。
+> 本轮在协作迭代中补齐五处影响真实可用性的缺口。两条约束贯穿全程：**不引入新的编排框架**——"外部编排框架 + REST 状态机驱动"的核心价值在于"人类语音输入门控下不做全自动 Agent"，本项目 WebSocket 状态机已满足，无需另起一套；**不引入重量级原生依赖**——PDF 报告不用 weasyprint（GTK/Pango 在 Windows 部署成本高），降级为"HTML 打印模板 + 浏览器 Ctrl+P 即 PDF"。新增测试 18 例、受影响面 127 例全绿、分层 lint 通过。
 
 ### 新增（功能线）
-- **ASR 转写容错评分（对标 offerMaster 的 ASR-aware 评分 prompt）**：`diagnosis_engine` 新增 `VOICE_TRANSCRIPTION_NOTE`——回答来自语音输入时注入评分 prompt，要求按语义意图理解（"SaaS"→"SARS" 类同音误写不计入专业深度失分、口语停顿词不视为表达混乱、涉及转写误差在评语中注明）。全链路贯通：前端 `answer` 消息新增 `source`（voice/text，`interview.js` 跟踪最近一次输入来源，手动键入自动重置）→ `main.py` WS 解析 `from_voice` → `session.stream_answer()/handle_answer()` 透传 → `_build_diagnostician_system(weights, from_voice)` 注入。
-- **追问"引用原话"硬约束（对标 offerMaster FOLLOWUP_DECIDE 的 anti-套路约束）**：`DIAGNOSTICIAN_SYSTEM_PROMPT` 追问要求新增"必须显式引用候选人回答里的具体词汇/数字/项目名，严禁套路式追问"；`session.generate_follow_up()` 的独立生成路径同步加约束。
-- **结束面试退出口令（对标 offerMaster rules.py 的 END_KEYWORDS）**：`session.py` 新增 `END_INTERVIEW_KEYWORDS + is_end_signal()`（中英文、大小写不敏感子串匹配，确定性规则不依赖 LLM）；`main.py` WS 在安全检查**之前**检测（口令文本过短会被质量校验拦截），命中后不诊断、不计分，推送 `interview_end_signal` 事件并优雅收束，照常生成部分报告（`user_ended` 标志贯穿三层循环）；前端监听该事件 toast 提示。
-- **语音 Provider 协议抽象 + TTS 缓存（对标 offerMaster services/voice.py 的 Protocol 工厂）**：`voice_service` 新增 `TTSProvider/STTProvider`（`runtime_checkable Protocol`）+ `get_tts_provider()/get_stt_provider()` 工厂（`VOICE_TTS_PROVIDER/VOICE_STT_PROVIDER` 配置选择，未知值回退 mimo 并告警）；`VoiceService.synthesize` 新增 **LRU 缓存**（`TTS_CACHE_MAX=32`，仅缓存成功结果，线程安全）——重听题目、追问预取、探测包不再重复付费合成。
-- **TTS 预取（对标 offerMaster 的后台预合成延迟优化）**：`voice.js` 新增 `prefetchTTS()`（静默失败，不播放），新题/追问到达即后台合成预热缓存，用户点朗读/开自动朗读时零等待；`report.js` 新增「🖨 打印 / 存为 PDF」按钮。
-- **复盘报告 HTML 导出（对标 offerMaster report_pdf.py 的 MD→HTML 模板渲染）**：`main.py` 新增 `GET /api/reports/{session_id}/export.html`——`markdown` 库渲染（tables/fenced_code 扩展）+ 内置打印样式模板（中文字体栈、表格/引用样式、`@media print`），浏览器打开后 Ctrl+P 即得 PDF；依赖新增 `markdown>=3.5`。
+- **ASR 转写容错评分**：`diagnosis_engine` 新增 `VOICE_TRANSCRIPTION_NOTE`——回答来自语音输入时注入评分 prompt，要求按语义意图理解（"SaaS"→"SARS" 类同音误写不计入专业深度失分、口语停顿词不视为表达混乱、涉及转写误差在评语中注明）。全链路贯通：前端 `answer` 消息新增 `source`（voice/text，`interview.js` 跟踪最近一次输入来源，手动键入自动重置）→ `main.py` WS 解析 `from_voice` → `session.stream_answer()/handle_answer()` 透传 → `_build_diagnostician_system(weights, from_voice)` 注入。
+- **追问"引用原话"硬约束**：`DIAGNOSTICIAN_SYSTEM_PROMPT` 追问要求新增"必须显式引用候选人回答里的具体词汇/数字/项目名，严禁套路式追问"；`session.generate_follow_up()` 的独立生成路径同步加约束。
+- **结束面试退出口令**：`session.py` 新增 `END_INTERVIEW_KEYWORDS + is_end_signal()`（中英文、大小写不敏感子串匹配，确定性规则不依赖 LLM）；`main.py` WS 在安全检查**之前**检测（口令文本过短会被质量校验拦截），命中后不诊断、不计分，推送 `interview_end_signal` 事件并优雅收束，照常生成部分报告（`user_ended` 标志贯穿三层循环）；前端监听该事件 toast 提示。
+- **语音 Provider 协议抽象 + TTS 缓存**：`voice_service` 新增 `TTSProvider/STTProvider`（`runtime_checkable Protocol`）+ `get_tts_provider()/get_stt_provider()` 工厂（`VOICE_TTS_PROVIDER/VOICE_STT_PROVIDER` 配置选择，未知值回退 mimo 并告警）；`VoiceService.synthesize` 新增 **LRU 缓存**（`TTS_CACHE_MAX=32`，仅缓存成功结果，线程安全）——重听题目、追问预取、探测包不再重复付费合成。
+- **TTS 预取**：`voice.js` 新增 `prefetchTTS()`（静默失败，不播放），新题/追问到达即后台合成预热缓存，用户点朗读/开自动朗读时零等待；`report.js` 新增「🖨 打印 / 存为 PDF」按钮。
+- **复盘报告 HTML 导出**：`main.py` 新增 `GET /api/reports/{session_id}/export.html`——`markdown` 库渲染（tables/fenced_code 扩展）+ 内置打印样式模板（中文字体栈、表格/引用样式、`@media print`），浏览器打开后 Ctrl+P 即得 PDF；依赖新增 `markdown>=3.5`。
 
 ### 工程化
 - **测试**：新增 `tests/test_offer_master_borrowings.py`（18 例：退出口令/prompt 注入与约束/TTS 缓存命中·音色隔离·LRU 淘汰·失败不缓存/Provider 协议与回退/HTML 导出 404 与渲染）；`test_voice_service` 等既有用例零破坏。
@@ -581,17 +608,17 @@
 
 ---
 
-## v6.0 竞品借鉴专项：Prompt 硬约束 + 评分同轮三态决策 + JSON 四级容错 + Provider 自动探测 + 命名空间知识库 + 音色映射表（2026-08-28）
+## v6.0 迭代专项：Prompt 硬约束 + 评分同轮三态决策 + JSON 四级容错 + Provider 自动探测 + 命名空间知识库 + 音色映射表（2026-08-28）
 
-> 对标 [career-copilot](https://github.com/peeker-tao/career-copilot)（React + NestJS + Prisma/PostgreSQL + Redis）逐项深度学习后落地的 6 项可借鉴设计。原则：**只借工程模式，不抄技术栈**（对方用 Redis+向量 RAG，本项目按"零托管依赖"宪章降为本地关键词实现）；市场数据实时性、真实流式、语音实时性三项本项目本就领先，不在借鉴范围。全量测试 491 例全绿、分层 lint 通过。
+> 本轮在协作迭代中集中补齐六处"依赖模型自觉、缺工程兜底"的缺口。原则：**只补工程模式，不引入托管依赖**——向量检索按"零托管依赖"宪章降为本地关键词实现；市场数据实时性、真实流式、语音实时性三项此前已具备，不在本轮范围。全量测试 491 例全绿、分层 lint 通过。
 
 ### 新增（功能线）
-- **出题/诊断 Prompt 硬约束（对标 interview.system.ts）**：`question_gen.get_question_gen_system_prompt()` 新增 4 条约束——只出题不替答、`question_type` 枚举（knowledge/project/behavior）、easy→mid→hard 难度递进、5-8 轮整场意识；`DIAGNOSTICIAN_SYSTEM_PROMPT` 补"连续追问不得超过 2 次"（与 `FOLLOW_UP_MAX_COUNT=2` 双保险）。
-- **评分同轮三态决策（对标 nextAction）**：Diagnostician JSON schema 新增 `next_action`（`follow_up` / `next_question` / `complete`），评分与"追问/推进/收束"一次调用产出；`normalize_result()` 规整三态（非法值由追问文本推导，空值交会话层兜底）；`session.should_follow_up()` 采信模型推进决策——`next_question/complete` 且无追问文本时低分不再强制追问，但**回答过短仍强制追问**（防敷衍被放行），未声明时走原阈值规则（向后兼容）。
-- **JSON 四级容错提取（对标 safeJsonParse）**：`llm_client.safe_json_extract()`——L1 直接解析 → L2 字符串感知提取配平 `{}` 块（兼容围栏/前后缀文本）→ L3 字符级修复（字符串内裸换行/未转义引号启发式判定/截断补闭合引号与括号）→ L4 宽松解析（尾逗号/值位单引号/True-False-None-undefined 字面量），并规避 `it's` 类正文撇号误伤。`chat_json` 的候选可用性判定与最终解析均走四级容错（轻微畸形输出就地修复，不再浪费一次 fallback 候选）；`diagnosis_engine._extract_json` 委托同源实现。
-- **Provider 注册表自动探测（对标 PROVIDER_REGISTRY / createProvider）**：`validate_api_key` 下沉 `config`（`llm_client._api_key_issue` 保留别名兼容测试）；新增 `AI_PROVIDER=auto`——按 `AI_PROVIDERS` 注册顺序探测第一个 Key 有效的后端，未知值回退 deepseek；`LLM_BASE_URL / LLM_API_KEY / LLM_MODEL / LLM_FALLBACK_CHAIN` 全部跟随 `AI_PROVIDER_RESOLVED` 解析；`switch_provider` 支持 `auto` 并在目标 Key 无效时告警。默认值 `deepseek` 不变，零行为破坏。
-- **命名空间知识库（对标 SimpleRagService / augmentCall）**：新增 L2 模块 `backend/knowledge_store.py`——`rag:interview / rag:career / rag:resume` 命名空间隔离，复用 `resume_retriever` 分块 + 关键词加权评分（零第三方检索依赖），`augment_prompt()` 把检索块以【参考知识库相关内容】注入 System Prompt（附反幻觉约束，与简历证据包同一口径）；已纳入 `.importlinter` L2 契约（顺带补上此前遗漏的 `voice_service` 与 `resume_retriever` 契约登记）。
-- **音色别名映射表（对标 DASHSCOPE_VOICE_MAP）**：`voice_service.VOICE_ALIASES`——OpenAI 风格音色（alloy/echo/fable/onyx/nova/shimmer）与性别简称（male/female）统一映射到 MiMo 预置音色；解析顺序 = 预置音色 → 别名（大小写不敏感）→ 配置默认音色。
+- **出题/诊断 Prompt 硬约束**：`question_gen.get_question_gen_system_prompt()` 新增 4 条约束——只出题不替答、`question_type` 枚举（knowledge/project/behavior）、easy→mid→hard 难度递进、5-8 轮整场意识；`DIAGNOSTICIAN_SYSTEM_PROMPT` 补"连续追问不得超过 2 次"（与 `FOLLOW_UP_MAX_COUNT=2` 双保险）。
+- **评分同轮三态决策**：Diagnostician JSON schema 新增 `next_action`（`follow_up` / `next_question` / `complete`），评分与"追问/推进/收束"一次调用产出；`normalize_result()` 规整三态（非法值由追问文本推导，空值交会话层兜底）；`session.should_follow_up()` 采信模型推进决策——`next_question/complete` 且无追问文本时低分不再强制追问，但**回答过短仍强制追问**（防敷衍被放行），未声明时走原阈值规则（向后兼容）。
+- **JSON 四级容错提取**：`llm_client.safe_json_extract()`——L1 直接解析 → L2 字符串感知提取配平 `{}` 块（兼容围栏/前后缀文本）→ L3 字符级修复（字符串内裸换行/未转义引号启发式判定/截断补闭合引号与括号）→ L4 宽松解析（尾逗号/值位单引号/True-False-None-undefined 字面量），并规避 `it's` 类正文撇号误伤。`chat_json` 的候选可用性判定与最终解析均走四级容错（轻微畸形输出就地修复，不再浪费一次 fallback 候选）；`diagnosis_engine._extract_json` 委托同源实现。
+- **Provider 注册表自动探测**：`validate_api_key` 下沉 `config`（`llm_client._api_key_issue` 保留别名兼容测试）；新增 `AI_PROVIDER=auto`——按 `AI_PROVIDERS` 注册顺序探测第一个 Key 有效的后端，未知值回退 deepseek；`LLM_BASE_URL / LLM_API_KEY / LLM_MODEL / LLM_FALLBACK_CHAIN` 全部跟随 `AI_PROVIDER_RESOLVED` 解析；`switch_provider` 支持 `auto` 并在目标 Key 无效时告警。默认值 `deepseek` 不变，零行为破坏。
+- **命名空间知识库**：新增 L2 模块 `backend/knowledge_store.py`——`rag:interview / rag:career / rag:resume` 命名空间隔离，复用 `resume_retriever` 分块 + 关键词加权评分（零第三方检索依赖），`augment_prompt()` 把检索块以【参考知识库相关内容】注入 System Prompt（附反幻觉约束，与简历证据包同一口径）；已纳入 `.importlinter` L2 契约（顺带补上此前遗漏的 `voice_service` 与 `resume_retriever` 契约登记）。
+- **音色别名映射表**：`voice_service.VOICE_ALIASES`——OpenAI 风格音色（alloy/echo/fable/onyx/nova/shimmer）与性别简称（male/female）统一映射到 MiMo 预置音色；解析顺序 = 预置音色 → 别名（大小写不敏感）→ 配置默认音色。
 
 ### 工程化
 - **测试**：新增 `test_json_utils`（19 例）/ `test_knowledge_store`（14 例）/ `test_provider_registry`（18 例，chat_json 容错用例直接替换 `_candidates` 为 mock 候选，**绝不发起真实网络请求**）/ `test_prompt_constraints`（2 例），扩展 `test_session`（next_action 决策 1 例）/ `test_diagnosis_engine`（三态规整 4 例）/ `test_voice_service`（音色别名 4 例），共 62 例；全量 **491 例通过**。
@@ -610,7 +637,7 @@
 
 ## v5.0 简历证据检索 + 不会答恢复 + 薄弱点累计 + 会话中多模式切换（2026-08-28）
 
-> 对标 [agent-interview-coach](https://github.com/xiaodeng-lp/agent-interview-coach) 的 interview_corpus / coaching recovery 思路，补齐三块硬短板：(1) **简历证据检索**——新增 `resume_retriever.py` 轻量检索器，为追问与诊断实时产出「本轮证据包」，并用证据硬规则约束诊断模型**只依据简历证据或候选人亲述评价**、严禁编造经历，从机制上杜绝"AI 凭空捏造候选人做过的事"；(2) **不会答恢复（coaching recovery）**——检测到候选人示弱（不会/不懂/没思路…）时切换辅导式引导，而非机械继续拷打；(3) **薄弱点跨轮累计**——把各轮诊断的薄弱标签跨轮聚合，实时面板 + 报告沉淀「今日弱点」。另支持会话中动态切换模式/阶段（simulation / traditional / coach / hardcore / interview_only × phone_screen / tech_round_1 / tech_round_2 / hr）。新增/重写测试 61 例（session 状态机 + resume_retriever），分层 lint 通过。
+> 本轮在协作迭代中补齐三块硬短板：(1) **简历证据检索**——新增 `resume_retriever.py` 轻量检索器，为追问与诊断实时产出「本轮证据包」，并用证据硬规则约束诊断模型**只依据简历证据或候选人亲述评价**、严禁编造经历，从机制上杜绝"AI 凭空捏造候选人做过的事"；(2) **不会答恢复**——检测到候选人示弱（不会/不懂/没思路…）时切换辅导式引导，而非机械继续拷打；(3) **薄弱点跨轮累计**——把各轮诊断的薄弱标签跨轮聚合，实时面板 + 报告沉淀「今日弱点」。另支持会话中动态切换模式/阶段（simulation / traditional / coach / hardcore / interview_only × phone_screen / tech_round_1 / tech_round_2 / hr）。新增/重写测试 61 例（session 状态机 + resume_retriever），分层 lint 通过。
 
 ### 新增（功能线）
 - **简历证据检索器（`resume_retriever.py`，L2）**：本地关键词 + 文件名优先级加权（`FILE_PRIORITY`，`score = priority + 命中词数×8`），无向量库/无托管依赖；`_chunk_text` 按 `CHUNK_SIZE=2000` 分块、`CHUNK_OVERLAP=250` 保相邻块语义；`_score_chunks` 仅在前 `SEARCH_HEAD_CHARS=800` 字符内匹配，且**只选命中≥1 关键词的块**（修复"无命中块也当选证据"缺陷）；`select_context` 施加单源 `MAX_CHUNKS_PER_SOURCE=2` / 总块数 `MAX_CONTEXT_CHUNKS=4` / 总字符 `MAX_CONTEXT_CHARS=6000` 三重硬预算防 token 膨胀；单文档纳入 `MAX_CHARS_PER_FILE=120_000`；无证据返回 `_NO_EVIDENCE_MESSAGE` 兜底；`trace_retrieval()` 逐块溯源（chunk_id/source/matched_terms/score/selected/reason）。
@@ -687,12 +714,12 @@
 
 ## v4.1 市场数据 Tab：B 档内嵌实时采集（2026-08-27）
 
-> 按用户定案 B 档（子模块内嵌），将开源项目 job-crawler 的 Playwright 采集核心整合进本系统，新增第 6 个"市场数据"Tab，复刻其纸墨印章设计语言（米色纸张 + 衬线 + 印章红）。**后端其余契约零变更**；291 测试全绿、分层 lint 通过。
+> 按用户定案 B 档（子模块内嵌），将既有采集项目的 Playwright 采集核心整合进本系统，新增第 6 个"市场数据"Tab，沿用「纸墨印章」设计语言（米色纸张 + 衬线 + 印章红）。**后端其余契约零变更**；291 测试全绿、分层 lint 通过。
 
 ### 新增（功能线）
 - **实时采集**：关键词 + 省份→城市级联多选（≤5 城市）+ 排序（相关性/最新发布）+ 页数 1~5；后台线程执行 `scrape_jobs()`，前端 1.5s 轮询进度（当前城市/页数/累计条数/进度条）；采集结果经 `adapters.to_standard_job()` 直通 `store.upsert_jobs()` 回灌 `market.db`。
 - **岗位库**：统计概览（岗位总量/平均薪资/热门技能 TOP5/样本城市）+ 筛选（关键词/城市/学历/薪资区间）+ 纸感表格（编号角标/悬停浮起/行勾选）+ 分页。
-- **岗位详情**：全屏独立视图（还原 job-crawler job_detail 结构），展示完整描述/标签/薪资/经验/学历/发布时间，**支持跳转 51job 原文**，可一键用本岗位做 Gap 分析。
+- **岗位详情**：全屏独立视图（沿用既有岗位详情页结构），展示完整描述/标签/薪资/经验/学历/发布时间，**支持跳转 51job 原文**，可一键用本岗位做 Gap 分析。
 - **岗位分析**：单选 Gap 分析（复用 `/api/gap-analysis`，含市场基准注入）；多选 2~5 个跨岗位对比（复用 `/api/cross-job-compare`，排名卡 + 风险等级）；简历文本可一键复用面试 Tab 内容。
 - **两套 UI 风格自由切换**：浅色公文风（米纸墨印）↔ 深色 SaaS 风（深墨底），顶部语义色切换器（青/粉/金/紫），localStorage 记忆；作用域严格限定 `#market-panel`，不影响其余 Tab 的 Indigo 设计体系。
 
@@ -816,7 +843,7 @@ pytest tests/ --cov=backend --cov-report=term-missing  # 覆盖率报告
 - `db.py`：`:memory:` 模式下 `os.makedirs("")` 在 Windows 报错 → 加空目录跳过
 
 ### Web 层加固（#6）[v3.1 NEW]
-基于 job-crawler 项目的安全实践补充：
+基于既有采集项目的安全实践补充：
 - **slowapi 频率限制**：全局 100/分钟，上传 10/分钟，Gap 分析 20/分钟，岗位研究 10/分钟，市场导入 5/分钟，预热 1/分钟
 - **安全响应头**：x-content-type-options / x-frame-options / x-xss-protection / referrer-policy
 - **请求体限制**：上传 10MB，普通请求 1MB，防止大包攻击

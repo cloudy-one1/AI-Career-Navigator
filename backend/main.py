@@ -13,6 +13,7 @@ market/analytics/interview_ws），本文件只保留：
 
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -22,7 +23,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import logger as app_logger
-from .config import config
+from .config import APP_VERSION, config
 from .db import init_db
 from .market import store as market_store
 from . import weakness_memory
@@ -56,7 +57,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 # ─── 请求体大小限制中间件 ───
 class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
-    _UPLOAD_PATHS = ("/api/sessions/upload", "/api/market/import", "/api/upload-jd")
+    # v7.4: 补 /api/voice/asr —— 录音上传与简历上传同属二进制大body，此前漏登记导致
+    # 走普通请求的 1MB 额度，而前端 maxDurationMs=120000（约 1~2MB 音频）必然 413。
+    _UPLOAD_PATHS = (
+        "/api/sessions/upload", "/api/market/import", "/api/upload-jd",
+        "/api/voice/asr",
+    )
 
     async def dispatch(self, request: Request, call_next):
         path = request.url.path
@@ -73,8 +79,19 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
 # ─── 解析 CORS origins ───
 _cors_origins = [o.strip() for o in config.CORS_ORIGINS.split(",") if o.strip()]
 
+# ─── startup（v7.3.1: on_event 已弃用，迁移到 lifespan）───
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await init_db()
+    await market_store.init_market_db()  # v3.0: 市场岗位库（幂等）
+    # v6.5: 清理 30 天未再加重的历史薄弱点（启动即跑一次，失败不影响启动）
+    await weakness_memory.prune_expired()
+    logger.info(f"AI 求职陪跑平台 v{APP_VERSION} 启动完成，当前后端: {config.AI_PROVIDER}")
+    yield
+
+
 # ─── FastAPI 应用 ───
-app = FastAPI(title="AI 求职陪跑平台", version="7.3.0")
+app = FastAPI(title="AI 求职陪跑平台", version=APP_VERSION, lifespan=lifespan)
 
 # CORS 中间件（最先注册）
 app.add_middleware(
@@ -97,15 +114,6 @@ app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
     status_code=429,
     content={"detail": f"请求过于频繁，请稍后再试。限制：{config.RATE_LIMIT_GLOBAL}"},
 ))
-
-
-@app.on_event("startup")
-async def startup():
-    await init_db()
-    await market_store.init_market_db()  # v3.0: 市场岗位库（幂等）
-    # v6.5: 清理 30 天未再加重的历史薄弱点（启动即跑一次，失败不影响启动）
-    await weakness_memory.prune_expired()
-    logger.info(f"AI 求职陪跑平台 v7.3 启动完成，当前后端: {config.AI_PROVIDER}")
 
 
 # ─── 路由注册（保持与拆分前 main.py 一致的域顺序）───

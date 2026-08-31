@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""一键启动脚本：AI面试官 v3.1 — 本地开发模式"""
+"""一键启动脚本：AI 求职陪跑平台 — 本地开发模式"""
 import logging
 import os
 import shutil
@@ -73,8 +73,13 @@ def main():
     host = os.getenv("HOST", "0.0.0.0")
     port = os.getenv("PORT", "8000")
 
+    # v7.3.1: 版本号统一引用 backend.config.APP_VERSION，避免横幅版本漂移
+    try:
+        from backend.config import APP_VERSION
+    except Exception:
+        APP_VERSION = "?"
     log.info("=" * 50)
-    log.info("  AI面试官 v3.1 本地开发模式")
+    log.info("  AI 求职陪跑平台 v%s 本地开发模式", APP_VERSION)
     log.info("  前端: http://localhost:%s", port)
     log.info("  API文档: http://localhost:%s/docs", port)
     log.info("=" * 50)

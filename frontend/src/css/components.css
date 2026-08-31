@@ -285,7 +285,7 @@
    =================================================== */
 
 /* ===================================================
-   AI面试官 v2 - 全局样式
+   v7.3.1: 全局样式（品牌统一为「AI 求职陪跑」，原「AI面试官 v2」注释失更）
    =================================================== */
 
 /* ===== v4.0: 旧框架（:root / body / .header / .tabs / .container）已迁移至
@@ -711,6 +711,51 @@
 @keyframes micProcessing {
   0%, 100% { transform: rotate(0deg); opacity: 1; }
   50% { transform: rotate(8deg); opacity: .7; }
+}
+
+/* v7.4: 录音电平条 —— 云端 ASR 整段录完才有字，中间没有任何反馈，
+   复用 VAD 已有的 RMS 给用户一个"麦克风在收声"的可见信号。
+   绝对定位贴在输入框底部，3px 高，不挤占任何布局。 */
+.voice-level {
+  position: absolute;
+  left: 1px; right: 1px; bottom: 1px;
+  height: 3px;
+  border-radius: 0 0 var(--radius-sm, 6px) var(--radius-sm, 6px);
+  background: rgba(var(--primary-rgb), .10);
+  opacity: 0;
+  overflow: hidden;
+  pointer-events: none;
+  transition: opacity .15s ease;
+}
+.voice-level.on { opacity: 1; }
+.voice-level-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--primary), var(--danger));
+  transition: width .09s linear;
+}
+
+/* v7.4: 免手模式自动提交倒计时。默认隐藏，进入倒计时才占位。 */
+.auto-submit-hint {
+  display: none;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 1;
+  color: var(--text-2, #888);
+}
+.auto-submit-hint.on { display: inline-flex; }
+.auto-submit-track {
+  width: 64px; height: 3px;
+  background: rgba(var(--primary-rgb), .15);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.auto-submit-fill {
+  height: 100%; width: 100%;
+  background: var(--primary);
+  transform-origin: left center;
+  transform: scaleX(1);
 }
 
 /* v2.5: Diagnosis Feedback Buttons */

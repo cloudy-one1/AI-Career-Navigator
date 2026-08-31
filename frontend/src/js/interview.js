@@ -3,11 +3,27 @@
 // ===================================================
 
 import { $, $$, el, toast, DIM_NAMES, scoreClass, escHtml } from './utils.js';
-import { createInterviewWS, request } from './api.js';
+// v7.3.1: 原先另有 4 处 await import('./api.js')，但本文件顶部已静态引用 api.js，
+// Vite 每次构建都告警「dynamic import will not move module into another chunk」——
+// 动态化零收益，统一收敛到这里。
+import {
+  createInterviewWS, request,
+  getCompanyProfiles, uploadResume, uploadJd, generateQuestions,
+} from './api.js';
 import {
   voiceSupport, speak, stopSpeaking, isSpeaking,
   voiceFillWithASR, autoReadQuestion, getMimoStatus, prefetchTTS,
+  // v7.4: 熔断复位（开新一场不再继承上一场的降级）、音色设置、电平事件订阅
+  resetMimoStatus, setTTSVoice, onVoiceEvent,
 } from './voice.js';
+
+// v7.4: 可选朗读音色（与后端 voice_service.PRESET_VOICES 一致，default 走服务端配置）
+const TTS_VOICE_OPTIONS = ['冰糖', '茉莉', '苏打', '白桦', 'Mia', 'Chloe', 'Milo', 'Dean'];
+
+// v7.4: 免手模式参数。自动提交是"替用户做决定"，必须留足反悔余地——
+// 短文本不提交（误触）、提交前倒计时可取消（想再补充）。
+const HANDSFREE_MIN_CHARS = 10;    // 转写文本低于此长度不自动提交
+const HANDSFREE_COUNTDOWN_MS = 3000;
 import { mountLiveRadar, updateLiveRadar, resetLiveRadar } from './liveRadar.js';
 
 let ws = null;
@@ -19,7 +35,12 @@ let currentMode = 'simulation';  // v2.4: 面试模式
 let selectedResumeId = null;
 let selectedPositionId = null;
 let voiceStopFn = null;       // 当前录音停止函数
-let voiceState = 'idle';     // 'idle' | 'listening' | 'speaking'
+let voiceState = 'idle';     // 'idle' | 'listening' | 'processing' | 'speaking'
+// v7.4: 免手模式（默认关）。开后：念完题自动开麦 → VAD 判断说完自动停录转写
+// → 倒计时 3 秒自动提交。全部走既有入口，不开新的状态分支。
+let handsFreeEnabled = false;
+let autoSubmitTimer = null;   // 自动提交倒计时句柄（非 null 即"倒计时进行中"）
+let autoSubmitDeadline = 0;
 // v6.1: 最近一次输入来源（'text' | 'voice'），随 answer 上报；
 // 后端据此对语音回答启用 ASR 转写容错评分（借鉴 offerMaster）
 let lastInputSource = 'text';
@@ -76,6 +97,10 @@ export function initInterview() {
   const panel = $('#interview-panel');
   panel.innerHTML = '';
   setupStep = 1;
+  // v7.4: Tab 重建 = 引导页 DOM 重建，免手开关会回到未勾选，状态必须同步复位，
+  // 否则出现"复选框没勾但行为已开启"的隐性不一致。
+  handsFreeEnabled = false;
+  cancelAutoSubmit();
   // v6.3: Tab 重建即回到 setup。会话 UI 无法跨重建恢复——
   // 显式重置状态机优于让 phase 与 DOM 静默脱节（子代理调研的最高危路径）。
   setPhase(PHASE.SETUP);
@@ -200,6 +225,33 @@ export function initInterview() {
           el('span', { className: 'session-mode-hint',
             textContent: '不同公司的评判标准与追问清单不同；默认按 JD 关键词自动匹配' }),
         ),
+        // v7.4: 语音设置。此前音色只能改 .env 重启服务（前端所有调用点硬编码 'default'），
+        // 免手模式则完全没有入口——把这两项能力暴露到 UI 层。
+        el('div', { className: 'form-group' },
+          el('label', { className: 'form-label', textContent: '🔊 语音设置' }),
+          el('select', {
+            id: 'tts-voice-select', className: 'session-mode-select',
+            onchange: () => { setTTSVoice($('#tts-voice-select').value); updateSummary(); },
+          },
+            el('option', { value: 'default', textContent: '默认音色（跟随服务端 MIMO_TTS_VOICE）' }),
+            ...TTS_VOICE_OPTIONS.map(v => el('option', { value: v, textContent: `音色：${v}` })),
+          ),
+          el('span', { className: 'session-mode-hint',
+            textContent: '未配置 MIMO_API_KEY 时自动降级浏览器原生语音，音色与免手模式均不生效' }),
+          el('div', { className: 'self-intro-toggle' },
+            el('label', { className: 'checkbox-label' },
+              el('input', {
+                type: 'checkbox', id: 'handsfree-cb',
+                onchange: () => {
+                  handsFreeEnabled = !!$('#handsfree-cb')?.checked;
+                  updateSummary();
+                },
+              }),
+              el('span', { className: 'checkbox-text',
+                textContent: `免手模式：念完题自动开麦，说完自动停录并倒计时 ${HANDSFREE_COUNTDOWN_MS / 1000} 秒自动提交（倒计时期间可取消；转写少于 ${HANDSFREE_MIN_CHARS} 字不提交）` }),
+            ),
+          ),
+        ),
       ),
 
       // Step 3：题型与风格
@@ -285,6 +337,10 @@ export function initInterview() {
         el('div', { className: 'summary-item' },
           el('span', { className: 'summary-label', textContent: '公司' }),
           el('span', { className: 'summary-value', id: 'summary-company', textContent: '自动匹配' }),
+        ),
+        el('div', { className: 'summary-item' },
+          el('span', { className: 'summary-label', textContent: '语音' }),
+          el('span', { className: 'summary-value', id: 'summary-voice', textContent: '默认音色' }),
         ),
         el('button', {
           id: 'start-btn', className: 'btn btn-primary btn-block',
@@ -384,7 +440,6 @@ async function loadCompanyProfiles() {
   const noneOpt = () => el('option', { value: 'none', textContent: '🚫 不启用公司风格' });
   sel.replaceChildren(autoOpt(), noneOpt());
   try {
-    const { getCompanyProfiles } = await import('./api.js');
     const profiles = await getCompanyProfiles();
     if (!Array.isArray(profiles) || !profiles.length) return;
     // 公司名来自后端 YAML 配置（半可信）：走 DOM 赋值而非模板串拼接，杜绝属性位逃逸
@@ -443,6 +498,11 @@ function updateSummary() {
       : (v ? (companySel.options[companySel.selectedIndex]?.textContent || v) : '自动匹配');
     set('summary-company', label);
   }
+  // v7.4: 语音摘要（音色 + 免手模式）
+  const voiceSel = $('#tts-voice-select');
+  const voiceName = voiceSel && voiceSel.value !== 'default' ? voiceSel.value : '默认音色';
+  const hf = $('#handsfree-cb')?.checked ? ' · 免手' : '';
+  set('summary-voice', `${voiceName}${hf}`);
 }
 
 /* v4.0: 进入实战态（隐藏 Setup，显示面试进行区） */
@@ -510,7 +570,6 @@ async function handleUpload() {
   btn.textContent = '解析中...';
 
   try {
-    const { uploadResume } = await import('./api.js');
     const res = await uploadResume(file);
     $('#resume-text').value = res.text;
     toast('简历解析成功', 'success');
@@ -533,7 +592,6 @@ async function handleJdUpload() {
   btn.textContent = '解析中...';
 
   try {
-    const { uploadJd } = await import('./api.js');
     const res = await uploadJd(file);
     $('#jd-text').value = res.text;
     selectedPositionId = null;   // 上传内容以编辑框为准，脱离岗位库关联
@@ -557,7 +615,6 @@ async function startInterview() {
   btn.textContent = '正在生成问题...';
 
   try {
-    const { generateQuestions } = await import('./api.js');
     const includeSelfIntro = $('#self-intro-cb')?.checked ?? false;
     const questionTypeMix = getQuestionTypeMix();
     const companyProfile = $('#company-select')?.value ?? '';   // v6.5: 目标公司风格
@@ -590,6 +647,10 @@ function connectWS(sessionId) {
   currentRound = 0;
   currentQuestion = null;
   voiceState = 'idle';
+  // v7.4: 新一场面试复位云端语音熔断。否则上一场因网络抖动降级后，
+  // 这一场会一直停在浏览器机械音，用户只能刷新页面。
+  resetMimoStatus();
+  cancelAutoSubmit();
   lastInputSource = 'text';
   questionShownAt = 0;
   followUpShownAt = 0;
@@ -1037,8 +1098,12 @@ function showQuestion(area, data) {
         className: 'voice-btn voice-btn-mic',
         title: voiceSupport.mimo ? '语音输入（MiMo）' : '语音输入',
         innerHTML: '<span class="voice-icon">🎤</span>',
-        onClick: toggleVoiceInput,
+        // v7.4: 包一层箭头函数，否则 toggleVoiceInput(opts) 会收到 MouseEvent
+        onClick: () => toggleVoiceInput(),
       }) : '',
+      // v7.4: 录音电平条（VAD 已有 RMS，复用即可，绝对定位不挤占布局）
+      el('div', { className: 'voice-level', id: 'voice-level' },
+        el('div', { className: 'voice-level-fill' })),
     ),
     el('div', { className: 'answer-actions' },
       el('button', {
@@ -1046,6 +1111,16 @@ function showQuestion(area, data) {
         textContent: '提交回答',
         onClick: submitAnswer,
       }),
+      // v7.4: 免手模式自动提交倒计时（仅免手模式开启且转写成功后显示）
+      el('div', { className: 'auto-submit-hint', id: 'auto-submit-hint' },
+        el('span', { className: 'auto-submit-label', textContent: '3 秒后自动提交' }),
+        el('div', { className: 'auto-submit-track' },
+          el('div', { className: 'auto-submit-fill' })),
+        el('button', {
+          type: 'button', className: 'btn btn-ghost btn-sm',
+          textContent: '取消', onClick: cancelAutoSubmit,
+        }),
+      ),
     ),
   );
 
@@ -1055,12 +1130,17 @@ function showQuestion(area, data) {
   questionShownAt = Date.now();   // v6.2: 开始计本题思考时长
   followUpShownAt = 0;
 
+  // v7.4: 换题即撤销上一题遗留的自动提交倒计时（DOM 是重建的，句柄必须手动清）
+  cancelAutoSubmit();
   // v6.1: 收到新题先预取 TTS（后端 LRU 缓存，用户点朗读时零等待）
   prefetchTTS(data.question);
   const answerInput = $('#answer-input');
   if (answerInput) {
     // 手动键入 → 输入来源重置为 text；ASR 程序化填充不触发 input 事件，不会误重置
-    answerInput.addEventListener('input', () => { lastInputSource = 'text'; });
+    answerInput.addEventListener('input', () => {
+      lastInputSource = 'text';
+      cancelAutoSubmit();   // v7.4: 用户动手打字 = 不想被自动提交
+    });
   }
 
   // 自动朗读题目（v6.3: autoReadEnabled 恒真死开关已移除）
@@ -1068,10 +1148,101 @@ function showQuestion(area, data) {
     autoReadQuestion(data.question, (state) => {
       voiceState = state === 'speaking' ? 'speaking' : 'idle';
       updateVoiceButtonStates();
-    }, () => refocusAnswerInput());   // v6.2: 朗读结束自动切回文字输入
+      if (state === 'idle') cancelAutoSubmit();
+    }, () => {
+      refocusAnswerInput();   // v6.2: 朗读结束自动切回文字输入
+      armHandsFree();         // v7.4: 免手模式下念完题直接开麦
+    });
     voiceState = 'speaking';
     updateVoiceButtonStates();
   }
+}
+
+// ===== v7.4 音量电平可视化 =====
+// 云端 ASR 是请求-响应协议，整段录完才有字，中间没有任何反馈（反而不如浏览器
+// 原生 STT 有 interim 结果上屏）。VAD 本来就在算 RMS，复用它做一条电平条，
+// 让用户至少看到"麦克风在收声"。
+
+onVoiceEvent('stt:level', (data) => {
+  $$('.voice-level').forEach((box) => {
+    const fill = box.querySelector('.voice-level-fill');
+    if (!fill) return;
+    if (data.stopped) {
+      box.classList.remove('on');
+      fill.style.width = '0%';
+      return;
+    }
+    box.classList.add('on');
+    fill.style.width = `${Math.round((data.level || 0) * 100)}%`;
+  });
+});
+
+// ===== v7.4 免手模式 =====
+
+/** 朗读结束后自动开麦（仅免手模式；要求云端语音，浏览器原生 STT 没有自动停录语义） */
+function armHandsFree() {
+  if (!handsFreeEnabled || session.inputLocked) return;
+  if (voiceState !== 'idle' || autoSubmitTimer) return;
+  if (!voiceSupport.mimo) return;
+  // 追问块存在时优先对追问录音，否则对主回答
+  if ($('#fu-answer-input')) toggleFuVoiceInput({ onTranscribed: onVoiceTranscribed });
+  else toggleVoiceInput({ onTranscribed: onVoiceTranscribed });
+}
+
+/** VAD 判断"说完了"并成功转写后的回调：满足条件则进入自动提交倒计时 */
+function onVoiceTranscribed(text, meta) {
+  if (!handsFreeEnabled || !meta || meta.reason !== 'auto') return;
+  const input = $('#fu-answer-input') || $('#answer-input');
+  if (!input || input.disabled) return;
+  // 太短不自动提交——多半是误触或只"嗯"了一声，替用户提交只会丢一次作答机会
+  if ((input.value || '').trim().length < HANDSFREE_MIN_CHARS) return;
+  scheduleAutoSubmit();
+}
+
+/** 主回答区与追问区在 DOM 中共存，倒计时控件按"当前活动区"定位，取消时全量复位 */
+function _autoSubmitEls() {
+  const isFollowUp = !!$('#fu-answer-input');
+  const hint = $(isFollowUp ? '#fu-auto-submit-hint' : '#auto-submit-hint');
+  return {
+    isFollowUp,
+    hint,
+    fill: hint ? hint.querySelector('.auto-submit-fill') : null,
+    label: hint ? hint.querySelector('.auto-submit-label') : null,
+  };
+}
+
+function scheduleAutoSubmit() {
+  cancelAutoSubmit();
+  const { isFollowUp, hint, fill, label } = _autoSubmitEls();
+  if (!hint) return;
+  hint.classList.add('on');
+
+  autoSubmitDeadline = Date.now() + HANDSFREE_COUNTDOWN_MS;
+  const tick = () => {
+    const left = autoSubmitDeadline - Date.now();
+    if (left <= 0) {
+      if (fill) fill.style.transform = 'scaleX(0)';
+      cancelAutoSubmit();
+      if (isFollowUp) submitFollowUp();
+      else submitAnswer();
+      return;
+    }
+    if (fill) fill.style.transform = `scaleX(${left / HANDSFREE_COUNTDOWN_MS})`;
+    if (label) label.textContent = `${Math.ceil(left / 1000)} 秒后自动提交`;
+    autoSubmitTimer = setTimeout(tick, 100);
+  };
+  tick();
+}
+
+/** 取消自动提交倒计时（提交/换题/用户动手输入/点麦克风时调用） */
+function cancelAutoSubmit() {
+  const wasPending = autoSubmitTimer !== null;
+  if (autoSubmitTimer) { clearTimeout(autoSubmitTimer); autoSubmitTimer = null; }
+  autoSubmitDeadline = 0;
+  $$('.auto-submit-hint').forEach(h => h.classList.remove('on'));
+  $$('.auto-submit-fill').forEach(f => { f.style.transform = 'scaleX(1)'; });
+  $$('.auto-submit-label').forEach(l => { l.textContent = '3 秒后自动提交'; });
+  return wasPending;
 }
 
 // ===== v2.3 语音交互 =====
@@ -1090,7 +1261,8 @@ function toggleReadQuestion(e, questionText) {
   updateVoiceButtonStates();
 }
 
-function toggleVoiceInput() {
+function toggleVoiceInput(opts = {}) {
+  cancelAutoSubmit();   // v7.4: 用户自己动麦克风 → 撤销待提交的倒计时
   if (voiceState === 'listening' || voiceState === 'processing') {
     // 停止录音/识别
     if (voiceStopFn) { voiceStopFn(); voiceStopFn = null; }
@@ -1111,7 +1283,7 @@ function toggleVoiceInput() {
       voiceStopFn = null;
       refocusAnswerInput(textarea);   // v6.2: 转写结束自动切回文字输入
     }
-  }).then((stop) => {
+  }, opts).then((stop) => {
     voiceStopFn = stop;
     if (voiceStopFn) {
       voiceState = 'listening';
@@ -1201,8 +1373,10 @@ function showFollowUp(area, question) {
         className: 'voice-btn voice-btn-mic',
         title: voiceSupport.mimo ? '语音输入（MiMo）' : '语音输入',
         innerHTML: '<span class="voice-icon">🎤</span>',
-        onClick: toggleFuVoiceInput,
+        onClick: () => toggleFuVoiceInput(),
       }) : '',
+      el('div', { className: 'voice-level' },
+        el('div', { className: 'voice-level-fill' })),
     ),
     el('div', { className: 'answer-actions', style: 'margin-top:8px;' },
       el('button', {
@@ -1213,8 +1387,17 @@ function showFollowUp(area, question) {
       el('button', {
         className: 'btn btn-secondary',
         textContent: '跳过追问',
-        onClick: () => { stopSpeaking(); skipFollowUp(); },
+        onClick: () => { stopSpeaking(); cancelAutoSubmit(); skipFollowUp(); },
       }),
+      el('div', { className: 'auto-submit-hint', id: 'fu-auto-submit-hint' },
+        el('span', { className: 'auto-submit-label', textContent: '3 秒后自动提交' }),
+        el('div', { className: 'auto-submit-track' },
+          el('div', { className: 'auto-submit-fill' })),
+        el('button', {
+          type: 'button', className: 'btn btn-ghost btn-sm',
+          textContent: '取消', onClick: cancelAutoSubmit,
+        }),
+      ),
     ),
   );
 
@@ -1222,6 +1405,7 @@ function showFollowUp(area, question) {
   const answerArea = area.querySelector('.answer-area');
   if (answerArea) answerArea.after(fuDiv);
   else area.appendChild(fuDiv);
+  cancelAutoSubmit();   // v7.4: 主回答区遗留的倒计时不应作用到追问上
   $('#fu-answer-input')?.focus();
   followUpShownAt = Date.now();   // v6.2: 开始计追问思考时长
 
@@ -1230,13 +1414,18 @@ function showFollowUp(area, question) {
     autoReadQuestion(question, (state) => {
       voiceState = state === 'speaking' ? 'speaking' : 'idle';
       updateVoiceButtonStates();
-    }, () => refocusAnswerInput($('#fu-answer-input')));
+      if (state === 'idle') cancelAutoSubmit();
+    }, () => {
+      refocusAnswerInput($('#fu-answer-input'));
+      armHandsFree();         // v7.4: 免手模式下念完追问直接开麦
+    });
     voiceState = 'speaking';
     updateVoiceButtonStates();
   }
 }
 
-function toggleFuVoiceInput() {
+function toggleFuVoiceInput(opts = {}) {
+  cancelAutoSubmit();   // v7.4: 同 toggleVoiceInput
   if (voiceState === 'listening' || voiceState === 'processing') {
     if (voiceStopFn) { voiceStopFn(); voiceStopFn = null; }
     voiceState = 'idle';
@@ -1256,7 +1445,7 @@ function toggleFuVoiceInput() {
       voiceStopFn = null;
       refocusAnswerInput(textarea);   // v6.2: 转写结束自动切回文字输入
     }
-  }).then((stop) => {
+  }, opts).then((stop) => {
     voiceStopFn = stop;
     if (voiceStopFn) {
       voiceState = 'listening';
@@ -1279,6 +1468,7 @@ function updateFuVoiceUI() {
 }
 
 function submitAnswer() {
+  cancelAutoSubmit();   // v7.4: 手动提交即撤销倒计时（自动提交也走这里，幂等）
   const input = $('#answer-input');
   const answer = input.value.trim();
   if (!answer) { toast('请输入回答', 'warning'); return; }
@@ -1317,6 +1507,7 @@ function submitAnswer() {
 }
 
 function submitFollowUp() {
+  cancelAutoSubmit();   // v7.4: 同 submitAnswer
   const input = $('#fu-answer-input');
   if (!input) return;
   const answer = input.value.trim();

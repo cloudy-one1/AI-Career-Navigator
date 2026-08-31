@@ -2,6 +2,11 @@
 // api.js — HTTP API + WebSocket 封装
 // ===================================================
 
+// v7.3.1: 改为静态导入。auth.js 只依赖 utils.js、不依赖 api.js，不存在循环；
+// 原先的 await import('./auth.js') 在 auth.js 又被 app.js/report.js 静态引用后
+// 已无法拆出独立 chunk（Vite 每次构建都为此告警），动态化不再有收益。
+import { getToken } from './auth.js';
+
 const BASE = '';
 
 /**
@@ -28,13 +33,9 @@ export async function request(method, path, body, isForm, { raw = false } = {}) 
     opts.body = body;
   }
   // v7.0: 全站唯一出口，token 在这里统一注入，各调用点无需感知认证。
-  try {
-    const { getToken } = await import('./auth.js');
-    const token = getToken();
-    if (token) headers.Authorization = `Bearer ${token}`;
-  } catch {
-    // auth.js 不可用（如被单独引用）时静默降级为无 token 请求
-  }
+  // getToken 内部已对 localStorage 不可用做兜底（返回空串），此处无需再包一层 try。
+  const token = getToken();
+  if (token) headers.Authorization = `Bearer ${token}`;
   if (Object.keys(headers).length) opts.headers = headers;
 
   const res = await fetch(BASE + path, opts);

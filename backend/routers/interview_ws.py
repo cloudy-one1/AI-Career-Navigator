@@ -165,7 +165,7 @@ async def ws_interview(websocket: WebSocket, session_id: str,
                     break
                 # v7.0: 出题即标记"等待回答"并落库 —— 让进程重启后仍能看出
                 # 这场面试停在哪一题（注意：只落进度，不做断点续答）。
-                _mark_flow(session_id, session, FlowState.WAITING_ANSWER)
+                await _mark_flow(session_id, session, FlowState.WAITING_ANSWER)
                 await websocket.send_json({
                     "type": "question",
                     "data": {
@@ -364,7 +364,7 @@ async def ws_interview(websocket: WebSocket, session_id: str,
                     # v2.6: 追问已由诊断一次性产出，无需二次 LLM 调用
                     if session.should_follow_up(answer_text, diag):
                         follow_up_q = await session.generate_follow_up(diag)
-                        _mark_flow(session_id, session, FlowState.GENERATING_FOLLOW_UP)
+                        await _mark_flow(session_id, session, FlowState.GENERATING_FOLLOW_UP)
                         await websocket.send_json({
                             "type": "follow_up",
                             "data": {
@@ -407,7 +407,7 @@ async def ws_interview(websocket: WebSocket, session_id: str,
                                 fu_text,
                                 (fu_msg.get("data", {}) or {}).get("thinking_seconds", 0) or 0,
                             )
-                            _mark_flow(session_id, session, FlowState.DECIDING_NEXT)
+                            await _mark_flow(session_id, session, FlowState.DECIDING_NEXT)
                             await websocket.send_json({
                                 "type": "follow_up_received",
                                 "data": {"message": "补充回答已记录"}
@@ -466,10 +466,10 @@ async def ws_interview(websocket: WebSocket, session_id: str,
 
             # 推进到下一轮
             session.advance_round()
-            _mark_flow(session_id, session, FlowState.ADVANCING_ROUND)
+            await _mark_flow(session_id, session, FlowState.ADVANCING_ROUND)
 
         # 3. 生成报告
-        _mark_flow(session_id, session, FlowState.FINISHED)
+        await _mark_flow(session_id, session, FlowState.FINISHED)
         report = session.build_report()
         await save_report(session_id, report)
         await update_session_status(session_id, "completed")

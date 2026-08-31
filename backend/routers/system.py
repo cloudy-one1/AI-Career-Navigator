@@ -5,7 +5,7 @@ import os
 
 from fastapi import APIRouter, HTTPException, Request
 
-from ..config import config
+from ..config import APP_VERSION, config
 from ..db import list_sessions, lookup_jd_weights
 from ..llm_client import LLMClient, _api_key_issue
 from ..diagnosis_engine import DiagnosisEngine
@@ -19,7 +19,7 @@ router = APIRouter()
 
 @router.get("/api/health")
 async def health():
-    return {"status": "ok", "version": "3.1", "provider": config.AI_PROVIDER}
+    return {"status": "ok", "version": APP_VERSION, "provider": config.AI_PROVIDER}
 
 
 @router.get("/api/providers", response_model=ProviderListResponse)
