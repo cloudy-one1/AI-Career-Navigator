@@ -56,6 +56,10 @@ htmlcov/
 .agnes/
 .zcode/
 
+# === [v7.4] Vite / Vitest 缓存（跑 npm run test 会在仓库根生成，非源码）===
+.vite/
+.vitest/
+
 # === 对话上传附件（不入库） ===
 upload_*.jpg
 upload_*.png

@@ -1,11 +1,14 @@
-# CI（v7.2.1 新增）：分层契约 + 全量测试 + 前端构建。
+# CI（v7.2.1 新增；v7.4 加入前端单测）：分层契约 + 全量后端测试 + 前端单测 + 前端构建。
 #
 # 口径说明：
 # - 后端测试不含 live-LLM 抽检（test_diagnosis_golden.py 的 live_llm 用例默认
 #   skip，需 GOLDEN_LIVE_LLM=1 + 真实 Key，烧 token，仅手动触发，见 README）。
 # - 采集器测试在导入前 stub 了 playwright（见 test_market_crawler_job_scraper.py），
 #   因此无需 `playwright install chromium` 即可运行。
-# - 前端无单测，`npm run build` 同时充当类型/导入错误的冒烟检查。
+# - 前端单测（v7.4 起）：`npm run test` 跑 vitest，首批钉住 voice.js 的世代号竞态、
+#   熔断韧性与 VAD 状态机；`npm run build` 仍是类型/导入错误的冒烟检查。
+# - CI 用 `npm ci`：package.json 与 package-lock.json 必须同步——新增前端依赖后
+#   要把 package-lock.json 一起提交，否则这一步会因依赖不一致直接失败。
 name: CI
 
 on:
@@ -51,6 +54,9 @@ jobs:
 
       - name: 安装依赖
         run: npm ci
+
+      - name: 前端单测（vitest）
+        run: npm run test
 
       - name: 构建（冒烟：导入/语法错误即红灯）
         run: npm run build

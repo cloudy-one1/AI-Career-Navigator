@@ -30,27 +30,76 @@ export const voiceSupport = {
 };
 
 // ===== MiMo 云端引擎状态 =====
-// 'unknown'（未探测）| 'ready'（可用）| 'failed'（本次会话已失败，降级浏览器）
+// 'unknown'（未探测）| 'ready'（可用）| 'failed'（熔断中，TTL 过后可重试）
 let mimoStatus = 'unknown';
+
+// v7.4: 熔断韧性。旧语义是「一次失败即永久降级」——一次网络抖动、一次自动播放被拒、
+// 一次 413，都会让整场面试剩下的题目全部退回浏览器机械音，代价远超故障本身。
+// 改为：连续失败累计到阈值才熔断，熔断后过 TTL 允许重新探测一次；
+// 开新一场面试时由调用方 resetMimoStatus() 彻底复位。
+const MIMO_FAIL_THRESHOLD = 3;      // 连续失败达此次数才熔断
+const MIMO_RETRY_TTL_MS = 60_000;   // 熔断后多久允许重新探测
+let mimoFailures = 0;
+let mimoFailedAt = 0;
 
 export function getMimoStatus() {
   return mimoStatus;
 }
 
+/** 复位云端引擎状态（开新一场面试时调用，避免上一场的熔断被继承）。 */
+export function resetMimoStatus() {
+  mimoStatus = 'unknown';
+  mimoFailures = 0;
+  mimoFailedAt = 0;
+}
+
+function _markMimoOk() {
+  mimoStatus = 'ready';
+  mimoFailures = 0;
+  mimoFailedAt = 0;
+}
+
+// v7.4: 当前朗读音色。后端 voice_service 支持 9 个预置音色 + OpenAI 风格别名表，
+// 但此前前端每个调用点都硬编码 'default'，配置层的能力在 UI 层完全不可达——
+// 加一个模块级设置位把这条通路打通（缓存键含音色，切换后自然失效）。
+let currentVoice = 'default';
+
+export function setTTSVoice(name) {
+  currentVoice = (name || 'default').trim() || 'default';
+}
+
+export function getTTSVoice() {
+  return currentVoice;
+}
+
+/** 记一次失败。未达阈值只计数（本次降级播，下次仍可重试）；达阈值才熔断。 */
+function _markMimoFailed() {
+  mimoFailures += 1;
+  if (mimoFailures >= MIMO_FAIL_THRESHOLD) {
+    mimoStatus = 'failed';
+    mimoFailedAt = Date.now();
+  }
+}
+
 /**
  * 探测 MiMo 语音可用性（后台调用一次 TTS）。
- * 仅 unknown 时执行；ready/failed 直接返回。
+ * 仅 unknown 时执行；ready 直接返回；failed 需等 TTL 过后才重试。
  */
 export async function probeMimo() {
-  if (mimoStatus !== 'unknown') return mimoStatus;
+  if (mimoStatus === 'ready') return mimoStatus;
+  // v7.4: 熔断未过 TTL 不重试——否则每题都浪费一次注定失败的请求
+  if (mimoStatus === 'failed' && Date.now() - mimoFailedAt < MIMO_RETRY_TTL_MS) {
+    return mimoStatus;
+  }
   try {
-    const data = await requestVoiceTTS('测试', 'default');
-    mimoStatus = data && data.used ? 'ready' : 'failed';
+    const data = await requestVoiceTTS('测试', currentVoice);
+    if (data && data.used) _markMimoOk();
+    else _markMimoFailed();
   } catch (_) {
-    mimoStatus = 'failed';
+    _markMimoFailed();
   }
   if (mimoStatus === 'failed') {
-    console.info('[Voice] MiMo 语音不可用，已降级为浏览器原生语音');
+    console.info('[Voice] MiMo 语音连续失败已达阈值，降级为浏览器原生语音');
   }
   return mimoStatus;
 }
@@ -177,7 +226,7 @@ function browserSpeak(text, opts = {}) {
 function mimoSpeak(text, opts = {}) {
   const seq = speechSeq;   // v6.3: 世代守卫
   return new Promise((resolve) => {
-    requestVoiceTTS(text, 'default')
+    requestVoiceTTS(text, currentVoice)
       .then((data) => {
         // 拿到音频时已被打断：不得开始播放（否则"停了又响"）
         if (seq !== speechSeq) { resolve(false); return; }
@@ -195,26 +244,29 @@ function mimoSpeak(text, opts = {}) {
         const audio = new Audio(url);
         mimoAudio = audio;
         emit('tts:start', { text, engine: 'mimo' });
-        audio.onended = () => {
+        // v7.4: 一次性守卫（与 browserSpeak 的 `ended` 标志对齐）。
+        // MiMo 路径此前漏了它：onended / onerror / play().catch 是三条独立收口路径，
+        // 个别浏览器会在播放结束时既走 ended 又抛 error，onEnd 就被调用两次——
+        // 调用方（autoReadQuestion 切回输入、免手模式自动开麦）会连锁执行两遍。
+        let settled = false;
+        const finishMimo = (ok) => {
+          if (settled) return;
+          settled = true;
           mimoAudio = null;
           URL.revokeObjectURL(url);
-          emit('tts:end');
+          if (ok) emit('tts:end');
+          // 被打断时一律不触发 onEnd（世代守卫的既有语义）
           if (seq === speechSeq && opts.onEnd) opts.onEnd();
-          resolve(true);
+          resolve(ok);
         };
+        audio.onended = () => finishMimo(true);
         audio.onerror = () => {
           if (seq !== speechSeq) { resolve(false); return; }  // 已被打断，stopSpeaking 已清理
-          mimoAudio = null;
-          URL.revokeObjectURL(url);
-          if (opts.onEnd) opts.onEnd();
-          resolve(false);
+          finishMimo(false);
         };
         audio.play().catch(() => {
           if (seq !== speechSeq) { resolve(false); return; }
-          mimoAudio = null;
-          URL.revokeObjectURL(url);
-          if (opts.onEnd) opts.onEnd();
-          resolve(false);
+          finishMimo(false);
         });
       })
       .catch(() => resolve(false));
@@ -228,18 +280,18 @@ function mimoSpeak(text, opts = {}) {
  */
 export async function speak(text, opts = {}) {
   if (!text || !text.trim()) { if (opts.onEnd) opts.onEnd(); return; }
-  // 未探测时先探测，避免首读降级
-  if (mimoStatus === 'unknown') await probeMimo();
+  // v7.4: 未探测、或熔断已过 TTL，都重新探测一次（probeMimo 内部会挡掉 TTL 内的重试）
+  if (mimoStatus !== 'ready') await probeMimo();
 
   const seq = speechSeq;   // v6.3: 世代守卫
   if (mimoStatus === 'ready') {
     const ok = await mimoSpeak(text, opts);
     if (seq !== speechSeq) return;   // 朗读期间被打断：不得降级续播
-    if (!ok) {
-      // 本次失败，降级并标记，后续直接走浏览器
-      mimoStatus = 'failed';
-      browserSpeak(text, opts);
-    }
+    if (ok) { _markMimoOk(); return; }
+    // v7.4: 只计一次失败，不立刻熔断 —— 单次抖动（网络/自动播放策略/413）不该让
+    // 这场面试后续的题全部退回机械音。连续失败达阈值才降级。
+    _markMimoFailed();
+    browserSpeak(text, opts);
   } else {
     browserSpeak(text, opts);
   }
@@ -348,8 +400,21 @@ const VAD_DEFAULTS = {
   silenceMs: 2500,        // 连续静音多久判定"说完了"
   minSpeechMs: 800,       // 至少采集到这么久的语音才允许自动停（防刚开口就误停）
   maxDurationMs: 120000,  // 单次录音硬上限，防忘记停止
-  threshold: 0.02,        // 音量阈值（RMS，0-1）
+  threshold: 0.02,        // 音量阈值（RMS，0-1）—— adaptive 关闭时的固定兜底值
   tickMs: 100,            // 采样间隔
+  // v7.4: 预滚噪声校准（pre-roll calibration）。固定 0.02 两头不讨好——
+  // 嘈杂环境底噪长期超阈，"说完"永远检测不到，只能等 120s 硬上限兜底；
+  // 低增益麦克风又把整段语音判成静音，同样拖到硬上限。
+  // 做法：开录后先用 calibrationMs 取窗口内**最小** RMS 当底噪（用户此时多半还没开口），
+  // 阈值 = 底噪 × gain + margin，再夹在 [minThreshold, maxThreshold]。
+  // 刻意不做"连续自适应"：慢升快降那套会把持续说话逐渐学成底噪，反而更不可靠，
+  // 也会让同一场面试里前后的判定标准漂移。校准一次、全程固定，行为可预测可复现。
+  adaptive: true,
+  calibrationMs: 700,     // 开录后先观察这么久，期间只估底噪、不做停录判断
+  thresholdGain: 2.0,
+  thresholdMargin: 0.012, // 安静环境下抬一点，避免把呼吸声当语音
+  minThreshold: 0.008,
+  maxThreshold: 0.12,
 };
 
 let vadTimer = null;
@@ -374,6 +439,9 @@ function _startVad(stream, onAutoStop, opts = {}) {
     const startedAt = Date.now();
     let speechMs = 0;
     let silenceMs = 0;
+    let noiseFloor = Infinity;   // v7.4: 校准窗内取最小 RMS
+    let threshold = cfg.threshold;
+    let calibrated = !cfg.adaptive;
 
     vadTimer = setInterval(() => {
       if (!recording) { _stopVad(); return; }
@@ -381,15 +449,40 @@ function _startVad(stream, onAutoStop, opts = {}) {
       let sum = 0;
       for (let i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
       const rms = Math.sqrt(sum / buf.length);
-      if (rms > cfg.threshold) { speechMs += cfg.tickMs; silenceMs = 0; }
-      else { silenceMs += cfg.tickMs; }
 
       const elapsed = Date.now() - startedAt;
+      // 硬上限放在校准之前：否则 calibrationMs > maxDurationMs 时会永远卡在校准窗
       if (elapsed >= cfg.maxDurationMs) {
         _stopVad();
         if (onAutoStop) onAutoStop('max_duration');
         return;
       }
+
+      // v7.4: 校准窗内只估底噪，不做停录判断（此时用户多半还没开口）
+      if (!calibrated) {
+        if (rms < noiseFloor) noiseFloor = rms;
+        emit('stt:level', { level: Math.min(1, rms / Math.max(cfg.threshold * 3, 1e-6)),
+          rms, threshold, speech: false, calibrating: true });
+        if (elapsed < cfg.calibrationMs) return;
+        const base = Number.isFinite(noiseFloor) ? noiseFloor : 0;
+        threshold = Math.min(
+          cfg.maxThreshold,
+          Math.max(cfg.minThreshold, base * cfg.thresholdGain + cfg.thresholdMargin),
+        );
+        calibrated = true;
+      }
+
+      if (rms > threshold) { speechMs += cfg.tickMs; silenceMs = 0; }
+      else { silenceMs += cfg.tickMs; }
+
+      // v7.4: 电平外抛 —— 云端 ASR 是请求-响应协议，整段录完才有字，
+      // 中间没有任何反馈。把已有的 RMS 复用出来做音量条，用户至少能看到"在收声"。
+      emit('stt:level', {
+        level: Math.min(1, rms / Math.max(threshold * 3, 1e-6)),
+        rms,
+        threshold,
+        speech: rms > threshold,
+      });
       // 已经说过话 + 静音够久 → 认为本段回答结束
       if (speechMs >= cfg.minSpeechMs && silenceMs >= cfg.silenceMs) {
         _stopVad();
@@ -404,10 +497,15 @@ function _startVad(stream, onAutoStop, opts = {}) {
 }
 
 function _stopVad() {
+  const wasRunning = vadTimer !== null;
   if (vadTimer) { clearInterval(vadTimer); vadTimer = null; }
   if (vadAudioCtx) {
     try { vadAudioCtx.close(); } catch (_) { /* 关闭失败不影响流程 */ }
     vadAudioCtx = null;
+  }
+  // v7.4: 采样停止后归零电平，否则音量条会停在最后一帧的高度上
+  if (wasRunning) {
+    emit('stt:level', { level: 0, rms: 0, threshold: 0, speech: false, stopped: true });
   }
 }
 
@@ -431,6 +529,10 @@ export async function startRecording(opts = {}) {
     toast('当前环境不支持录音', 'warning');
     return null;
   }
+  // v7.4: 开麦前必须先停朗读。浏览器降级路径 startListening() 一直有这句，
+  // MiMo 主路径却漏了 —— 结果面试官还在念题时用户点麦克风，外放的题目语音被
+  // 自己的麦克风采集，连同真回答一起送进 ASR，还会触发 ASR 容错评分把串扰盖掉。
+  stopSpeaking();
   try {
     mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
   } catch (e) {
@@ -587,9 +689,11 @@ export async function voiceFillWithASR(textarea, onStateChange, opts = {}) {
   }
   let cancelled = false;
   let stopFn = null;
-  const autoStop = () => { if (stopFn) stopFn(); };
+  // v7.4: 区分停止来源 —— 免手模式只对"VAD 判断说完了"的自动停止做自动提交，
+  // 用户手动点停止语义上是"我还要再说一段"，不能替他提交。
+  const autoStop = () => { if (stopFn) stopFn('auto'); };
 
-  const stop = async () => {
+  const stop = async (reason = 'manual') => {
     if (cancelled) return;
     cancelled = true;
     setState('processing');
@@ -599,6 +703,9 @@ export async function voiceFillWithASR(textarea, onStateChange, opts = {}) {
     if (result.ok && result.text) {
       textarea.value += (textarea.value && !/[\s。，,]$/.test(textarea.value) ? '，' : '') + result.text;
       textarea.scrollTop = textarea.scrollHeight;
+      if (typeof opts.onTranscribed === 'function') {
+        opts.onTranscribed(result.text, { reason });
+      }
     } else if (!result.ok) {
       toast(result.message || '语音识别失败，已使用浏览器识别', 'warning');
     }
@@ -641,7 +748,7 @@ export function prefetchTTS(questionText) {
   if (mimoStatus !== 'ready') return;
   const clean = cleanForTTS(questionText);
   if (!clean) return;
-  requestVoiceTTS(clean, 'default').catch(() => {});
+  requestVoiceTTS(clean, currentVoice).catch(() => {});
 }
 
 /**

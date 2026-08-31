@@ -47,6 +47,14 @@ async def voice_asr(request: Request, file: UploadFile = File(...)):
     audio_bytes = await file.read()
     if not audio_bytes:
         raise HTTPException(status_code=400, detail="音频文件为空")
+    # v7.4: 大小硬校验（中间件已按上传额度放行，这里是路由层最后一道防线）。
+    # 音频随后会 base64 膨胀 1.33 倍塞进 MiMo 的 JSON 请求体，超限应尽早拒绝，
+    # 否则会把一次注定失败的请求完整地转发到上游，白耗超时时间。
+    if len(audio_bytes) > config.MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"录音过大，上限 {config.MAX_UPLOAD_BYTES // 1024 // 1024}MB，请分段录音",
+        )
     mime = file.content_type or "audio/webm"
     result = await asyncio.to_thread(
         voice_service.transcribe, audio_bytes, file.filename or "audio.webm", mime
