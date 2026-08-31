@@ -20,6 +20,7 @@ from backend.db import (
     get_db,
     get_feedback_stats,
     get_global_weakness_profile,
+    get_question,
     get_report,
     get_session,
     get_session_feedback,
@@ -144,6 +145,35 @@ class TestQuestionBank:
         qid = await add_question("收藏题", "技术", "", [], 2, "manual", "")
         await toggle_favorite(qid)
         assert len(await list_questions(favorited=True)) == 1
+
+    @pytest.mark.asyncio
+    async def test_get_question_by_primary_key(self):
+        """按主键查单题：命中返回反序列化后的题目，未命中返回 None。"""
+        qid = await add_question("主键查询题", "技术", "intent", ["a", "b"], 3, "manual", "")
+        q = await get_question(qid)
+        assert q is not None
+        assert q["id"] == qid
+        assert q["question_text"] == "主键查询题"
+        assert q["tags"] == ["a", "b"], "tags 需反序列化为 list"
+        assert q["is_favorited"] is False, "is_favorited 需转成 bool"
+        assert await get_question(999999) is None
+
+    @pytest.mark.asyncio
+    async def test_get_question_survives_id_gap(self):
+        """删除造成 id 空洞后，剩余题目仍必须能按主键查到。
+
+        回归 v7.3.1 修复的缺陷：存在性校验曾用 list_questions(offset=id-1)，
+        把自增主键当成行偏移量——id 一旦不连续，偏移量就与主键失去对应关系，
+        表现为「列表里看得见、却编辑/删除不了」。
+        """
+        id1 = await add_question("第一题", "技术", "", [], 2, "manual", "")
+        id2 = await add_question("第二题", "技术", "", [], 2, "manual", "")
+        id3 = await add_question("第三题", "技术", "", [], 2, "manual", "")
+        assert await delete_question(id1) is True  # 制造空洞：最小的 id 消失
+
+        assert (await get_question(id2))["question_text"] == "第二题"
+        assert (await get_question(id3))["question_text"] == "第三题"
+        assert await get_question(id1) is None
 
 
 class TestImportFromSession:

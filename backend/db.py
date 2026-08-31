@@ -576,6 +576,28 @@ async def list_questions(
         await db.close()
 
 
+async def get_question(question_id: int) -> Optional[dict]:
+    """按主键查询单条题目；不存在返回 None（tags 反序列化为 list）。
+
+    为什么必须有它：编辑/删除前的存在性校验只能按主键查。此前
+    `question_bank._exists` 用 list_questions(limit=1, offset=question_id-1)，
+    把自增主键当成行偏移量——id 在删除后不连续（出现空洞），偏移量与主键
+    不再一一对应，于是出现"列表里看得见、却编辑/删除不了"的诡异现象。
+    """
+    db = await get_db()
+    try:
+        async with db.execute("SELECT * FROM question_bank WHERE id = ?", (question_id,)) as cur:
+            row = await cur.fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        d["tags"] = json.loads(d.get("tags") or "[]")
+        d["is_favorited"] = bool(d.get("is_favorited", 0))
+        return d
+    finally:
+        await db.close()
+
+
 async def import_questions_from_session(session_id: str) -> int:
     """从面试会话中导入问题到题库，返回导入数量"""
     qas = await get_session_qas(session_id)

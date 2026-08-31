@@ -199,6 +199,24 @@ class TestQuestionBankRoutes:
         assert resp.status_code == 200
         assert "questions" in resp.json()
 
+    def test_edit_and_delete_survive_id_gap(self, client: TestClient):
+        """删掉首题造成 id 空洞后，剩余题目仍必须可编辑、可删除。
+
+        v7.3.1 修复：存在性校验曾把自增主键当成分页偏移量（offset=id-1），
+        id 不连续时会把真实存在的题误判为不存在，
+        即「列表里看得见、点编辑却报题目不存在」。
+        """
+        id1 = client.post("/api/question-bank", json={
+            "question_text": "空洞测试一", "round_type": "技术深度"}).json()["id"]
+        id2 = client.post("/api/question-bank", json={
+            "question_text": "空洞测试二", "round_type": "技术深度"}).json()["id"]
+        assert client.delete(f"/api/question-bank/{id1}").status_code in (200, 204)
+
+        resp = client.put(f"/api/question-bank/{id2}",
+                          json={"question_text": "空洞测试二（已改）"})
+        assert resp.status_code == 200, f"id 空洞后应仍可编辑，实际: {resp.text}"
+        assert client.delete(f"/api/question-bank/{id2}").status_code in (200, 204)
+
 
 class TestFeedbackRoutes:
     def test_submit_feedback_no_session(self, client: TestClient):

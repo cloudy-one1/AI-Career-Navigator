@@ -129,9 +129,10 @@ async def import_from_session(session_id: str) -> dict:
 
 
 async def _exists(question_id: int) -> bool:
-    """检查题目是否存在"""
-    questions = await db.list_questions(limit=1, offset=question_id - 1)
-    for q in questions:
-        if q.get("id") == question_id:
-            return True
-    return False
+    """检查题目是否存在——必须按主键查，不能用分页偏移量代替。
+
+    原实现是 list_questions(limit=1, offset=question_id - 1)，把自增主键当行号。
+    题库只要删过任意一题，id 就不再连续（出现空洞），offset 与主键失去对应关系，
+    于是"列表里明明有这道题，编辑/删除却报题目不存在"。
+    """
+    return await db.get_question(question_id) is not None
