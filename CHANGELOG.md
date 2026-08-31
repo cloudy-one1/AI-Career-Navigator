@@ -1,6 +1,36 @@
 # 变更日志（CHANGELOG）
 
-> 记录 v2 → v7.4 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+> 记录 v2 → v7.5 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+
+---
+
+## v7.5.0 范围收缩：删除招聘者端与报告分享，回归求职者单端（2026-08-31）
+
+> 起因是用户对 v7.0/v7.0.1 引入的"双端"结构的复盘判断："这个项目的定位应该是面向求职者，强加双端是在画蛇添足"。本轮**只做删除、不动求职者功能**：招聘者角色 / 收件箱 / 身份分流 / 报告分享链路全部移除，产品从"六步旅程 + 双端"回归"五步旅程 + 求职者单端"；**认证与资源归属保留**（求职者登录跨设备归集是单端自身能力，与"第二端"解耦）。需求理解与取舍理由见 `docs/week10_范围收缩_回归求职者单端_需求.md`，决策记录见 CHARTER **DC-08**。
+
+### 1. 删除招聘者端（v7.0.1）
+
+- **后端**：删 `routers/share.py` 中 `/api/recruiter/inbox`、`/api/recruiter/reports/{token_hash}` 两个收件箱接口；`share_access.py` 的 `recruiter_inbox` / `open_inbox_report` 逻辑；`db.py` 的 `list_inbox_shares` / `get_inbox_share` 与 `shared_with` 列迁移。
+- **前端**：删 `recruiterInbox.js`（收件箱页面）、侧边栏"连接"分组与"收到的报告"入口（桌面 + 移动端）、`recruiter-inbox-panel`、登录态角色显示。
+- **角色层**：`AUTH_ROLES` 收窄为 `("jobseeker",)`；注册不再有身份选择（`rolePicker` 删除）；`validate_role` 对 recruiter 一律回退 jobseeker；`UserRole` 枚举删 `RECRUITER`。`users.role` 列**保留**（存量数据无碍，逻辑上恒为 jobseeker）。
+
+### 2. 删除报告分享（v7.0）
+
+- **后端**：删 `routers/share.py`（`POST /api/sessions/{id}/share`、`GET /api/sessions/{id}/shares`、`DELETE /api/shares/{token}`、`GET /api/shared/{token}`、`GET /share/{token}` 分享页 HTML）与 `share_access.py`（token 签发 / SHA-256 摘要 / `redact_pii` 脱敏 / `resolve_shared_report`）；`schemas.py` 删 `ShareCreateRequest`；`db.py` 删 share_links 全部 8 个函数，`init_db` 对老库幂等 `DROP TABLE IF EXISTS share_links`。
+- **前端**：删 `share.html` / `share-main.js` / `shareReport.js` 三个分享页文件与 Vite 多入口；报告页"🔗 分享给招聘者"卡片整块移除（`renderShareSection` / `renderShareList` / `renderLastUrl`）；auth.css 删 193 行 share 样式。
+- **测试**：删 `tests/test_share.py`（36 例）；`test_auth.py` 的角色回退断言改为 recruiter → jobseeker。
+
+### 3. 同步影响
+
+- 侧边栏旅程分组：备战 / 演练 / 洞察 / 连接 / 账户 → **备战 / 演练 / 洞察 / 账户**（`data-audience` 身份显隐机制一并移除，导航不再有按身份切换逻辑）。
+- 产品叙事：六步旅程（含"连机会"）→ **五步旅程**；README / CHARTER / CODEBUDDY / 产品定位文档同步收敛。
+- 验证：`pytest tests/ -q` **996 passed, 1 skipped**；`run.py lint` 分层契约通过；`npm run build` 单入口构建通过；全库 grep 无 recruiter/share 代码残留（允许历史文档与 CHANGELOG 旧条目）。
+
+### 4. 范围说明（刻意保留）
+
+- **认证与资源归属不删**：`AUTH_ENABLED` 开关、登录/注册、会话/简历/岗位 owner 隔离、WS 握手校验全部保留——它们服务求职者自己（跨设备归集），不是"第二端"。
+- **报告 Markdown/HTML 导出自用**保留；`output_sanitizer` 脱敏能力保留（未来如重建分享，可复用）。
+- 历史文档（week8 需求、v7.0/v7.0.1 CHANGELOG 条目）保留作为决策记录，不代表现行范围。
 
 ---
 
@@ -86,6 +116,29 @@
 
 - `index.html` 标题与 Header 品牌、`share.html` 品牌行与免责声明、报告导出页品牌（`backend/routers/reports.py`）、FastAPI title（"AI 面试官 v3.1" 自 v3.1 起失更，一并修正为 "AI 求职陪跑平台"，version 7.3.0）与启动日志、题库模板头（`questionBank.js`）、采集子包 docstring、`docker-compose.yml` 注释、`frontend/package.json` description——全部统一为「AI 求职陪跑」；版本徽标 v7.2 → v7.3。
 - 主文档同步：CHARTER（产品命题改写 + DC-07）、README（标题/标语/简介/亮点置顶条目）、CODEBUDDY（定位/当前版本/结构树补齐 6 个缺失前端文件与 routers/）。
+
+---
+
+## v7.3.2 全功能端到端冒烟：修复题库「看得见、改不了」（2026-08-31）
+
+> 起因是对项目做了一次**全功能端到端冒烟**：真实服务（localhost:8000）+ 真实 LLM（DeepSeek/Qwen 实调）+ 真实 Playwright 采集 + MiMo 云端语音 TTS→ASR 闭环，共验证 89 个检查点（基础/市场/资产/面试主循环/报告/规划/分享招聘端/题库/语音/运维），覆盖六步旅程全部功能域。冒烟发现 1 个真实缺陷，本轮修复。（注：本条目与 v7.4.0 同晚并行完成，发布时版本号让位于语音链路强化，APP_VERSION 随 v7.4.0 发布。）
+
+### 1. 修复：题库「列表里看得见、编辑/删除却报不存在」
+
+- **问题本质**：`question_bank._exists()` 的存在性校验写的是 `list_questions(limit=1, offset=question_id - 1)`——把**自增主键 id 当成了分页行偏移量**。id 只有在从未删除过题目时才恰好与偏移量一一对应；只要题库删过任意一题（id 出现空洞），偏移量就与主键失去对应，`_exists` 对真实存在的题返回 False，PUT/DELETE 一律报"题目 N 不存在"。首测复现：创建 3 题（id=10/11/12），删掉 id=10 后，id=11 的编辑/删除全部失败，而列表里它明明可见。
+- **修复**：`db.py` 新增 `get_question(question_id)` 按主键查单题（对齐 `get_session` / `get_resume` / `get_position` 的既有风格，tags/is_favorited 同步反序列化）；`_exists` 改为一行 `await db.get_question(question_id) is not None`。
+- **为什么以前没暴露**：大多数题库很少物理删除题目，id 长期连续，偏移量恰好"碰对"。这类"巧合正确"的代码正是端到端真实数据才能逼出来的。
+- **回归测试**：`test_db.py` 新增按主键查询 + id 空洞场景 2 例；`test_api.py` 新增"删首题制造空洞后，剩余题仍可编辑/删除"API 回归 1 例。
+
+### 2. 端到端验证结论（工程记录）
+
+- **面试主循环（真实 WS + 真实 LLM）**：37s 走完，主问题 3、追问 2，收到 17 种协议帧（含流式 diagnosis_chunk / rewrite_chunk、追问、补题、结束口令、interview_done），报告五维齐全、逐题拆解 2 条。
+- **流程状态落库（v7.3.1 修复）实战验证**：面试完成后 `GET /api/sessions/{id}` 返回 `flow_state=finished, answered_count=2`——v7.3.1 修复的 `_mark_flow` 漏 `await` 在真实运行路径确认生效。
+- **MiMo 语音闭环**：云端 TTS（`used=True`，353KB WAV）→ 回灌 ASR → 逐字还原原文（与原文共同字符 28）。
+- **分享与脱敏**：创建分享（201）→ 免登录只读 → 分享页 HTML → 撤销，全程通；手机号/邮箱无明文泄漏。
+- **市场**：统计/检索/详情/收藏幂等/城市映射/岗位画像研究（LLM）全通；Playwright 实时采集任务终态 done 但 51job 返回 0 条（反爬波动，导入管道兜底，见已知局限）。
+- **其他全通**：Gap 分析（10.4s）/ 跨岗位对比（8.4s）/ 职业规划（16.8s，3 阶段时间轴）/ 简历库与岗位库 CRUD / 反馈 / 公司风格（3 家）/ 后端热切换（qwen↔deepseek）/ 历史会话。
+- 全量套件 **1033 passed / 1 skipped**。
 
 ---
 

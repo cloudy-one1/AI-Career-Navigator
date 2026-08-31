@@ -97,23 +97,6 @@ async function fetchMe() {
 
 // ===== 面板渲染 =====
 
-function rolePicker(selected, onPick) {
-  const box = el('div', { className: 'role-seg' });
-  const opts = [
-    { v: 'jobseeker', label: '求职者' },
-    { v: 'recruiter', label: '招聘者' },
-  ];
-  for (const o of opts) {
-    box.appendChild(el('button', {
-      type: 'button',
-      className: `role-seg-btn${selected === o.v ? ' selected' : ''}`,
-      textContent: o.label,
-      onclick: () => onPick(o.v),
-    }));
-  }
-  return box;
-}
-
 function renderLoggedIn() {
   const panel = $('#account-panel');
   panel.replaceChildren(
@@ -123,10 +106,7 @@ function renderLoggedIn() {
         el('span', { className: 'auth-avatar', textContent: (_user.username || '?')[0].toUpperCase() }),
         el('div', { className: 'auth-user-main' },
           el('div', { className: 'auth-user-name', textContent: _user.display_name || _user.username }),
-          el('div', {
-            className: 'auth-user-meta',
-            textContent: `@${_user.username} · ${_user.role === 'recruiter' ? '招聘者' : '求职者'}`,
-          }),
+          el('div', { className: 'auth-user-meta', textContent: `@${_user.username}` }),
         ),
       ),
       el('div', { className: 'auth-note' },
@@ -170,13 +150,6 @@ function renderAuthForm(defaultMode = 'login') {
         el('label', { className: 'form-label', textContent: '密码' }), password),
     );
 
-    if (!isLogin) {
-      form.appendChild(el('div', { className: 'form-group' },
-        el('label', { className: 'form-label', textContent: '身份' }),
-        rolePicker(role, v => { role = v; render(); }),
-      ));
-    }
-
     form.appendChild(errBox);
     form.appendChild(submit);
 
@@ -187,7 +160,6 @@ function renderAuthForm(defaultMode = 'login') {
       submit.textContent = '处理中…';
       try {
         const body = { username: username.value.trim(), password: password.value };
-        if (!isLogin) body.role = role;
         const data = await api(isLogin ? '/api/auth/login' : '/api/auth/register',
                                'POST', body);
         setToken(data.access_token);
@@ -201,10 +173,9 @@ function renderAuthForm(defaultMode = 'login') {
           stampIn(seal);
         }
         setTimeout(renderPanel, 650);
-        // v7.0.1: 携带身份与"刚登录"标记——app.js 据此按角色分流
-        // （招聘者 → 收件箱；求职者 → 留在原处）
+        // v7.5: 身份分流已删除——登录完成仅通知全局刷新登录态
         window.dispatchEvent(new CustomEvent('auth:changed', {
-          detail: { user: _user, justLoggedIn: true },
+          detail: { user: _user },
         }));
       } catch (err) {
         errBox.textContent = err.message || '操作失败，请重试';

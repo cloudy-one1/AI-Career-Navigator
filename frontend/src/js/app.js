@@ -15,40 +15,6 @@ import { initMemory } from './memoryGraph.js';   // v6.3 长期记忆
 import { initAuth, refreshAuthStatus, updateHeaderUser, isLoggedIn } from './auth.js';  // v7.0 认证
 import { initResumeLibrary } from './resumeLibrary.js';       // v7.0 简历库
 import { initPositionLibrary } from './positionLibrary.js';   // v7.0 岗位库
-import { initRecruiterInbox } from './recruiterInbox.js';     // v7.0.1 招聘者收件箱
-
-// v7.0.1: 招聘者登录后可见的面板。统一登录、按身份分流——
-// 招聘者的"系统"就是收件箱 + 账户，其余求职者面板全部隐藏。
-const RECRUITER_TABS = new Set(['recruiter-inbox', 'account']);
-
-/** 按当前身份过滤导航（登录/退出都会触发）。 */
-function applyRoleView(user) {
-  const isRecruiter = !!user && user.role === 'recruiter';
-  $$('.nav-item').forEach(btn => {
-    const audience = btn.dataset.audience;
-    if (!audience) return;                       // 无标记 = 双端通用（账户）
-    const show = isRecruiter
-      ? audience === 'recruiter'                 // 招聘者：只看收件箱
-      : audience !== 'recruiter';                // 求职者/匿名：看不到收件箱
-    btn.classList.toggle('hidden', !show);
-  });
-  // v7.2: 分组小标题随身份显隐（空组不留孤立标题）
-  $$('.nav-group-label').forEach(lbl => {
-    const audience = lbl.dataset.audience;
-    if (!audience) return;                       // 无标记 = 双端通用（账户组）
-    const show = isRecruiter
-      ? audience === 'recruiter'
-      : audience !== 'recruiter';
-    lbl.classList.toggle('hidden', !show);
-  });
-
-  // 身份切换后当前停留的面板可能已被隐藏——招聘者落到收件箱，
-  // 求职者若停在收件箱则回到面试页
-  const active = $('.nav-item.active');
-  if (active && active.classList.contains('hidden')) {
-    switchTab(isRecruiter ? 'recruiter-inbox' : 'interview');
-  }
-}
 
 function switchTab(tabName) {
   // 更新导航项（侧边栏 + 底部栏共用）
@@ -84,7 +50,6 @@ function switchTab(tabName) {
     else if (tabName === 'memory') initMemory();
     else if (tabName === 'resume-library') initResumeLibrary();
     else if (tabName === 'position-library') initPositionLibrary();
-    else if (tabName === 'recruiter-inbox') initRecruiterInbox();
     else if (tabName === 'account') initAuth();
   };
 
@@ -120,16 +85,11 @@ document.addEventListener('DOMContentLoaded', () => {
   // v7.0: 顶部账户按钮 → 跳到账户面板
   $('#user-btn')?.addEventListener('click', () => switchTab('account'));
 
-  // v7.0: 登录态变化（登录/退出）后同步顶部显示，并让历史等面板感知归属变化
-  // v7.0.1: 携带身份信息 → 按角色分流导航（统一登录，进入不同的系统）
+  // v7.0: 登录态变化（登录/退出）后同步顶部显示，并让历史等面板感知归属变化。
+  // v7.5: 删除了招聘者身份分流（CHARTER DC-08）——退出后回到求职者默认视图。
   window.addEventListener('auth:changed', (e) => {
-    const { user, justLoggedIn, justLoggedOut } = e.detail || {};
+    const { justLoggedOut } = e.detail || {};
     updateHeaderUser();
-    applyRoleView(user ?? null);
-    // 登录成功后按身份进入各自的系统
-    if (justLoggedIn && user?.role === 'recruiter') switchTab('recruiter-inbox');
-    // 退出后回到求职者默认视图（若停在收件箱会被 applyRoleView 隐藏并自动切走，
-    // 这里显式回面试页，行为更可预期）
     if (justLoggedOut) switchTab('interview');
   });
 

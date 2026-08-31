@@ -54,10 +54,8 @@ class RoundConfig(BaseModel):
 # ========== v7.0: 认证与资源归属（CHARTER DC-06）==========
 
 class UserRole(str, Enum):
-    """角色。注意 recruiter 在认证层内**没有任何特权** ——
-    它的可见范围完全由 D3 的分享链接决定，这里只是身份标注。"""
-    JOBSEEKER = "jobseeker"      # 求职者（默认）
-    RECRUITER = "recruiter"      # 招聘者
+    """v7.5 起仅求职者角色（招聘者端与报告分享已删除，见 CHARTER DC-08）。"""
+    JOBSEEKER = "jobseeker"
 
 
 class RegisterRequest(BaseModel):
@@ -143,21 +141,6 @@ class PositionUpdateRequest(BaseModel):
     title: str | None = None
     jd_text: str | None = None
     department: str | None = None
-
-
-# ========== v7.0: 报告分享（招聘端只读入口）==========
-
-class ShareCreateRequest(BaseModel):
-    """生成分享链接。
-
-    include_detail 默认 False 是刻意的：逐字回答是夹带手机号/薪资/内部项目名
-    风险最高的部分，而候选人分享报告通常只想证明"水平如何"，不必把每句话公开。
-    """
-    include_detail: bool = Field(default=False, description="是否包含逐题问答明细")
-    expires_days: int | None = Field(default=30, description="有效期天数；0 或 None 表示永久")
-    # v7.0.1: 可选，指定收件招聘者的用户名——指定后报告进入对方登录后的收件箱。
-    # 不指定则仍是无主链接（凭链接可看，不进任何收件箱）。
-    shared_with: str | None = Field(default=None, description="收件招聘者用户名（可选）")
 
 
 class WeaknessProfileItem(BaseModel):

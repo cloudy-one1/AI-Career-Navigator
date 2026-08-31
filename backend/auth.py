@@ -23,6 +23,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import sqlite3
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -61,10 +62,6 @@ class UserContext:
     @property
     def is_anonymous(self) -> bool:
         return self.id is None
-
-    @property
-    def is_recruiter(self) -> bool:
-        return self.role == "recruiter"
 
 
 def anonymous_user() -> UserContext:
@@ -165,20 +162,24 @@ def validate_password(password: str) -> Optional[str]:
     只校验长度，不校验复杂度：
     NIST SP 800-63B 已明确反对强制字符类别组合——它促使用户把规则
     套进可预测的模式（如 Password1!），实际强度反而低于长口令。
+
+    上限 72 位而非任意大：bcrypt 4.x 起对超过 72 字节的输入直接抛
+    ValueError（不再静默截断），必须在本层拦下，否则注册会裸 500。
     """
     if not password:
         return "密码不能为空"
     if len(password) < config.AUTH_PASSWORD_MIN_LENGTH:
         return f"密码至少 {config.AUTH_PASSWORD_MIN_LENGTH} 位"
-    if len(password) > 128:
-        return "密码过长（上限 128 位）"
     if any(ord(c) > 127 for c in password):
         return "密码不能包含非 ASCII 字符"
+    # 纯 ASCII（上一行已保证）下字符数 == 字节数，与 bcrypt 的 72 字节硬上限一致
+    if len(password) > 72:
+        return "密码过长（上限 72 位）"
     return None
 
 
 def validate_role(role: Optional[str]) -> str:
-    """非法角色回退 jobseeker，不抛异常（角色不是安全边界，权限由归属决定）。"""
+    """v7.5 起仅求职者角色；其余一律回退 jobseeker（角色不是安全边界，权限由归属决定）。"""
     if role in config.AUTH_ROLES:
         return role
     return "jobseeker"
@@ -261,13 +262,19 @@ async def register_user(username: str, password: str,
     if await db.get_user_by_username(username):
         return None, "用户名已被注册"
     user_id = str(uuid.uuid4())
-    await db.create_user(
-        user_id=user_id,
-        username=username,
-        password_hash=hash_password(password),
-        role=validate_role(role),
-        display_name=(display_name or "").strip() or None,
-    )
+    try:
+        await db.create_user(
+            user_id=user_id,
+            username=username,
+            password_hash=hash_password(password),
+            role=validate_role(role),
+            display_name=(display_name or "").strip() or None,
+        )
+    except sqlite3.IntegrityError:
+        # 上面的"先查后插"存在竞态：两个并发注册同名用户时，预检查都查不到，
+        # UNIQUE 冲突落到 insert 才暴露 —— 必须转成与预检查一致的 400 语义，
+        # 而不是把 IntegrityError 裸抛成 500。
+        return None, "用户名已被注册"
     return (
         UserContext(
             id=user_id,

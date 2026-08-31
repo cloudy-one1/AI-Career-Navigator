@@ -91,7 +91,8 @@ class TestValidation:
         ("12345678", None),             # 合法（不强制字符类别，见实现注释）
         ("", "不能为空"),
         ("密码12345678", "非 ASCII"),    # 含中文
-        ("x" * 129, "过长"),
+        ("x" * 72, None),               # bcrypt 硬上限边界内（72 字节）
+        ("x" * 73, "过长"),             # 超过 bcrypt 72 字节 → 必须在校验层拦截而非 500
     ])
     def test_validate_password(self, password, expect_err):
         err = auth.validate_password(password)
@@ -103,7 +104,8 @@ class TestValidation:
     def test_invalid_role_falls_back_to_jobseeker(self):
         assert auth.validate_role("admin") == "jobseeker"
         assert auth.validate_role(None) == "jobseeker"
-        assert auth.validate_role("recruiter") == "recruiter"
+        # v7.5: 招聘者端已删除（CHARTER DC-08），recruiter 亦视为非法角色
+        assert auth.validate_role("recruiter") == "jobseeker"
 
 
 # ===== 3. JWT =====
@@ -132,7 +134,7 @@ class TestToken:
         # 改 payload 保留签名 → 验签必须失败（这正是 JWT 防篡改的意义）
         header, payload, signature = token.split(".")
         forged_payload = pyjwt.encode(
-            {"sub": "u1", "role": "recruiter"},
+            {"sub": "u1", "role": "jobseeker"},
             "wrong-secret-0123456789abcdefghijklmnop", algorithm="HS256",
         ).split(".")[1]
         assert auth.decode_token(f"{header}.{forged_payload}.{signature}") is None
@@ -171,6 +173,22 @@ class TestRegisterAndLogin:
         await auth.register_user("alice", "password123")
         user, err = await auth.register_user("alice", "password456")
         assert user is None and "已被注册" in err
+
+    @pytest.mark.asyncio
+    async def test_register_unique_race_converted_to_friendly_error(self, monkeypatch):
+        """并发竞态兜底：预检查（先查后插的"查"）被绕过时，插入阶段的
+        UNIQUE 冲突必须转成"已被注册"，而不是 IntegrityError 裸抛成 500。
+
+        用 monkeypatch 让预检查恒返回 None 来模拟"两个请求同时通过预检查"的竞态窗口。
+        """
+        await auth.register_user("carol", "password123")
+
+        async def _always_none(_username):
+            return None
+
+        monkeypatch.setattr(auth.db, "get_user_by_username", _always_none)
+        user, err = await auth.register_user("carol", "password456")
+        assert user is None and err is not None and "已被注册" in err
 
     @pytest.mark.asyncio
     async def test_register_weak_password_rejected(self):

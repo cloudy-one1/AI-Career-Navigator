@@ -172,7 +172,7 @@
   top: 8px;
   bottom: 8px;
   width: 3px;
-  border-radius: 2px;
+  border-radius: var(--radius-full);
   background: var(--indigo-600);
 }
 
@@ -378,6 +378,32 @@
 .form-upload {
   display: flex; align-items: center; gap: 12px;
 }
+
+/* v7.5: 原生文件选择控件统一圆角 —— 浏览器默认的「选择文件 / 未选择文件」
+   按钮是直角，与全站「纸墨印章」圆角风格不一致。通过 ::file-selector-button
+   伪元素全局覆盖（Chrome 89+ / Firefox 82+ / Safari 14+），项目内所有
+   input[type=file] 一律生效，无需逐处改 JS。 */
+input[type="file"] {
+  font-family: inherit;
+  color: var(--text-secondary);
+  max-width: 100%;
+}
+input[type="file"]::file-selector-button {
+  font-family: inherit;
+  font-size: .8125rem;
+  padding: 7px 16px;
+  margin-right: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--card);
+  color: var(--text-primary, inherit);
+  cursor: pointer;
+  transition: var(--transition);
+}
+input[type="file"]::file-selector-button:hover {
+  border-color: var(--primary-light);
+  color: var(--primary);
+}
 .form-input {
   flex: 1; padding: 10px 14px; border: 1px solid var(--border); border-radius: 8px;
   font-size: .875rem; background: var(--bg); transition: var(--transition);
@@ -442,7 +468,7 @@
 .type-mix-range {
   width: 100%; height: 6px;
   -webkit-appearance: none; appearance: none;
-  background: var(--border); border-radius: 3px; outline: none;
+  background: var(--border); border-radius: var(--radius-full); outline: none;
   cursor: pointer;
 }
 .type-mix-range::-webkit-slider-thumb {
@@ -592,7 +618,7 @@
 /* v6.4: 本题依据 chip（出题来源：JD 缺口 / 简历锚点 / 压力题等） */
 .question-basis {
   font-size: .78rem; color: var(--primary); margin-top: 6px;
-  background: rgba(var(--primary-rgb),.06); border-radius: 6px; padding: 4px 10px;
+  background: rgba(var(--primary-rgb),.06); border-radius: var(--radius-full); padding: 4px 10px;
   display: inline-block;
 }
 
@@ -748,7 +774,7 @@
 .auto-submit-track {
   width: 64px; height: 3px;
   background: rgba(var(--primary-rgb), .15);
-  border-radius: 2px;
+  border-radius: var(--radius-full);
   overflow: hidden;
 }
 .auto-submit-fill {
@@ -1021,7 +1047,7 @@
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: var(--radius-full); }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
 /* Question Bank v2.2 */
@@ -1061,7 +1087,7 @@
 .qb-tag {
   display: inline-block;
   padding: 2px 8px;
-  border-radius: 4px;
+  border-radius: var(--radius-full);
   background: var(--primary-light);
   color: var(--primary);
   font-size: .75rem;
@@ -1074,7 +1100,7 @@
   padding: 10px 14px;
   background: var(--red-50);
   border-left: 3px solid var(--danger);
-  border-radius: 6px;
+  border-radius: var(--radius-sm);
 }
 .diag-risk-title {
   font-size: .85rem;
@@ -1269,7 +1295,7 @@
   left: 12px; top: 6px; bottom: 6px;
   width: 3px;
   background: linear-gradient(180deg, var(--primary), var(--primary-light), rgba(var(--primary-rgb),.2));
-  border-radius: 2px;
+  border-radius: var(--radius-full);
 }
 .career-stage {
   position: relative;
@@ -1338,7 +1364,7 @@
 }
 .career-target-label {
   flex-shrink: 0;
-  padding: 1px 8px; border-radius: 6px;
+  padding: 1px 8px; border-radius: var(--radius-full);
   background: var(--accent-light); color: var(--indigo-800);
   font-size: .72rem; font-weight: 600;
 }

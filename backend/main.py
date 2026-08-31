@@ -2,7 +2,7 @@
 FastAPI 应用装配（v7.2.2 起为纯装配层）。
 
 v7.2.2 路由拆分：66 条 HTTP 路由 + WS 主循环按域迁移到 backend/routers/*
-（system/auth/voice/sessions/assets/reports/share/question_bank/diagnostics/
+（system/auth/voice/sessions/assets/reports/question_bank/diagnostics/
 market/analytics/interview_ws），本文件只保留：
   - 中间件（CORS / 安全响应头 / 请求体大小限制）与限流异常处理器；
   - startup（建库 / 市场库 / 记忆修剪）；
@@ -29,7 +29,7 @@ from .market import store as market_store
 from . import weakness_memory
 from .routers import state
 from .routers import (
-    system, auth, voice, sessions, assets, reports, share,
+    system, auth, voice, sessions, assets, reports,
     question_bank, diagnostics, market, analytics, interview_ws,
 )
 
@@ -122,7 +122,6 @@ app.include_router(auth.router)            # v7.0 认证
 app.include_router(voice.router)           # v4.2 MiMo 云端语音
 app.include_router(sessions.router)        # 会话创建/查询/上传/模式切换/公司风格
 app.include_router(assets.router)          # v7.0 简历库/岗位库
-app.include_router(share.router)           # v7.0 报告分享 + 招聘者收件箱 + 分享页
 app.include_router(reports.router)         # 报告读取 + Markdown/HTML 导出
 app.include_router(question_bank.router)   # v2.2 题库
 app.include_router(diagnostics.router)     # v2.5 反馈 + v2.7 薄弱点（/points 先于 /{session_id}）

@@ -138,7 +138,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ── v7.3: 五维总览（与分享页 share-dim 同脸，逐卡弹入见 motion.css pop-in）── */
+/* ── v7.3: 五维总览（逐卡弹入见 motion.css pop-in）── */
 .report-dims {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -167,13 +167,13 @@
 }
 .report-dim-bar {
   height: 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-full);
   background: var(--slate-100);
   overflow: hidden;
 }
 .report-dim-bar-fill {
   height: 100%;
-  border-radius: 3px;
+  border-radius: var(--radius-full);
   transition: width var(--dur-slow) var(--ease-out);
 }
 .report-dim-bar-fill.high { background: var(--teal); }

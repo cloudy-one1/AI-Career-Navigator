@@ -397,7 +397,7 @@ let recording = false;
 // 只做"何时停"的节流判断，不做端点检测（不裁剪已录音频），语义上仍是半双工。
 
 const VAD_DEFAULTS = {
-  silenceMs: 2500,        // 连续静音多久判定"说完了"
+  silenceMs: 10000,       // 连续静音多久判定"说完了"（10s，允许较长的思考停顿）
   minSpeechMs: 800,       // 至少采集到这么久的语音才允许自动停（防刚开口就误停）
   maxDurationMs: 120000,  // 单次录音硬上限，防忘记停止
   threshold: 0.02,        // 音量阈值（RMS，0-1）—— adaptive 关闭时的固定兜底值

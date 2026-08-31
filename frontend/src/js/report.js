@@ -3,7 +3,7 @@
 // ===================================================
 
 import { $, el, toast, DIM_NAMES, escHtml, countUp, skeletonBlock, burstParticles, scoreClass } from './utils.js';
-import { getReport, exportReview, getGapAnalysis, crossJobCompare, request } from './api.js';
+import { getReport, exportReview, getGapAnalysis, crossJobCompare } from './api.js';
 import { getToken } from './auth.js';
 
 let chartInstance = null;
@@ -134,7 +134,7 @@ function renderReport(report) {
   const tier = oAvg >= 4 ? 'good' : oAvg >= 3 ? 'mid' : 'poor';
   setTimeout(() => burstParticles(content.querySelector('.report-hero-ring'), tier), 950);
 
-  // v7.3: 五维总览（与分享页 share-dim 同脸）——逐卡弹入
+  // v7.3: 五维总览——逐卡弹入
   const dimAvgs = report.dimension_averages || {};
   const dimEntries = Object.entries(DIM_NAMES)
     .filter(([key]) => dimAvgs[key] != null)
@@ -297,147 +297,12 @@ function renderReport(report) {
     ));
   }
 
-  // v7.0: 分享给招聘者（生成只读链接）
-  content.appendChild(renderShareSection(sessionId));
-
   // v3.1: Gap 分析容器（异步加载）
   const gapContainer = el('div', { id: 'gap-analysis-container' });
   content.appendChild(gapContainer);
 
   // 自动触发 Gap 分析
   loadGapAnalysis(sessionId);
-}
-
-// ——— v7.0: 分享给招聘者 ———
-
-/**
- * 分享区：生成 / 复制 / 撤销 / 查看访问次数。
- *
- * 默认不勾选"包含逐题问答"是有意的：逐字回答是夹带手机号、薪资、内部项目名
- * 风险最高的部分，而分享报告通常只想证明"水平如何"。
- */
-function renderShareSection(sessionId) {
-  const listBox = el('div', { id: 'share-list', className: 'share-manage-list' });
-  // 本次会话新生成的明文 token（按创建顺序）。列表接口不返回 token，
-  // 撤销必须靠这些明文 —— 见 renderShareList 的说明。
-  const revocable = [];
-  // v7.0.1: 可选——填了招聘者用户名，报告会进入对方登录后的收件箱
-  const recruiterInput = el('input', {
-    className: 'form-input', id: 'share-recruiter',
-    placeholder: '招聘者用户名（选填，填了进对方收件箱）',
-    style: 'max-width:260px;',
-  });
-  const includeDetail = el('input', { type: 'checkbox', id: 'share-include-detail' });
-  const expirySel = el('select', { id: 'share-expiry', className: 'form-input', style: 'max-width:150px;' },
-    el('option', { value: '7', textContent: '7 天有效' }),
-    el('option', { value: '30', textContent: '30 天有效', selected: true }),
-    el('option', { value: '0', textContent: '长期有效' }),
-  );
-
-  const generateBtn = el('button', {
-    className: 'btn btn-primary btn-sm', textContent: '🔗 生成分享链接',
-    onClick: async () => {
-      generateBtn.disabled = true;
-      try {
-        const res = await request('POST', `/api/sessions/${sessionId}/share`, {
-          include_detail: includeDetail.checked,
-          expires_days: parseInt(expirySel.value, 10),
-          // v7.0.1: 选填。后端校验存在且 role=recruiter，错误会以 400 返回
-          shared_with: recruiterInput.value.trim() || null,
-        });
-        const url = `${location.origin}${res.url}`;
-        revocable.unshift(res.share.token);
-        try {
-          await navigator.clipboard.writeText(url);
-          toast('分享链接已生成并复制到剪贴板', 'success');
-        } catch (_) {
-          // 剪贴板不可用（非 HTTPS / 无权限）时至少让用户能看到链接
-          toast('分享链接已生成（请手动复制下方链接）', 'success');
-        }
-        renderShareList(sessionId, listBox, revocable);
-        listBox.dataset.lastUrl = url;
-        renderLastUrl(listBox, url);
-      } catch (err) {
-        toast(err.message || '生成失败', 'error');
-      } finally {
-        generateBtn.disabled = false;
-      }
-    },
-  });
-
-  const box = el('div', { className: 'card share-manage' },
-    el('div', { className: 'card-title', textContent: '🔗 分享给招聘者' }),
-    el('div', { className: 'share-manage-desc' },
-      '生成一条只读链接发给招聘方。对方无需注册即可查看，你随时可以撤销。'),
-    el('div', { className: 'share-manage-controls' },
-      generateBtn,
-      expirySel,
-      el('label', { className: 'checkbox-label', style: 'margin:0;' },
-        includeDetail,
-        el('span', { className: 'checkbox-text', textContent: '包含逐题问答内容' }),
-      ),
-    ),
-    el('div', { className: 'share-manage-controls' },
-      recruiterInput,
-      el('span', { className: 'share-manage-meta', style: 'flex:0 1 auto;min-width:0;',
-        textContent: '填了用户名：报告直接出现在对方登录后的收件箱；留空：仅生成链接，对方凭链接查看' }),
-    ),
-    el('div', { className: 'share-manage-hint' },
-      '默认只分享结论（总分 / 五维 / 轮次概况）。勾选后会附上每道题的问答原文——' +
-      '后端会自动脱敏手机号、邮箱、身份证，但仍建议确认后再分享。'),
-    listBox,
-  );
-
-  renderShareList(sessionId, listBox, revocable);
-  return box;
-}
-
-function renderLastUrl(listBox, url) {
-  const old = listBox.parentElement?.querySelector('.share-last-url');
-  if (old) old.remove();
-  listBox.insertAdjacentElement('afterend', el('div', { className: 'share-last-url' },
-    el('span', { className: 'share-last-url-label', textContent: '最新链接：' }),
-    el('code', { textContent: url }),
-  ));
-}
-
-async function renderShareList(sessionId, listBox, revocable = []) {
-  listBox.replaceChildren(el('div', { className: 'share-empty', textContent: '加载中…' }));
-  try {
-    const data = await request('GET', `/api/sessions/${sessionId}/shares`);
-    const rows = data.shares || [];
-    if (!rows.length) {
-      listBox.replaceChildren(el('div', { className: 'share-empty', textContent: '还没有分享链接' }));
-      return;
-    }
-    // 列表接口按创建时间倒序返回，与 revocable（本次会话新生成的明文 token）
-    // 一一对应。只有本次生成的链接带明文 token，因此也只有它们可撤销 ——
-    // 这不是限制，而是凭据该有的样子：库里和列表里都只有摘要，
-    // 明文只在签发那一刻出现一次。
-    listBox.replaceChildren(...rows.map((r, i) => {
-      const token = revocable[i];
-      return el('div', { className: 'share-manage-row' },
-        el('span', { className: `lib-badge${r.revoked ? '' : ' ok'}`,
-                     textContent: r.revoked ? '已撤销' : '生效中' }),
-        el('span', { className: 'share-manage-meta',
-          textContent: `浏览 ${r.access_count || 0} 次 · ${r.include_detail ? '含逐题' : '仅结论'} · ${r.expires_at ? ('到期 ' + String(r.expires_at).slice(0, 10)) : '长期'}` }),
-        (token && !r.revoked) ? el('button', {
-          className: 'btn btn-sm btn-danger', textContent: '撤销',
-          onClick: async () => {
-            try {
-              await request('DELETE', `/api/shares/${encodeURIComponent(token)}`);
-              toast('已撤销，该链接立即失效', 'success');
-              renderShareList(sessionId, listBox, revocable);
-            } catch (err) {
-              toast(err.message || '撤销失败', 'error');
-            }
-          },
-        }) : null,
-      );
-    }));
-  } catch (err) {
-    listBox.replaceChildren(el('div', { className: 'share-empty', textContent: err.message || '加载失败' }));
-  }
 }
 
 // ——— v6.2: 逐题拆解渲染 ———
@@ -596,26 +461,46 @@ function renderGapAnalysis(container, gap) {
   ));
 }
 
-/* v3.1: 市场基准参照渲染 */
+/* v3.1: 市场基准参照渲染（返回 DOM 节点，避免 el() 把 HTML 字符串当纯文本） */
 function _renderMarketRefBlock(ref) {
 	if (!ref || !ref.keyword) return '';
-	const cities = (ref.top_cities || []).join(' · ');
-	const eduRows = (ref.education_distribution || [])
-		.map(e => `<span class="mr-educell"><b>${escHtml(e.education)}</b> ${escHtml(String(e.count))}条</span>`)
-		.join('');
-	const skills = (ref.top_skills || [])
-		.map(s => `<span class="mr-tag">${escHtml(s)}</span>`)
-		.join(' ');
+	const children = [
+		el('div', { className: 'mr-header', textContent: '📊 市场基准参照' }),
+		el('div', { className: 'mr-summary', textContent: ref.summary || '' }),
+	];
 
-	return `
-	<div class="market-ref-card">
-		<div class="mr-header">📊 市场基准参照</div>
-		<div class="mr-summary">${escHtml(ref.summary)}</div>
-		${skills ? `<div class="mr-row"><span class="mr-label">🔥 热门技能</span><div class="mr-tags">${skills}</div></div>` : ''}
-		${cities ? `<div class="mr-row"><span class="mr-label">🏙 热门城市</span><span>${cities}</span></div>` : ''}
-		${eduRows ? `<div class="mr-row"><span class="mr-label">🎓 学历分布</span><div>${eduRows}</div></div>` : ''}
-		${ref.salary_range ? `<div class="mr-row"><span class="mr-label">💰 薪资范围</span><span>${escHtml(ref.salary_range)}</span></div>` : ''}
-	</div>`;
+	if (ref.top_skills?.length) {
+		children.push(el('div', { className: 'mr-row' },
+			el('span', { className: 'mr-label', textContent: '🔥 热门技能' }),
+			el('div', { className: 'mr-tags' },
+				...ref.top_skills.map(s => el('span', { className: 'mr-tag', textContent: s }))),
+		));
+	}
+	if (ref.top_cities?.length) {
+		children.push(el('div', { className: 'mr-row' },
+			el('span', { className: 'mr-label', textContent: '🏙 热门城市' }),
+			el('span', { textContent: ref.top_cities.join(' · ') }),
+		));
+	}
+	if (ref.education_distribution?.length) {
+		children.push(el('div', { className: 'mr-row' },
+			el('span', { className: 'mr-label', textContent: '🎓 学历分布' }),
+			el('div', {},
+				...ref.education_distribution.map(e => el('span', { className: 'mr-educell' },
+					el('b', { textContent: e.education }),
+					document.createTextNode(' ' + String(e.count) + '条'),
+				)),
+			),
+		));
+	}
+	if (ref.salary_range) {
+		children.push(el('div', { className: 'mr-row' },
+			el('span', { className: 'mr-label', textContent: '💰 薪资范围' }),
+			el('span', { textContent: ref.salary_range }),
+		));
+	}
+
+	return el('div', { className: 'market-ref-card' }, ...children);
 }
 
 function drawRadarChart(report) {

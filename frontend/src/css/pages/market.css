@@ -398,7 +398,7 @@
   font-size: 12px;
   font-weight: 600;
   padding: 6px 14px;
-  border-radius: 3px;
+  border-radius: var(--radius-full);
   margin-bottom: 16px;
 }
 #market-data-panel .restored-badge.visible { display: inline-flex; }
@@ -696,7 +696,7 @@ html.theme-dark #market-data-panel .home-feature-card .fc-arrow { color: var(--s
   content: "";
   width: 4px;
   height: 16px;
-  border-radius: 2px;
+  border-radius: var(--radius-full);
   background: var(--mkt-stamp);
 }
 
@@ -959,7 +959,7 @@ html.theme-dark #market-data-panel .home-feature-card .fc-arrow { color: var(--s
   content: "";
   width: 4px;
   height: 14px;
-  border-radius: 2px;
+  border-radius: var(--radius-full);
   background: var(--mkt-stamp);
 }
 

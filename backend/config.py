@@ -19,7 +19,7 @@ load_dotenv(os.path.join(BASE_DIR, ".env"))
 
 # 全局唯一版本号：FastAPI app（main.py）、/api/health（routers/system.py）、
 # run.py 启动横幅统一引用此处，避免再出现「横幅 3.1 / 实际 7.3」的版本尾巴。
-APP_VERSION = "7.3.1"
+APP_VERSION = "7.4.0"
 
 
 def validate_api_key(key: str) -> str | None:
@@ -278,9 +278,8 @@ class Config:
     # 用户名长度区间，字符集限定为字母数字下划线连字符（避免空格/中文造成歧义）
     AUTH_USERNAME_MIN_LENGTH = 3
     AUTH_USERNAME_MAX_LENGTH = 32
-    # 可选角色：求职者（默认）/ 招聘者。
-    # 注意 recruiter 在本模块内无任何特权——其可见范围由 D3 的分享链接决定。
-    AUTH_ROLES = ("jobseeker", "recruiter")
+    # 可选角色：v7.5 起仅求职者（招聘者端与报告分享已删除，见 CHARTER DC-08）。
+    AUTH_ROLES = ("jobseeker",)
 
     # ===== v3.1: Web 安全配置 =====
     # CORS: 允许的前端来源（逗号分隔），空字符串 = 允许所有（开发模式）
