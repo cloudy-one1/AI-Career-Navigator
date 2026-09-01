@@ -67,6 +67,24 @@ END_INTERVIEW_KEYWORDS = (
     "我想结束", "不想继续了", "停止面试", "end interview", "stop interview",
 )
 
+# v8.6: 退出口令的长度上限（字符数）。
+# 退出口令是**一句话**，不是长回答里顺带提到的词。纯子串匹配时，候选人只要回答中
+# 出现"结束面试"四字（例如复盘"上一场面试结束面试环节之后我就走了"），正在进行的
+# 面试就会被直接掐断——这种误伤比漏检严重得多，漏检只是没提前收尾。
+# 30 字足够容纳中英口令（"OK, let's End Interview now" 为 28 字），
+# 又远短于任何一段实质性回答。
+END_SIGNAL_MAX_LENGTH = 30
+
+# v8.6: 示弱词的转折豁免词。命中示弱词但转折后仍在展开内容 = 没有卡壳。
+RECOVERY_CONTRAST_MARKERS = (
+    "不过", "然而", "可是", "但是", "但", "只是", "只是说",
+    "however", "but", "although",
+)
+
+# 转折后内容达到此长度（字符）才认为"真的补充了东西"，
+# 否则视作"我没做过，但……"后面没了的那种真空转。
+RECOVERY_CONTRAST_MIN_TAIL = 8
+
 
 # ===== v6.3: 恢复/教练触发阈值（借鉴 mock-interviewer 的"连续触发 3 次主动建议跳过"）=====
 # 为什么需要阈值：没有上限时，候选人可以对每一题都喊"不会"换提示，
@@ -86,6 +104,11 @@ RECOVERY_FALLBACK_PROMPT = (
 MAX_THINKING_SECONDS = 600
 MIN_THINKING_SECONDS = 0
 
+# v8.6: 前端上报值与服务端墙钟差的容差（秒）。
+# 前端从"题目渲染完成"起算，服务端从"题目推送"起算——后者必然更大
+# （还多算了网络传输与首屏渲染）。超出容差即说明前端计时失真。
+THINKING_CLOCK_SKEW_TOLERANCE = 2.0
+
 
 def _normalize_thinking_seconds(value) -> float:
     """把前端上报的思考时长规整为合法秒数（非法值一律 0，不抛异常）。"""
@@ -99,11 +122,16 @@ def _normalize_thinking_seconds(value) -> float:
 
 
 def is_end_signal(text: str) -> bool:
-    """检测回答文本是否为"结束面试"退出口令（大小写不敏感的子串匹配）。"""
+    """检测回答文本是否为"结束面试"退出口令（大小写不敏感的子串匹配 + 长度约束）。
+
+    v8.6 长度约束：命中关键词还不够，整段文本还必须足够短（≤ END_SIGNAL_MAX_LENGTH）。
+    退出口令是"一句话"，而一段实质性回答里顺带出现"结束面试"四个字，
+    语义上是**在谈别的事**，不是要结束本场面试。
+    """
     if not text:
         return False
     low = text.strip().lower()
-    if not low:
+    if not low or len(low) > END_SIGNAL_MAX_LENGTH:
         return False
     return any(kw in low for kw in END_INTERVIEW_KEYWORDS)
 
@@ -199,6 +227,10 @@ class InterviewSession:
 
         self.answer_history = []
         self.current_question_context = ""
+        # v8.6: 本题的改写上下文（question / answer / diagnosis）。
+        # 改写改为按需生成后，前端要等看到评分才回来要改写，那时这三项已经
+        # 不再是"当前题"了，不留存就拼不出改写 prompt。
+        self._rewrite_ctx: dict | None = None
         self.pending_status = False
 
         # v2.6: 诊断维度动态权重
@@ -764,11 +796,40 @@ class InterviewSession:
         return evidence
 
     def needs_recovery(self, answer_text: str) -> bool:
-        """检测候选人是否表示"不会/不懂/没思路"，触发不会答恢复。"""
+        """检测候选人是否表示"不会/不懂/没思路"，触发不会答恢复。
+
+        v8.6: 增加转折豁免。此前是纯子串匹配，"我没做过这个，但我了解原理"
+        会命中"没做过"而误触发恢复——候选人明明紧接着就讲了原理，却被当成卡壳，
+        恢复话术反而打断了本来的节奏（且该题会被打上 assisted 标记）。
+
+        豁免需要**同时**满足：命中示弱词 → 示弱词之后出现转折词 →
+        转折词之后还有实质内容（≥ RECOVERY_CONTRAST_MIN_TAIL 字）。
+
+        仍是确定性规则、不引 LLM：这处判据在面试对话的同步路径上，
+        为它多一次 LLM 往返换来的语义精度不值当，还会引入新的不确定性。
+        """
         if not answer_text:
             return False
         low = answer_text.strip().lower()
-        return any(m in low for m in UNCERTAIN_ANSWER_MARKERS)
+        if not low:
+            return False
+
+        hit_at = -1
+        for m in UNCERTAIN_ANSWER_MARKERS:
+            pos = low.find(m)
+            if pos >= 0 and (hit_at < 0 or pos < hit_at):
+                hit_at = pos
+        if hit_at < 0:
+            return False
+
+        # 只看示弱词**之后**的转折：先转折再示弱（"不过我确实不会"）不算豁免
+        for c in RECOVERY_CONTRAST_MARKERS:
+            pos = low.find(c, hit_at + 1)
+            if pos >= 0:
+                tail = low[pos + len(c):].strip(" ，,。.、;；:：!！?？")
+                if len(tail) >= RECOVERY_CONTRAST_MIN_TAIL:
+                    return False
+        return True
 
     # ===== v6.3: 恢复/教练模式的工程化约束 =====
 
@@ -1062,6 +1123,14 @@ class InterviewSession:
                 final_result = msg.get("data")
             yield msg
 
+        # v8.6: 留存本题改写上下文，供前端按需请求改写时重建 prompt
+        if final_result:
+            self._rewrite_ctx = {
+                "question": question_text,
+                "answer": answer_text,
+                "diagnosis": final_result,
+            }
+
         # v6.3: assisted 标记 —— 本题借助了恢复引导，分数照记但报告中披露
         self.record_answer(answer_text, final_result, thinking_seconds,
                            assisted=recovery_requested)
@@ -1096,6 +1165,194 @@ class InterviewSession:
         if self.round_answers:
             self.round_answers[-1] = f"{self.round_answers[-1]}\n[追问补充] {answer_text}"
         self.pending_follow_up = ""
+
+    def annotate_server_thinking(self, server_seconds) -> None:
+        """
+        v8.6: 用服务端墙钟差交叉校验前端上报的思考时长。
+
+        不变量：前端上报值**不可能**大于"服务端推题 → 收到回答"的墙钟差，
+        因为后者还额外包含了网络传输与首屏渲染的时间。违反即说明前端计时失真——
+        页面切后台、设备休眠、组件重渲染导致计时起点被重置，都会造成这种偏差。
+
+        为什么值得做：这个数字进了报告 qaBreakdown，还是 _fallback_impact()
+        兜底文案的判据之一（"耗时偏长，真实面试中可能被质疑熟练度"）。
+        完全信任一个可被前端任意上报、且会自然失真的数字，本身就不成立；
+        这里把它从"完全信任"降级为"可交叉校验"。
+        """
+        if not self.all_diagnoses:
+            return
+        d = self.all_diagnoses[-1]
+        server = _normalize_thinking_seconds(server_seconds)
+        reported = float(d.get("thinking_seconds", 0) or 0)
+        d["server_thinking_seconds"] = server
+
+        if server > 0 and reported > server + THINKING_CLOCK_SKEW_TOLERANCE:
+            logger.info(
+                "[session] %s 思考时长上报异常：前端 %.1fs > 服务端墙钟 %.1fs，"
+                "改用服务端值", self.session_id[:8], reported, server
+            )
+            d["thinking_seconds"] = server
+            d["thinking_seconds_anomalous"] = True
+            # 同步到 answer_history，保证报告两处口径一致
+            if self.answer_history:
+                self.answer_history[-1]["thinking_seconds"] = server
+        else:
+            d["thinking_seconds_anomalous"] = False
+
+    # ===== v8.6: 改写按需生成 + 追问补评 =====
+
+    def rewrite_target_matches(self, round_idx, question_idx) -> bool:
+        """v8.6: 校验按需改写请求的身份（round + question_idx）。
+
+        请求晚到（用户已翻到下一题、或已切轮）时直接拒绝：把上一题的改写
+        贴到当前题上属于"串台"，比让用户多等几秒糟糕得多。
+        """
+        ctx = getattr(self, "_rewrite_ctx", None)
+        if not ctx:
+            return False
+        d = ctx.get("diagnosis") or {}
+        return d.get("round") == round_idx and d.get("question_idx") == question_idx
+
+    async def stream_rewrite(self, round_idx, question_idx):
+        """v8.6: 为指定题目按需生成改写，逐条 yield（rewrite_start → chunk → done）。"""
+        if not self.rewrite_target_matches(round_idx, question_idx):
+            return
+        ctx = self._rewrite_ctx
+        yield {"type": "rewrite_start",
+               "data": {"round": round_idx, "question_idx": question_idx}}
+        async for msg in self.diagnosis.rewrite_stream(
+            question=ctx.get("question", ""),
+            answer=ctx.get("answer", ""),
+            diagnosis=ctx.get("diagnosis") or {},
+            weights=self.dim_weights,
+            resume_text=self.resume_text,
+            jd_text=self.jd_text,
+        ):
+            if msg.get("type") == "rewrite_done":
+                # 补上身份：改写引擎本身不认识 round/question_idx，
+                # 但前端要按它把内容回填到正确的诊断卡上（否则只能靠"上一张卡"猜）。
+                payload = dict(msg.get("data") or {})
+                payload["round"] = round_idx
+                payload["question_idx"] = question_idx
+                yield {"type": "rewrite_done", "data": payload}
+                continue
+            yield msg
+
+    def _follow_up_block(self) -> list[str]:
+        """拼装本题的追问条目（问题 + 补充回答），作为补评 prompt 的输入。
+
+        与 report._build_follow_up_map 同源（都读 answer_history 的
+        follow_up_questions / follow_ups），但用途不同：那边要的是报告展示结构，
+        这里要的是**补评输入**，故拼成带角色的纯文本，让模型能分清
+        哪句是面试官问的、哪句是候选人答的——分不清就会把追问当成回答一起评。
+        """
+        if not self.answer_history:
+            return []
+        h = self.answer_history[-1]
+        answers = [str(a or "").strip() for a in (h.get("follow_ups") or [])]
+        answers = [a for a in answers if a]
+        if not answers:
+            return []
+        questions = h.get("follow_up_questions") or []
+        items = []
+        for i, ans in enumerate(answers):
+            q = str(questions[i] if i < len(questions) else "").strip()
+            items.append(f"面试官追问：{q or '（追问文本未留存）'}\n候选人补充：{ans}")
+        return items
+
+    def apply_follow_up_reassessment(self, updated: dict) -> bool:
+        """
+        把补评结果写回本题诊断记录（v8.6）。
+
+        三条不变式：
+          1. **只补评一次**——同一题被追问两次时第二次补评被拒绝，否则分数会被
+             反复改写，pre_follow_up 快照也就失去了"首评原貌"的意义；
+          2. **原分必留痕**——pre_follow_up 保存首评的维度分/总分/最弱维度，
+             报告据此展示"追问补充带来多少变化"。改分数不留痕是不可接受的，
+             这与 assisted / follow_up_skipped 的披露口径一致；
+          3. **追问仍不计为新题**——这里只改已有诊断记录的分数字段，
+             不动 answered_count 与轮次进度，绝不扭曲"一次追问 ≠ 一道题"的语义。
+
+        返回是否真的写入（False = 无诊断记录 / 已补评过 / 入参为空）。
+        """
+        if not updated or not self.all_diagnoses:
+            return False
+        d = self.all_diagnoses[-1]
+        if d.get("follow_up_reassessed"):
+            return False
+
+        pre_dimensions = dict(d.get("dimensions") or {})
+        pre_overall = d.get("overall_score", 0)
+        pre_weakest = d.get("weakest_dimension", "")
+        if not pre_dimensions:
+            return False
+
+        new_dimensions = updated.get("dimensions") or pre_dimensions
+        new_overall = updated.get("overall_score", pre_overall)
+
+        d["pre_follow_up"] = {
+            "dimensions": pre_dimensions,
+            "overall_score": pre_overall,
+            "weakest_dimension": pre_weakest,
+        }
+        d["dimensions"] = new_dimensions
+        d["raw_dimensions"] = updated.get("raw_dimensions") or d.get("raw_dimensions", {})
+        d["dimension_details"] = updated.get("dimension_details") or d.get("dimension_details")
+        d["score_adjustments"] = updated.get("score_adjustments") or d.get("score_adjustments", [])
+        d["overall_score"] = new_overall
+        d["weakest_dimension"] = updated.get("weakest_dimension", pre_weakest)
+        d["weakest_dimension_name"] = DIM_NAMES.get(
+            d["weakest_dimension"], d.get("weakest_dimension_name", "")
+        )
+        if updated.get("overall_comment"):
+            d["overall_comment"] = updated["overall_comment"]
+        d["reassessment_note"] = str(updated.get("reassessment_note", "") or "")
+        d["follow_up_reassessed"] = True
+        # 分数变化量：正值是补上了短板，负值是补充反而暴露了问题——
+        # 两种都如实呈现，补评不是"答了就加分"的送分机制。
+        d["reassessment_delta"] = round(float(new_overall or 0) - float(pre_overall or 0), 2)
+        return True
+
+    async def stream_follow_up_reassessment(self):
+        """
+        v8.6: 对上一题做一次追问补评，逐条 yield 消息（由 WS 层转发）。
+
+        失败语义：任何一步拿不到 reassessment_done，就当作"补评没发生"，
+        本题保留首评分数。补评是锦上添花，绝不因它中断面试。
+        """
+        if not self.all_diagnoses or not self.answer_history:
+            return
+        if self.all_diagnoses[-1].get("follow_up_reassessed"):
+            return
+        items = self._follow_up_block()
+        if not items:
+            return
+
+        h = self.answer_history[-1]
+        question_text = h.get("question", "") or self.all_diagnoses[-1].get("question", "")
+        base_answer = h.get("answer", "") or ""
+
+        final = None
+        async for msg in self.diagnosis.reassess_stream(
+            question=question_text,
+            answer=base_answer,
+            supplements=items,
+            weights=self.dim_weights,
+            resume_text=self.resume_text,
+            jd_text=self.jd_text,
+            evidence_package=self._evidence_for("\n".join([base_answer] + items)),
+        ):
+            if msg.get("type") == "reassessment_done":
+                final = msg.get("data")
+                continue
+            yield msg
+
+        if not final:
+            return
+        if self.apply_follow_up_reassessment(final):
+            # 刻意不重跑难度调度：难度档已按首评触发，事后改分不撤销已变过的档，
+            # 否则难度轨迹会与"已经出出去的题"对不上。补评影响的是分数与轮次质量。
+            yield {"type": "reassessment_done", "data": self.all_diagnoses[-1]}
 
     def mark_follow_up_skipped(self, follow_up_question: str = "") -> None:
         """

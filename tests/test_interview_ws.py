@@ -77,6 +77,7 @@ class FakeSession:
         self.flow_states: list[str] = []
         self.memory_points: list = []
         self.switched: list[tuple] = []
+        self.server_thinking_calls: list[float] = []   # v8.6: 服务端墙钟差
         self._quality_calls = 0
 
     # —— 启动阶段 ——
@@ -134,6 +135,14 @@ class FakeSession:
 
     def should_follow_up(self, answer_text, diag):
         return False
+
+    def annotate_server_thinking(self, server_seconds):
+        """v8.6: 服务端墙钟差校验。
+
+        契约成员：WS 层每收一次回答就会调用它。桩里缺这个方法，
+        WS 侧立即 AttributeError —— 这正是本桩存在的意义（见类注释）。
+        """
+        self.server_thinking_calls.append(server_seconds)
 
     # —— 每题诊断后推送的实时面板数据来源 ——
     def question_basis(self, q) -> str:
@@ -293,6 +302,27 @@ def _session_row():
 def _sessions_clean():
     return SESSION_ID not in state.active_sessions
 
+
+# ===== 0. v8.6: 思考时长的服务端墙钟校验 + 按需改写 =====
+
+class TestServerThinkingAnnotation:
+    def test_annotated_once_per_answer(self, ws_client, fake_session):
+        """每收一次回答，WS 层就把服务端墙钟差交给会话做交叉校验。"""
+        state.active_sessions[SESSION_ID] = fake_session
+        with ws_client.websocket_connect(f"/ws/interview/{SESSION_ID}") as ws:
+            _drain_until(ws, {"interviewer_info", "dimension_weights", "round_start", "question"})
+            ws.send_json({"type": "answer", "data": {"text": "我负责过订单系统重构"}})
+            _drain_until(ws, {"diagnosis_result"})
+
+            assert len(fake_session.server_thinking_calls) == 1
+            # 墙钟差不可能是负数，也不该大到不合理（推题到收答只有几秒）
+            assert 0 <= fake_session.server_thinking_calls[0] < 300
+
+
+# 注：按需改写的 WS 转发路径不在此覆盖——答完一题后服务端会立刻推进到轮次收尾，
+# 客户端再发 request_rewrite 与推进逻辑存在竞态，写在这里只会得到一条 flaky 用例。
+# 改写的身份校验与流式产出的确定性部分在 tests/test_session.py::TestOnDemandRewrite
+# 与 tests/test_diagnosis_engine.py::TestRewriteStreaming 覆盖。
 
 # ===== 1. ping/pong =====
 

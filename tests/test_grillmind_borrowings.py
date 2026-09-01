@@ -429,6 +429,58 @@ class TestQaBreakdown:
         assert st["max_seconds"] == 30.0
         assert st["min_seconds"] == 10.0
 
+    def test_reassessment_fields_exposed(self):
+        """v8.6: 补评过的题必须同时给出终评与首评原分。
+
+        只给终评等于让读者无从判断这个分数的成色——与 assisted（借助引导）、
+        follow_up_skipped（跳过追问）是同一条诚实披露纪律。
+        """
+        d = _diag(score=4.0)
+        d.update({
+            "follow_up_reassessed": True,
+            "pre_follow_up": {
+                "dimensions": {"quantification": 2.0},
+                "overall_score": 2.8,
+                "weakest_dimension": "quantification",
+            },
+            "reassessment_delta": 1.2,
+            "reassessment_note": "补充了转化率数据",
+        })
+        item = build_report(_fake_session([d]))["qa_breakdown"][0]
+        assert item["follow_up_reassessed"] is True
+        assert item["overall_score"] == 4.0
+        assert item["pre_follow_up"]["overall_score"] == 2.8
+        assert item["reassessment_delta"] == 1.2
+        assert item["reassessment_note"] == "补充了转化率数据"
+
+    def test_reassessment_stats(self):
+        """补评统计要能看出"有几道题被重评、平均变动多少、有没有反而降分的"。"""
+        up = _diag(question="Q1", score=4.5)
+        up.update({"follow_up_reassessed": True, "reassessment_delta": 1.0,
+                   "pre_follow_up": {"overall_score": 3.5}})
+        down = _diag(question="Q2", score=2.0, round_idx=1)
+        down.update({"follow_up_reassessed": True, "reassessment_delta": -0.5,
+                     "pre_follow_up": {"overall_score": 2.5}})
+        plain = _diag(question="Q3", score=3.0, round_idx=1)
+
+        report = build_report(_fake_session([up, down, plain]))
+        st = report["reassessment_stats"]
+        assert st["total"] == 3
+        assert st["reassessed_count"] == 2
+        assert st["avg_delta"] == 0.25      # (1.0 + (-0.5)) / 2
+        assert st["max_delta"] == 1.0
+        assert st["min_delta"] == -0.5
+        assert st["downgraded_questions"] == ["Q2"]
+        # 补评作为复盘信号进建议，不混入打分链路
+        assert "追问补充后" in report["suggestions"]
+
+    def test_reassessment_stats_empty_when_no_reassessment(self):
+        """没有补评时不产生统计噪音，也不往建议里塞无关内容。"""
+        report = build_report(_fake_session([_diag()]))
+        assert report["reassessment_stats"]["reassessed_count"] == 0
+        assert report["reassessment_stats"]["avg_delta"] == 0
+        assert "追问补充后" not in report["suggestions"]
+
     def test_real_impact_uses_model_output_when_present(self):
         report = build_report(_fake_session([_diag(impact="会被追问数据来源")]))
         assert report["qa_breakdown"][0]["real_interview_impact"] == "会被追问数据来源"

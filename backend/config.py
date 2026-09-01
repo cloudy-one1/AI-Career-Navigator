@@ -193,7 +193,8 @@ class Config:
     )
 
     # 实时面试链路：对话中同步等待，延迟敏感，永远关深度思考
-    REALTIME_TASKS = ("question", "interview", "diagnosis", "rewrite")
+    # v8.6: reassessment（追问补评）同样在面试对话中同步等待，归入实时链路。
+    REALTIME_TASKS = ("question", "interview", "diagnosis", "rewrite", "reassessment")
 
     # 面试永远关深度思考（默认开启）。
     # 推理类模型（deepseek-reasoner / o1 / qwen3-thinking / glm-z1）首 token 延迟数秒，
@@ -359,6 +360,23 @@ class Config:
     FOLLOW_UP_MIN_LENGTH = 30       # 回答低于此字数触发追问
     FOLLOW_UP_MAX_COUNT = 2         # 单题最多追问次数
     FOLLOW_UP_SCORE_THRESHOLD = 2.5 # 回答质量低于此分数触发追问
+
+    # ===== v8.6: 追问补评（外部评估报告指出的"追问补充不重评"评分盲区）=====
+    # 候选人被追问后补出的优质内容此前只进报告文本、不进分数。开启后，追问补答
+    # 会触发一次**只含 Diagnostician 单段**的增量重评（不产改写、不产追问，约为
+    # 正常诊断一半 token），五维分 / 加权总分 / 最弱维度全部更新，原始分保留为
+    # pre_follow_up 快照供"为什么加分"对照。LLM 失败静默降级为不重评。
+    FOLLOW_UP_REASSESS = os.getenv(
+        "FOLLOW_UP_REASSESS", "true"
+    ).strip().lower() not in ("0", "false", "no", "off")
+
+    # ===== v8.6: 改写（Rewriter）是否随诊断自动执行 =====
+    # 关闭后诊断完成即返回，改写改由前端按需请求（request_rewrite），
+    # 省掉每题一次完整 LLM 往返的**感知延迟**。注意它与 FOLLOW_UP_REASSESS
+    # 结算的维度不同：这里省的是等待时间，补评花的是 token。
+    AUTO_REWRITE = os.getenv(
+        "AUTO_REWRITE", "true"
+    ).strip().lower() not in ("0", "false", "no", "off")
 
     # ===== v6.3: JD 匹配缺口阈值 =====
     # Gap 分析各维度得分低于此值即视为"岗位要求但简历未充分体现"的缺口，

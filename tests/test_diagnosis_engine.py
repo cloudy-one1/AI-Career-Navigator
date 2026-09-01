@@ -8,9 +8,20 @@ diagnosis_engine 测试：聚焦 2026-08-13 整改后的行为。
 诚实说明：本套件验证的是「工程正确性」（交叉校验逻辑 / 异步桥接是否替换成功），
 不验证 LLM 实际打分质量——那是依赖外部模型输出、单测难以断言的部分。
 """
+import json
+
 import pytest
 
-from backend.diagnosis_engine import normalize_result, DIM_KEYS, _astream
+from backend.config import config
+from backend.diagnosis_engine import (
+    normalize_result,
+    normalize_reassessment,
+    run_diagnosis_streaming,
+    run_reassessment_streaming,
+    run_rewrite_streaming,
+    DIM_KEYS,
+    _astream,
+)
 
 
 def _build_diagnosis(scores: dict, weakest: str = "") -> dict:
@@ -170,3 +181,166 @@ class TestAstreamAsync:
         import inspect
 
         assert inspect.isasyncgenfunction(_astream)
+
+
+def _fake_client(raw: str, captured: dict | None = None):
+    """返回一个只产出 raw 的假 LLM 客户端（captured 非空时记录调用参数）。"""
+
+    class FakeClient:
+        async def chat_stream_async(self, **kwargs):
+            if captured is not None:
+                captured.update(kwargs)
+            yield raw
+
+    return FakeClient()
+
+
+class TestFollowUpReassessment:
+    """v8.6: 追问补评 —— 只跑 Diagnostician 单段的增量重评。"""
+
+    def test_same_scores_as_first_assessment(self):
+        """补评与首评必须算出**完全一致**的分数。
+
+        两边共用 _score_and_weakest 就是为了钉住这一点：一旦哪天有人只改了
+        首评的加权公式，报告里就会出现"同一道题两种算法"，分数将无法解释。
+        """
+        diag = _build_diagnosis(BASE_SCORES, weakest="job_relevance")
+        first = normalize_result(diag, {}, weights=None)
+        again = normalize_reassessment(diag, weights=None)
+        assert again["overall_score"] == first["overall_score"]
+        assert again["weakest_dimension"] == first["weakest_dimension"]
+        assert again["dimensions"] == first["dimensions"]
+
+    def test_note_and_raw_dimensions_exposed(self):
+        diag = _build_diagnosis(BASE_SCORES)
+        diag["reassessment_note"] = "补充了转化率数据，量化程度上调"
+        res = normalize_reassessment(diag, weights=None)
+        assert res["reassessment_note"] == "补充了转化率数据，量化程度上调"
+        assert res["raw_dimensions"] == res["dimensions"]   # 无规则修正时两者一致
+        assert res["weakest_dimension_name"]
+
+    @pytest.mark.asyncio
+    async def test_stream_emits_status_then_done(self):
+        raw = json.dumps(_build_diagnosis(BASE_SCORES, weakest="quantification"),
+                         ensure_ascii=False)
+        msgs = [m async for m in run_reassessment_streaming(
+            _fake_client(raw), "Q", "A", ["面试官追问：数据呢\n候选人补充：18%"])]
+
+        assert [m["type"] for m in msgs] == ["reassessment_status", "reassessment_done"]
+        data = msgs[-1]["data"]
+        assert data["overall_score"] > 0
+        assert data["weakest_dimension"] == "quantification"
+
+    @pytest.mark.asyncio
+    async def test_prompt_carries_question_answer_and_supplements(self):
+        """补评输入必须包含原题、原回答与追问补充，缺一评不准。"""
+        captured = {}
+        raw = json.dumps(_build_diagnosis(BASE_SCORES), ensure_ascii=False)
+        [m async for m in run_reassessment_streaming(
+            _fake_client(raw, captured), "原题？", "原回答",
+            ["面试官追问：数据呢\n候选人补充：转化率 18%"])]
+
+        assert "原题？" in captured["user_prompt"]
+        assert "原回答" in captured["user_prompt"]
+        assert "转化率 18%" in captured["user_prompt"]
+        # 实时链路：必须带 task 以便按"面试禁思考"策略过滤推理模型
+        assert captured["task"] == "reassessment"
+
+    @pytest.mark.asyncio
+    async def test_no_supplements_is_noop(self):
+        """没有追问补充就不该调用 LLM——那等于把同一份回答评两遍。"""
+
+        class ExplodingClient:
+            async def chat_stream_async(self, **kwargs):
+                raise AssertionError("无补充不应调用 LLM")
+                yield ""   # pragma: no cover
+
+        msgs = [m async for m in run_reassessment_streaming(ExplodingClient(), "Q", "A", [])]
+        assert msgs == []
+
+    @pytest.mark.asyncio
+    async def test_unparseable_output_emits_no_done(self):
+        """JSON 解析失败 = 补评没发生，只留 status，不给 done（分数保持首评）。"""
+        msgs = [m async for m in run_reassessment_streaming(
+            _fake_client("这不是 JSON"), "Q", "A", ["补充"])]
+        assert [m["type"] for m in msgs] == ["reassessment_status"]
+
+    @pytest.mark.asyncio
+    async def test_empty_output_emits_no_done(self):
+        class EmptyClient:
+            async def chat_stream_async(self, **kwargs):
+                if False:      # pragma: no cover
+                    yield ""
+
+        msgs = [m async for m in run_reassessment_streaming(EmptyClient(), "Q", "A", ["补充"])]
+        assert [m["type"] for m in msgs] == ["reassessment_status"]
+
+
+class TestRewriteStreaming:
+    """v8.6: 改写独立成流 —— 自动路径与按需路径共用同一实现。"""
+
+    @pytest.mark.asyncio
+    async def test_emits_chunks_then_done(self):
+        raw = json.dumps({"rewritten_answer": "改写后的回答",
+                          "key_changes": ["补了数据"]}, ensure_ascii=False)
+        msgs = [m async for m in run_rewrite_streaming(
+            _fake_client(raw), "Q", "A", {"overall_score": 3})]
+
+        assert [m["type"] for m in msgs] == ["rewrite_chunk", "rewrite_done"]
+        assert msgs[-1]["data"]["rewritten_answer"] == "改写后的回答"
+        assert msgs[-1]["data"]["key_changes"] == ["补了数据"]
+
+    @pytest.mark.asyncio
+    async def test_non_json_falls_back_to_raw_text(self):
+        """模型不返回 JSON 时退回纯文本，不丢弃整段改写。"""
+        msgs = [m async for m in run_rewrite_streaming(
+            _fake_client("纯文本改写"), "Q", "A", {})]
+
+        assert msgs[-1]["data"]["rewritten_answer"] == "纯文本改写"
+        assert msgs[-1]["data"]["key_changes"] == []
+
+    @pytest.mark.asyncio
+    async def test_prompt_carries_diagnosis_and_task(self):
+        captured = {}
+        raw = json.dumps({"rewritten_answer": "x"}, ensure_ascii=False)
+        [m async for m in run_rewrite_streaming(
+            _fake_client(raw, captured), "原题", "原回答", {"quantification": {"score": 2}})]
+
+        assert "原题" in captured["user_prompt"]
+        assert "原回答" in captured["user_prompt"]
+        assert "quantification" in captured["user_prompt"]
+        assert captured["task"] == "rewrite"
+
+
+class TestAutoRewriteGate:
+    """v8.6: AUTO_REWRITE 决定是否随诊断一起跑改写（关闭后改为按需请求）。"""
+
+    @pytest.mark.asyncio
+    async def test_disabled_skips_rewrite_and_flags_lazy(self, monkeypatch):
+        monkeypatch.setattr(config, "AUTO_REWRITE", False)
+        diag = _build_diagnosis(BASE_SCORES)
+        diag["overall_comment"] = "整体不错"
+        raw = json.dumps(diag, ensure_ascii=False)
+
+        msgs = [m async for m in run_diagnosis_streaming(
+            _fake_client(raw), "Q", "A", "R", "JD")]
+
+        assert "rewrite_chunk" not in [m["type"] for m in msgs]
+        done = [m for m in msgs if m["type"] == "diagnosis_done"][0]["data"]
+        assert done["rewrite_lazy"] is True
+        assert done["rewritten_answer"] == ""
+
+    @pytest.mark.asyncio
+    async def test_enabled_keeps_rewrite_inline(self, monkeypatch):
+        monkeypatch.setattr(config, "AUTO_REWRITE", True)
+        diag = _build_diagnosis(BASE_SCORES)
+        diag["overall_comment"] = "整体不错"
+        raw = json.dumps(diag, ensure_ascii=False)
+
+        msgs = [m async for m in run_diagnosis_streaming(
+            _fake_client(raw), "Q", "A", "R", "JD")]
+
+        types = [m["type"] for m in msgs]
+        assert "rewrite_chunk" in types
+        done = [m for m in msgs if m["type"] == "diagnosis_done"][0]["data"]
+        assert done["rewrite_lazy"] is False

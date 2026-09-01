@@ -163,6 +163,35 @@ class TestAnswerFlow:
         assert s.needs_recovery("我做过一个类似的项目，方案是这样的") is False
         assert s.needs_recovery("") is False
 
+    def test_needs_recovery_contrast_exemption(self):
+        """v8.6: "没做过，但我了解原理"不该被当成卡壳。
+
+        误触发的代价是双重的：恢复话术打断候选人本来的节奏，且该题会被打上
+        assisted 标记，进了报告就成了"这题是借助引导完成的"——一个假信号。
+        """
+        s, _, _ = _make_session()
+        assert s.needs_recovery("我没做过这个，但我了解它的实现原理") is False
+        assert s.needs_recovery("这块不太了解，不过我可以说说我的理解") is False
+        assert s.needs_recovery("不知道，不过我猜应该和缓存穿透有关") is False
+
+    def test_needs_recovery_contrast_needs_substance(self):
+        """转折后必须有实质内容才豁免——"我没做过，但……"后面没了仍是卡壳。"""
+        s, _, _ = _make_session()
+        assert s.needs_recovery("我没做过，但") is True
+        assert s.needs_recovery("不会，不过") is True
+
+    def test_needs_recovery_contrast_before_marker(self):
+        """先转折、再示弱（"不过我确实不会"）不算豁免：结论仍是不会。"""
+        s, _, _ = _make_session()
+        assert s.needs_recovery("不过我确实不会") is True
+
+    def test_needs_recovery_still_triggers_without_contrast(self):
+        """豁免不能把真正的卡壳一起免掉。"""
+        s, _, _ = _make_session()
+        assert s.needs_recovery("这个我不懂") is True
+        assert s.needs_recovery("完全没思路，答不上来") is True
+        assert s.needs_recovery("没接触过这类系统") is True
+
     def test_handle_follow_up_answer(self):
         s, _, _ = _make_session()
         _load_question(s)
@@ -433,3 +462,259 @@ class TestGenerateQuestions:
         with patch.object(session_mod, "build_report", return_value={"summary": "x"}) as m:
             assert s.build_report() == {"summary": "x"}
         m.assert_called_once_with(s)
+
+
+# ===== v8.6: 追问补评（增量重评）=====
+# 覆盖的是"分数被改写的边界"，不是 LLM 质量：补评必须能改分、必须留原分、
+# 必须只跑一次、失败必须退回首评。这四条任何一条破了，补评就从诊断工具变成噪音。
+
+def _reassess_payload(score=4.6, note="补充了具体数据"):
+    return {
+        "dimensions": {k: 5 for k in DIM_KEYS},
+        "dimension_details": {k: {"comment": "补充到位"} for k in DIM_KEYS},
+        "overall_score": score,
+        "weakest_dimension": "quantification",
+        "reassessment_note": note,
+    }
+
+
+async def _reassess_stream(payload):
+    """模拟 DiagnosisEngine.reassess_stream 的消息序列（status → done）。"""
+    yield {"type": "reassessment_status", "data": {"phase": "reassessing"}}
+    yield {"type": "reassessment_done", "data": payload}
+
+
+def _session_with_follow_up():
+    """已答题 + 已收到一次追问补充的会话（补评的标准前置状态）。"""
+    s, _, diag = _make_session()
+    _load_question(s)
+    s.record_answer("首评回答", _diag_data(overall_score=3))
+    s.pending_follow_up = "能具体说说数据吗？"
+    s.handle_follow_up_answer("补充：转化率从 12% 提到 18%")
+    return s, diag
+
+
+def _bind_reassess(diag, gen_fn):
+    """把 diag.reassess_stream 绑到 gen_fn(**kwargs)（gen_fn 须为异步生成器函数）。"""
+    diag.reassess_stream = MagicMock(side_effect=lambda **kw: gen_fn(**kw))
+
+
+class TestFollowUpReassessment:
+    @pytest.mark.asyncio
+    async def test_updates_score_and_keeps_original(self):
+        """补评改分数，但首评原分必须完整留下（改分不留痕是不可接受的）。"""
+        s, diag = _session_with_follow_up()
+        before = s.all_diagnoses[-1]["overall_score"]
+        _bind_reassess(diag, lambda **kw: _reassess_stream(_reassess_payload()))
+
+        msgs = [m async for m in s.stream_follow_up_reassessment()]
+
+        assert [m["type"] for m in msgs] == ["reassessment_status", "reassessment_done"]
+        d = s.all_diagnoses[-1]
+        assert d["follow_up_reassessed"] is True
+        assert d["overall_score"] == 4.6
+        assert d["weakest_dimension"] == "quantification"
+        assert d["reassessment_note"] == "补充了具体数据"
+        # 首评快照：分数、五维、最弱维度一个都不能少
+        assert d["pre_follow_up"]["overall_score"] == before
+        assert d["pre_follow_up"]["dimensions"] == {k: 4 for k in DIM_KEYS}
+        assert d["reassessment_delta"] == round(4.6 - before, 2)
+
+    @pytest.mark.asyncio
+    async def test_supplements_carry_question_and_answer(self):
+        """补评输入必须同时带上"追问了什么"与"补充了什么"。
+
+        少了追问问题，模型就只能看到一段没头没尾的补充文本——
+        分不清哪句是面试官问的、哪句是候选人答的，评分必然打偏。
+        """
+        s, diag = _session_with_follow_up()
+        captured = {}
+
+        async def _cap(**kwargs):
+            captured.update(kwargs)
+            async for m in _reassess_stream(_reassess_payload()):
+                yield m
+
+        _bind_reassess(diag, _cap)
+        [m async for m in s.stream_follow_up_reassessment()]
+
+        assert captured["question"] == "介绍一下你的项目"
+        assert captured["answer"] == "首评回答"
+        assert len(captured["supplements"]) == 1
+        assert "能具体说说数据吗" in captured["supplements"][0]
+        assert "转化率从 12% 提到 18%" in captured["supplements"][0]
+
+    @pytest.mark.asyncio
+    async def test_reassessment_runs_only_once(self):
+        """同一题只补评一次：二次补评会让分数被反复改写，首评快照也失去意义。"""
+        s, diag = _session_with_follow_up()
+        _bind_reassess(diag, lambda **kw: _reassess_stream(_reassess_payload()))
+        [m async for m in s.stream_follow_up_reassessment()]
+        first = s.all_diagnoses[-1]["overall_score"]
+
+        _bind_reassess(diag, lambda **kw: pytest.fail("不应发起第二次补评"))
+        msgs = [m async for m in s.stream_follow_up_reassessment()]
+
+        assert msgs == []
+        assert s.all_diagnoses[-1]["overall_score"] == first
+
+    @pytest.mark.asyncio
+    async def test_no_supplement_is_noop(self):
+        """没有追问补充就不该补评——那等于把同一份回答评两遍，纯浪费 token。"""
+        s, _, diag = _make_session()
+        _load_question(s)
+        s.record_answer("只有首评", _diag_data())
+        diag.reassess_stream = MagicMock(side_effect=lambda **kw: pytest.fail("无补充不应补评"))
+
+        assert [m async for m in s.stream_follow_up_reassessment()] == []
+
+    @pytest.mark.asyncio
+    async def test_failure_keeps_first_score(self):
+        """补评失败静默退回首评：拿不到 reassessment_done 就等于没发生过。"""
+        s, diag = _session_with_follow_up()
+        before = s.all_diagnoses[-1]["overall_score"]
+
+        async def _no_done(**kwargs):
+            yield {"type": "reassessment_status", "data": {"phase": "reassessing"}}
+
+        _bind_reassess(diag, _no_done)
+        msgs = [m async for m in s.stream_follow_up_reassessment()]
+
+        assert [m["type"] for m in msgs] == ["reassessment_status"]
+        assert s.all_diagnoses[-1]["overall_score"] == before
+        assert s.all_diagnoses[-1].get("follow_up_reassessed") is not True
+        assert "pre_follow_up" not in s.all_diagnoses[-1]
+
+    @pytest.mark.asyncio
+    async def test_downgrade_is_recorded(self):
+        """补评可以降分：补充暴露了新问题时，delta 必须是负的。
+
+        若补评只能涨分，追问就退化成送分机制——比不补评更有害。
+        """
+        s, diag = _session_with_follow_up()
+        _bind_reassess(diag, lambda **kw: _reassess_stream(_reassess_payload(score=2.0)))
+
+        [m async for m in s.stream_follow_up_reassessment()]
+
+        d = s.all_diagnoses[-1]
+        assert d["overall_score"] == 2.0
+        assert d["reassessment_delta"] == -1.0
+
+    def test_apply_reassessment_without_diagnosis(self):
+        """无诊断记录 / 空入参时返回 False，绝不造出一条空分数的诊断。"""
+        s, _, _ = _make_session()
+        assert s.apply_follow_up_reassessment({}) is False
+        _load_question(s)
+        s.record_answer("x", _diag_data())
+        assert s.apply_follow_up_reassessment({}) is False
+        assert s.all_diagnoses[-1].get("follow_up_reassessed") is not True
+
+
+async def _reassess_stream(payload):
+    """模拟 DiagnosisEngine.reassess_stream 的消息序列。"""
+    yield {"type": "reassessment_status", "data": {"phase": "reassessing"}}
+    yield {"type": "reassessment_done", "data": payload}
+
+
+class TestServerThinkingCrossCheck:
+    """v8.6: 思考时长的服务端交叉校验。
+
+    前端上报值不可能大于"服务端推题 → 收到回答"的墙钟差（后者多算了网络与渲染）。
+    这个不变量让"前端报多少就是多少"降级为"可交叉校验"。
+    """
+
+    def _answered(self, reported):
+        s, _, _ = _make_session()
+        _load_question(s)
+        s.record_answer("回答", _diag_data(), reported)
+        return s
+
+    def test_consistent_report_kept(self):
+        """上报值合理（小于服务端墙钟差）：原样保留，不标异常。"""
+        s = self._answered(12.0)
+        s.annotate_server_thinking(20.0)
+        d = s.all_diagnoses[-1]
+        assert d["thinking_seconds"] == 12.0
+        assert d["server_thinking_seconds"] == 20.0
+        assert d["thinking_seconds_anomalous"] is False
+
+    def test_impossible_report_overridden(self):
+        """上报值超过服务端墙钟差：以服务端值为准并标注异常。"""
+        s = self._answered(120.0)
+        s.annotate_server_thinking(20.0)
+        d = s.all_diagnoses[-1]
+        assert d["thinking_seconds"] == 20.0
+        assert d["thinking_seconds_anomalous"] is True
+        # answer_history 必须同步，否则报告两处口径不一致
+        assert s.answer_history[-1]["thinking_seconds"] == 20.0
+
+    def test_skew_within_tolerance_kept(self):
+        """容差内的正常偏差（渲染 + 网络开销）不该被判异常。"""
+        s = self._answered(21.0)
+        s.annotate_server_thinking(20.0)
+        d = s.all_diagnoses[-1]
+        assert d["thinking_seconds"] == 21.0
+        assert d["thinking_seconds_anomalous"] is False
+
+    def test_no_diagnosis_is_noop(self):
+        s, _, _ = _make_session()
+        s.annotate_server_thinking(10.0)   # 无诊断记录，不应抛错
+
+    def test_zero_server_elapsed_is_noop(self):
+        """服务端墙钟为 0（未采集到）时不覆盖，避免把有效值抹成 0。"""
+        s = self._answered(12.0)
+        s.annotate_server_thinking(0)
+        assert s.all_diagnoses[-1]["thinking_seconds"] == 12.0
+
+
+class TestOnDemandRewrite:
+    """v8.6: 改写按需生成（AUTO_REWRITE=false 时前端看到评分后才来要）。"""
+
+    @pytest.mark.asyncio
+    async def test_stream_answer_stores_rewrite_context(self):
+        """改写改为按需后，前端来要时这题已不是"当前题"，不留存就拼不出 prompt。"""
+        s, _, _ = _make_session()
+        _load_question(s)
+        [m async for m in s.stream_answer("我的回答")]
+
+        ctx = s._rewrite_ctx
+        assert ctx["question"] == "介绍一下你的项目"
+        assert ctx["answer"] == "我的回答"
+        assert ctx["diagnosis"]["overall_score"] == 4
+
+    @pytest.mark.asyncio
+    async def test_mismatched_target_emits_nothing(self):
+        """身份不符直接拒绝：把上一题的改写贴到当前题上是"串台"，比慢一点糟得多。"""
+        s, _, diag = _make_session()
+        s._rewrite_ctx = {"question": "Q", "answer": "A",
+                          "diagnosis": {"round": 0, "question_idx": 0}}
+        diag.rewrite_stream = MagicMock(side_effect=lambda **kw: pytest.fail("身份不符不应生成"))
+
+        assert [m async for m in s.stream_rewrite(1, 0)] == []
+        assert [m async for m in s.stream_rewrite(0, 1)] == []
+
+    @pytest.mark.asyncio
+    async def test_stream_rewrite_carries_identity(self):
+        """rewrite_done 必须带 round/question_idx —— 前端靠它回填到正确的诊断卡。"""
+        s, _, diag = _make_session()
+        s._rewrite_ctx = {"question": "Q", "answer": "A",
+                          "diagnosis": {"round": 0, "question_idx": 2}}
+
+        async def _rw(**kwargs):
+            yield {"type": "rewrite_chunk", "data": {"text": "改写"}}
+            yield {"type": "rewrite_done",
+                   "data": {"rewritten_answer": "改写文本", "key_changes": ["补数据"]}}
+
+        diag.rewrite_stream = MagicMock(side_effect=lambda **kw: _rw(**kw))
+        msgs = [m async for m in s.stream_rewrite(0, 2)]
+
+        assert [m["type"] for m in msgs] == ["rewrite_start", "rewrite_chunk", "rewrite_done"]
+        assert msgs[0]["data"] == {"round": 0, "question_idx": 2}
+        assert msgs[-1]["data"]["round"] == 0
+        assert msgs[-1]["data"]["question_idx"] == 2
+        assert msgs[-1]["data"]["rewritten_answer"] == "改写文本"
+
+    @pytest.mark.asyncio
+    async def test_no_context_is_noop(self):
+        s, _, _ = _make_session()
+        assert [m async for m in s.stream_rewrite(0, 0)] == []

@@ -147,6 +147,7 @@
 | `ping` | `{}` | 心跳，服务端回 `pong` |
 | `switch_mode` | `{mode?, stage?}` | 会话中切换模式 / 阶段，非法值回 `error` 不中断 |
 | `skill` | `{action: "list" \| "activate" \| "deactivate", name?}` | 面试技能（有状态多轮，**显式触发**，不靠关键词猜测） |
+| `request_rewrite` | `{round, question_idx}` | v8.6：按需请求本题的改写示范。仅 `AUTO_REWRITE=false` 时有意义；身份不匹配（已切到别的题）时服务端静默忽略 |
 
 回答文本命中「结束面试」等退出口令时，不诊断、不计分，直接收束并照常生成部分报告。
 
@@ -159,13 +160,15 @@
 | `interviewer_change` | 面试官角色切换 |
 | `round_start` | 每轮开始 |
 | `question` | 出题（含 `intent` / `focus_dimension` / `is_pressure` / `basis` 出题依据） |
-| `diagnosis_result` | 单题诊断结果（五维评分 + 证据引用 `quote`） |
+| `diagnosis_result` | 单题诊断结果（五维评分 + 证据引用 `quote`）。v8.6：带 `rewrite_lazy`，为 `true` 表示改写未随诊断生成、需由客户端发 `request_rewrite` 获取 |
 | `radar_update` | 雷达图增量数据 |
 | `weakness_update` | 薄弱点累计更新 |
 | `follow_up` / `follow_up_received` | 追问下发 / 追问回答已收到 |
 | `difficulty_change` | 动态难度调整 |
 | `round_quality_check` / `extra_question` | 轮次质检 / 追加题 |
 | `mode_change` | 模式切换生效 |
+| `reassessment_status` / `reassessment_done` | v8.6：追问补评。补充回答提交后本题被**重新评定**（`rewrite_lazy` 无关）；`reassessment_done` 携带更新后的完整诊断，`pre_follow_up` 为首评原分 |
+| `rewrite_start` / `rewrite_done` | v8.6：按需改写（响应 `request_rewrite`）。`rewrite_done` 带 `round` / `question_idx` 身份，供前端回填到正确的诊断卡 |
 | `skill_list` / `skill_start` / `skill_end` | 面试技能事件 |
 | `interview_closing` / `round_summary` / `interview_done` | 收尾、轮次小结、面试完成 |
 | `security_block` | 内容护栏拦截（启发式，可被绕过，**非安全边界**） |

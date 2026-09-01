@@ -53,6 +53,18 @@ let dimWeights = null;        // v2.6: 本场各维度权重
 let questionShownAt = 0;
 let followUpShownAt = 0;
 
+// v8.6: 按需改写（AUTO_REWRITE=false 时生效）—— 改写不再随诊断一起返回，
+// 前端拿到评分后再主动向后端要。两处配套状态：
+//   rewriteCache：已取回的改写内容。诊断卡会因追问补评等原因整体重渲染，
+//     没有缓存的话已经拿到手的改写会被抹成空白。
+//   rewriteRequestedKey：已发起过请求的题目，避免同一题重复要（每次都要一次 LLM）。
+const rewriteCache = new Map();
+let rewriteRequestedKey = null;
+
+function rewriteKeyOf(data) {
+  return `${data?.round ?? ''}:${data?.question_idx ?? ''}`;
+}
+
 // ===== v6.3 集中状态机（借鉴 HakiMeet InterviewView 的单一状态驱动）=====
 // 会话阶段收敛为单一 state + setPhase() 入口，跨模块副作用统一在这里驱动。
 // phase 语义：setup（引导页）→ starting（建会话/连 WS 中）→ active（会话中）
@@ -795,7 +807,14 @@ function updateSkillProgress(skillName, step, total) {
   setSkillBarActive(true, skillName, step, total);
 }
 
-function handleWSMessage(type, data) {
+/**
+ * WebSocket 消息分发（v2.6）。
+ *
+ * v8.6: 加 export 仅为可测性 —— 此前这个 25 分支的派发中心零自动化覆盖，
+ * 后端新增一种消息类型而前端漏接时，只能靠手工点击发现（表现为"静默无反应"）。
+ * 导出本身零逻辑改动，生产路径不受影响。
+ */
+export function handleWSMessage(type, data) {
   switch (type) {
     case 'interviewer_info':
       initSessionLayout(data);
@@ -822,7 +841,19 @@ function handleWSMessage(type, data) {
       break;
 
     case 'rewrite_chunk':
-      appendStreamChunk('rewrite', data.text);
+      // v8.6: 两条路径 —— 诊断流式阶段写进 stream-box；按需改写写进诊断卡占位区
+      if ($('#stream-rewrite')) appendStreamChunk('rewrite', data.text);
+      else appendRewriteChunk(data.text);
+      break;
+
+    // v8.6: 按需改写（诊断已出分后才生成，用户无需在诊断阶段干等）
+    // rewrite_start 只是"后端已开始生成"的信号，占位区在诊断卡渲染时就建好了，
+    // 内容由后续 rewrite_chunk 逐块填入，故这里无需动作。
+    case 'rewrite_start':
+      break;
+
+    case 'rewrite_done':
+      finalizeRewrite(data);
       break;
 
     // v2.6: 实时雷达刷新
@@ -868,6 +899,16 @@ function handleWSMessage(type, data) {
       break;
 
     case 'diagnosis_result':
+      showDiagnosis($('#chat-flow'), data);
+      break;
+
+    // v8.6: 追问补评 —— 补充回答后本题被重新评定，分数会真的变
+    case 'reassessment_status':
+      showStreamStatus($('#chat-flow'), data);
+      break;
+
+    case 'reassessment_done':
+      // 重渲染诊断卡；后端随后会补推 radar_update / weakness_update 对齐其它面板
       showDiagnosis($('#chat-flow'), data);
       break;
 
@@ -1615,6 +1656,12 @@ function showStreamStatus(area, data) {
       '<span class="streaming-dots"><span class="streaming-dot"></span>'
       + '<span class="streaming-dot"></span><span class="streaming-dot"></span></span>'
       + ' 改写专家正在生成示范回答...';
+  } else if (data.phase === 'reassessing') {
+    // v8.6: 追问补评 —— 补充回答会真的改变本题分数，得让用户知道在重评
+    status.innerHTML =
+      '<span class="streaming-dots"><span class="streaming-dot"></span>'
+      + '<span class="streaming-dot"></span><span class="streaming-dot"></span></span>'
+      + ' 正在结合你的补充回答重新评定本题...';
   }
 }
 
@@ -1652,6 +1699,13 @@ function showDiagnosis(area, data) {
   const weakest = data.weakest_dimension || '';
   // v4.0: 原文对照（读取当前回答输入）
   const rawAnswer = ($('#answer-input')?.value || '').trim();
+  // v8.6: 改写可能是"还没生成"的（按需模式）。已取回的从缓存读，
+  // 否则诊断卡因补评等原因重渲染时，拿到手的改写会被清成空白。
+  const rwKey = rewriteKeyOf(data);
+  const rewriteText = data.rewritten_answer || rewriteCache.get(rwKey) || '';
+  const rewriteChanges = (data.key_changes?.length
+    ? data.key_changes
+    : rewriteCache.get(`${rwKey}:changes`)) || [];
 
   const diagPanel = el('div', { className: 'diagnosis-panel' },
     el('div', { className: 'diag-section' },
@@ -1672,6 +1726,14 @@ function showDiagnosis(area, data) {
           el('div', { className: 'diag-hero-score-label', textContent: '本题综合评分 · 满分 5' }),
           data.weight_desc ? el('div', { className: 'diag-hero-weight', textContent: `权重：${data.weight_desc}` }) : '',
           data.overall_comment ? el('div', { className: 'diag-hero-comment', textContent: `💬 ${data.overall_comment}` }) : '',
+          // v8.6: 补评留痕 —— 本题分数是追问补充后重评出来的，首评原分必须一并显示，
+          // 否则用户会以为这分数从头到尾就是这样（与 assisted / 跳过追问同一披露口径）
+          data.follow_up_reassessed && data.pre_follow_up
+            ? el('div', {
+                className: 'diag-hero-weight',
+                textContent: `🔄 追问补充后已重评：首评 ${Number(data.pre_follow_up.overall_score || 0).toFixed(1)} → ${oScore.toFixed(1)}${data.reassessment_note ? ` · ${data.reassessment_note}` : ''}`,
+              })
+            : '',
           weakest ? el('span', { className: 'badge badge-warning', textContent: `优先改进：${data.weakest_dimension_name || DIM_NAMES[weakest] || weakest}` }) : '',
         ),
       ),
@@ -1708,25 +1770,34 @@ function showDiagnosis(area, data) {
     ),
 
     // 改写示范（v4.0: 原文 / 示范对照）
-    data.rewritten_answer ? el('div', { className: 'diag-section' },
-      el('div', { className: 'diag-section-title', textContent: '✨ 改写示范' }),
-      el('div', { className: 'rewrite-section' },
-        rawAnswer ? el('div', { className: 'rewrite-block' },
-          el('div', { className: 'rewrite-block-label', textContent: '你的回答' }),
-          el('div', { className: 'rewrite-original', textContent: rawAnswer }),
-        ) : '',
-        el('div', { className: 'rewrite-block' },
-          el('div', { className: 'rewrite-block-label rewrite-label-ai', textContent: 'AI 示范' }),
-          el('div', { className: 'rewrite-answer', textContent: data.rewritten_answer }),
+    // v8.6: 按需模式下诊断先不带改写，这里渲染占位，改写回来后流式填入
+    ...(rewriteText || data.rewrite_lazy) ? [
+      el('div', { className: 'diag-section', id: 'rewrite-live-section' },
+        el('div', { className: 'diag-section-title', textContent: '✨ 改写示范' }),
+        el('div', { className: 'rewrite-section' },
+          rawAnswer ? el('div', { className: 'rewrite-block' },
+            el('div', { className: 'rewrite-block-label', textContent: '你的回答' }),
+            el('div', { className: 'rewrite-original', textContent: rawAnswer }),
+          ) : '',
+          el('div', { className: 'rewrite-block' },
+            el('div', { className: 'rewrite-block-label rewrite-label-ai', textContent: 'AI 示范' }),
+            el('div', {
+              className: 'rewrite-answer',
+              id: 'rewrite-live-text',
+              textContent: rewriteText || '正在生成示范回答…',
+            }),
+          ),
         ),
       ),
-      data.key_changes?.length ? el('div', {},
-        el('div', { style: 'font-size:.8rem;color:var(--text-secondary);margin-bottom:6px;', textContent: '关键改动：' }),
-        el('ul', { className: 'key-changes' },
-          ...data.key_changes.map(c => el('li', { textContent: c })),
-        ),
-      ) : '',
-    ) : '',
+      el('div', { id: 'rewrite-live-changes' },
+        rewriteChanges.length ? el('div', {},
+          el('div', { style: 'font-size:.8rem;color:var(--text-secondary);margin-bottom:6px;', textContent: '关键改动：' }),
+          el('ul', { className: 'key-changes' },
+            ...rewriteChanges.map(c => el('li', { textContent: c })),
+          ),
+        ) : '',
+      ),
+    ] : [''],
 
     // v2.5: 诊断反馈按钮
     el('div', { className: 'diag-feedback' },
@@ -1751,9 +1822,53 @@ function showDiagnosis(area, data) {
   if (qCard) qCard.after(diagPanel);
   else area.appendChild(diagPanel);
 
+  // v8.6: 按需改写 —— 评分已经呈现给用户了，这时才向后端要改写，
+  // 用户不必在诊断阶段干等一次完整的 LLM 往返。同一题只请求一次。
+  if (data.rewrite_lazy && !rewriteText && rwKey !== rewriteRequestedKey) {
+    rewriteRequestedKey = rwKey;
+    if (ws && typeof ws.send === 'function') {
+      ws.send('request_rewrite', { round: data.round, question_idx: data.question_idx });
+    }
+  }
+
   // 有追问时保持输入禁用，等追问块出现；否则立即恢复
   if (!data.follow_up_question) {
     reactivateAnswerInput();
+  }
+}
+
+// ===== v8.6: 按需改写 =====
+
+/** 流式追加改写文本到诊断卡的占位区（首块到达时清掉"正在生成"占位文案）。 */
+function appendRewriteChunk(text) {
+  if (!text) return;
+  const target = $('#rewrite-live-text');
+  if (!target) return;
+  if (target.textContent === '正在生成示范回答…') target.textContent = '';
+  target.textContent += text;
+}
+
+/** 改写生成完毕：写入缓存（供诊断卡重渲染时复用）并补齐关键改动。 */
+function finalizeRewrite(data) {
+  const answer = (data.rewritten_answer || '').trim();
+  const changes = data.key_changes || [];
+  const key = rewriteKeyOf(data);
+  if (answer) rewriteCache.set(key, answer);
+  if (changes.length) rewriteCache.set(`${key}:changes`, changes);
+
+  const textEl = $('#rewrite-live-text');
+  if (textEl && answer) textEl.textContent = answer;
+
+  const box = $('#rewrite-live-changes');
+  if (box && changes.length) {
+    box.innerHTML = '';
+    box.appendChild(el('div', {},
+      el('div', {
+        style: 'font-size:.8rem;color:var(--text-secondary);margin-bottom:6px;',
+        textContent: '关键改动：',
+      }),
+      el('ul', { className: 'key-changes' }, ...changes.map(c => el('li', { textContent: c }))),
+    ));
   }
 }
 

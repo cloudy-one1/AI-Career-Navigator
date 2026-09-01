@@ -17,6 +17,7 @@ import json
 import logging
 from typing import AsyncGenerator
 
+from .config import config
 from .llm_client import safe_json_extract
 from .security import check_output
 from .output_sanitizer import OUTPUT_CONSTRAINTS, sanitize_spoken_text
@@ -189,6 +190,74 @@ REWRITER_USER_PROMPT = """请改写以下面试回答：
 
 请输出改写后的回答和关键改动点。"""
 
+# ===== v8.6: 追问补评（增量重评）=====
+# 起因：候选人被追问后补出的内容此前"进得了报告、进不了分数"——那是已披露的评分盲区。
+# 设计取舍：
+#   1. 只跑 Diagnostician 单段，不产改写、不产追问（约为正常诊断一半 token）；
+#   2. 评的是"追问之后的这道完整回答"，不是只评补充的那几句话；
+#   3. **补充不等于加分**——这是本 prompt 最重要的一条约束。若补评变成"多说几句就涨分"，
+#      追问就从诊断工具退化成送分机制，比不补评更有害。
+
+REASSESSMENT_SYSTEM_PROMPT = """你是一位严格的面试回答诊断师，现在要做的是**追问之后的增量重评**。
+
+背景：候选人先回答了一道题并已获得首评；面试官针对最薄弱维度追问后，候选人又补答了一段。
+请你基于「原题 + 原始回答 + 追问补充」这个**整体**重新评定五个维度的分数。
+
+【重评原则 · 务必遵守】
+1. 你评的是追问之后这道**完整的回答**，不是只评补充的那几句话；
+2. **补充不等于加分**：只有当补充内容确实补上了短板（给出具体数据、补全 STAR 缺失环节、
+   说清了此前含糊的技术细节）时，对应维度才可以上调；
+3. 补充也可能**暴露新问题**（越描越黑、前后矛盾、暴露概念不清），此时对应维度应当下调；
+4. 无实质新信息的补充（重复表述、套话、"就是……那样"）维持首评分数，
+   **不要象征性加分**——那会让追问补评退化成送分机制，比不补评更有害；
+5. 严禁因为"候选人又开口说话了"而整体抬高分数。
+
+你从以下五个维度依次分析，每个维度给出 1-5 分及简短评语：
+1. STAR 完整度 2. 量化程度 3. 逻辑连贯性 4. 岗位相关性 5. 专业深度
+
+{voice_note}
+
+【原话引用要求】
+每个维度除 score/comment 外，必须给出 quote —— 从候选人**原始回答或追问补充**中
+原样摘录支撑该维度评分的一小段原话（≤30 字，不得改写、概括、编造）；找不到依据时输出空串。
+
+输出必须是严格的 JSON 格式：
+{{
+  "star_completeness": {{"score": 1-5, "comment": "评语", "quote": "原话摘录"}},
+  "quantification": {{"score": 1-5, "comment": "评语", "quote": "..."}},
+  "logic_coherence": {{"score": 1-5, "comment": "评语", "quote": "..."}},
+  "job_relevance": {{"score": 1-5, "comment": "评语", "quote": "..."}},
+  "professional_depth": {{"score": 1-5, "comment": "评语", "quote": "..."}},
+  "weakest_dimension": "五个维度 key 中得分最低的那个",
+  "overall_comment": "一句话综合评语",
+  "reassessment_note": "一句话说明相对首评为何上调/下调/维持（如'补充了转化率从 12% 提到 18% 的具体数据，量化程度上调'）"
+}}
+
+{output_constraints}
+
+评分标准：
+- 5分：优秀，结构完整、数据充分、逻辑严密、高度匹配
+- 4分：良好，个别维度稍有不足
+- 3分：一般，有明显短板
+- 2分：较差，多个维度存在严重问题
+- 1分：非常差，基本不具备面试回答要素"""
+
+REASSESSMENT_USER_PROMPT = """请对这道已追问过的回答做增量重评：
+
+【面试问题】{question}
+
+【候选人原始回答】{answer}
+
+【面试官追问与候选人的补充回答】{supplements}
+
+{evidence}
+
+【候选人简历（供参考）】{resume}
+
+【岗位描述（供参考）】{jd}
+
+请基于上述全部内容（原始回答 + 追问补充）重新评定五个维度，并说明相对首评的变动理由。"""
+
 # ===== v5.0: 证据硬规则 / 模式指令 / 不会答恢复 =====
 # 对标 agent-interview-coach：追问与诊断必须"只能依据证据包或候选人亲述"，
 # 杜绝凭常识硬编候选人经历。
@@ -348,17 +417,19 @@ def _parse_diagnosis_fallback(raw_text: str) -> dict:
     }
 
 
-def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None,
-                     question: str = "", answer: str = "") -> dict:
+def _score_and_weakest(diagnosis: dict, weights: dict | None,
+                       question: str = "", answer: str = "") -> tuple:
     """
-    把 Diagnostician / Rewriter 的原始 JSON 规整为前端与状态机共用的标准结构。
-    v2.6: overall_score 改为按权重加权，并附带 weakest_dimension / follow_up_question。
-    v6.3: question / answer 用于运行规则化加减分项（可解释、可复现的行为信号修正）。
-          两者为空时（兼容旧调用）跳过该层，行为与 v6.2 完全一致。
+    从 Diagnostician 原始 JSON 推导「五维分 + 加权总分 + 最弱维度」。
+
+    v8.6: 从 normalize_result 抽出，供**首评与追问补评共用同一套口径**。
+    补评若另写一份推导，两边迟早漂移（一处改加权公式、一处不改，报告里就会出现
+    「同一题两种算法」）。评分是本系统最需要口径一致的地方，故必须单一来源。
+
+    返回 (raw_dimensions, adjusted_dimensions, details, adjustments, overall, weakest)。
     """
     w = weights or DEFAULT_WEIGHTS
     diagnosis = diagnosis or {}
-    rewrite = rewrite or {}
 
     dimensions = {}
     details = {}
@@ -417,6 +488,25 @@ def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None,
                 f"({code_weakest}) 不符，已按真实分数重算"
             )
         weakest = code_weakest
+
+    return dimensions, adjusted_dimensions, details, adjustments, overall, weakest
+
+
+def normalize_result(diagnosis: dict, rewrite: dict, weights: dict | None,
+                     question: str = "", answer: str = "") -> dict:
+    """
+    把 Diagnostician / Rewriter 的原始 JSON 规整为前端与状态机共用的标准结构。
+    v2.6: overall_score 改为按权重加权，并附带 weakest_dimension / follow_up_question。
+    v6.3: question / answer 用于运行规则化加减分项（可解释、可复现的行为信号修正）。
+          两者为空时（兼容旧调用）跳过该层，行为与 v6.2 完全一致。
+    v8.6: 五维分/总分/最弱维度的推导下沉到 _score_and_weakest（补评共用同一口径）。
+    """
+    w = weights or DEFAULT_WEIGHTS
+    diagnosis = diagnosis or {}
+    rewrite = rewrite or {}
+
+    (dimensions, adjusted_dimensions, details, adjustments,
+     overall, weakest) = _score_and_weakest(diagnosis, w, question=question, answer=answer)
 
     # v6.2: 输出净化 —— 追问/评语/改写会进 TTS 与前端渲染，
     # Prompt 已约束，这里是工程兜底（禁 Markdown / 舞台提示 / 垫词开头）。
@@ -537,16 +627,57 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
     diagnosis = _extract_json(diag_raw) or _parse_diagnosis_fallback(diag_raw)
 
     # ---- Phase 2: Rewriter ----
-    yield {"type": "diagnosis_status", "data": {"phase": "rewriting"}}
+    # v8.6: 只有 AUTO_REWRITE 开启时才随诊断一起跑。关闭后诊断完成即返回，
+    # 改写由前端拿到评分后再按需请求（request_rewrite），用户不必干等第二次往返。
+    rewrite = {}
+    if config.AUTO_REWRITE:
+        yield {"type": "diagnosis_status", "data": {"phase": "rewriting"}}
+        async for rw_msg in run_rewrite_streaming(
+            llm_client,
+            question=question, answer=answer,
+            diagnosis=diagnosis, weights=w,
+            resume_text=resume_text, jd_text=jd_text,
+        ):
+            if rw_msg.get("type") == "rewrite_done":
+                rewrite = rw_msg.get("data") or {}
+                continue
+            yield rw_msg
 
+    result = normalize_result(diagnosis, rewrite, w,
+                              question=question, answer=answer)
+    # 告诉前端"本题的改写还没生成、可以按需要"，前端据此渲染占位并发起请求。
+    result["rewrite_lazy"] = not config.AUTO_REWRITE
+    yield {"type": "diagnosis_done", "data": result}
+
+
+async def run_rewrite_streaming(llm_client, question: str, answer: str,
+                                diagnosis: dict, weights: dict | None = None,
+                                resume_text: str = "", jd_text: str = "",
+                                ) -> AsyncGenerator[dict, None]:
+    """
+    v8.6: 改写（Rewriter）独立成流 —— 诊断主流程与按需请求共用同一段。
+
+    拆出来的直接原因是把改写从"每题必跑"改为"按需跑"（AUTO_REWRITE）：
+    自动路径与按需路径若各写一份 prompt 组装，两边迟早漂移，出现
+    "手动要来的改写和自动给的不一样"。
+
+    只 yield 逐块文本与最终结构，**不发 rewrite_start**——起始信号由调用方
+    负责（自动路径发 diagnosis_status，按需路径发 rewrite_start），
+    因为两条路径前端的呈现位置不同。
+
+    消息类型：
+      {"type": "rewrite_chunk", "data": {"text": "片段"}}
+      {"type": "rewrite_done",  "data": {"rewritten_answer": str, "key_changes": [...]}}
+    """
+    w = weights or DEFAULT_WEIGHTS
     rewrite_prompt = REWRITER_USER_PROMPT.format(
         question=question, answer=answer,
-        diagnosis=json.dumps(diagnosis, ensure_ascii=False),
+        diagnosis=json.dumps(diagnosis or {}, ensure_ascii=False),
         weight_desc=describe_weights(w),
         resume=(resume_text or "")[:2000], jd=(jd_text or "")[:1000],
     )
 
-    rewrite_chunks: list[str] = []
+    chunks: list[str] = []
     async for chunk in _astream(
         llm_client,
         REWRITER_SYSTEM_PROMPT,
@@ -555,23 +686,130 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
         max_tokens=1500,
         task="rewrite",   # v6.2: 实时链路，禁推理模型
     ):
-        rewrite_chunks.append(chunk)
+        chunks.append(chunk)
         yield {"type": "rewrite_chunk", "data": {"text": chunk}}
 
-    rewrite_raw = "".join(rewrite_chunks)
+    raw = "".join(chunks)
 
-    safe2, leaked2 = check_output(rewrite_raw)
-    if not safe2:
-        logger.warning(f"改写输出检测到泄漏: {leaked2}")
+    safe, leaked = check_output(raw)
+    if not safe:
+        logger.warning(f"改写输出检测到泄漏: {leaked}")
 
-    rewrite = _extract_json(rewrite_raw) or {
-        "rewritten_answer": rewrite_raw.strip(),
+    rewrite = _extract_json(raw) or {
+        "rewritten_answer": raw.strip(),
         "key_changes": [],
     }
+    yield {"type": "rewrite_done", "data": rewrite}
 
-    yield {"type": "diagnosis_done",
-           "data": normalize_result(diagnosis, rewrite, w,
-                                    question=question, answer=answer)}
+
+def normalize_reassessment(diagnosis: dict, weights: dict | None,
+                           question: str = "", answer: str = "") -> dict:
+    """
+    把补评模型的原始 JSON 规整为与首评同构的分数结构（v8.6）。
+
+    刻意复用 _score_and_weakest：补评与首评必须共用**同一套**加权公式、规则化
+    加减分项与最弱维度交叉校验。若补评另起一套推导，只要日后某一侧调整了算法，
+    报告里就会出现"同一道题两种算法"——那比不补评更糟，因为分数变得无法解释。
+    """
+    w = weights or DEFAULT_WEIGHTS
+    diagnosis = diagnosis or {}
+    (dimensions, adjusted_dimensions, details, adjustments,
+     overall, weakest) = _score_and_weakest(diagnosis, w, question=question, answer=answer)
+
+    return {
+        "dimensions": adjusted_dimensions,
+        "raw_dimensions": dict(dimensions),
+        "dimension_details": details,
+        "score_adjustments": adjustments_payload(adjustments),
+        "weights": dict(w),
+        "weight_desc": describe_weights(w),
+        "overall_score": overall,
+        "overall_comment": sanitize_spoken_text(str(diagnosis.get("overall_comment", "") or "")),
+        "weakest_dimension": weakest,
+        "weakest_dimension_name": DIM_NAMES.get(weakest, ""),
+        # 补评依据：模型对"相对首评为何变动"的一句话说明，供报告披露
+        "reassessment_note": sanitize_spoken_text(str(diagnosis.get("reassessment_note", "") or "")),
+    }
+
+
+async def run_reassessment_streaming(llm_client, question: str, answer: str,
+                                     supplements: list[str],
+                                     weights: dict | None = None,
+                                     resume_text: str = "", jd_text: str = "",
+                                     evidence_package: str = "",
+                                     from_voice: bool = False,
+                                     ) -> AsyncGenerator[dict, None]:
+    """
+    v8.6 追问补评：只跑 Diagnostician 单段的增量重评（内部流式，不外抛 chunk）。
+
+    与 run_diagnosis_streaming 的两点不同：
+      1. **没有 Phase 2（Rewriter）**——补评只解决"分数没跟上"这一个盲区，
+         再产一份改写是纯浪费（改写本来就与追问补充无关）；
+      2. **不向前端透传 chunk**——补评结论是"一次性替换本题诊断卡片"，
+         逐字流式反而会让用户在旧卡片与新卡片之间来回跳。故只保留 status / done
+         两个信号；内部仍走 _astream 真异步，不阻塞事件循环。
+
+    supplements: 已格式化好的追问条目文本（"面试官追问：…\n候选人补充：…"），
+                 由调用方（session）拼装，引擎不关心其内部结构。
+
+    消息类型：
+      {"type": "reassessment_status", "data": {"phase": "reassessing"}}
+      {"type": "reassessment_done",   "data": {与首评同构的分数结构}}
+    """
+    w = weights or DEFAULT_WEIGHTS
+    evidence_block = _build_evidence_block(evidence_package)
+    voice_note = VOICE_TRANSCRIPTION_NOTE if from_voice else ""
+
+    items = [str(s or "").strip() for s in (supplements or [])]
+    items = [s for s in items if s]
+    if not items:
+        # 没有追问补充却要求补评，属于调用方误用：静默返回，不打扰面试
+        return
+
+    yield {"type": "reassessment_status", "data": {"phase": "reassessing"}}
+
+    system = REASSESSMENT_SYSTEM_PROMPT.format(
+        voice_note=voice_note,
+        output_constraints=OUTPUT_CONSTRAINTS,
+    )
+    prompt = REASSESSMENT_USER_PROMPT.format(
+        question=question, answer=answer,
+        supplements="\n\n".join(items),
+        evidence=evidence_block,
+        resume=(resume_text or "")[:2000], jd=(jd_text or "")[:1000],
+    )
+
+    chunks: list[str] = []
+    async for chunk in _astream(
+        llm_client,
+        system,
+        prompt,
+        temperature=0.3,
+        max_tokens=1200,
+        task="reassessment",   # v8.6: 实时链路，禁推理模型
+    ):
+        chunks.append(chunk)
+
+    raw = "".join(chunks)
+    if not raw.strip():
+        logger.warning("追问补评返回空内容，放弃补评（保留首评分数）")
+        return
+
+    safe, leaked = check_output(raw)
+    if not safe:
+        logger.warning(f"补评输出检测到泄漏: {leaked}")
+
+    diagnosis = _extract_json(raw)
+    if not diagnosis:
+        logger.warning("追问补评 JSON 解析失败，放弃补评（保留首评分数）")
+        return
+
+    # 规则化加减分项按"原始回答 + 全部追问补充"整体重算，
+    # 否则补答里出现的空话/证据缺失信号会被漏掉。
+    full_answer = "\n".join([answer or ""] + items)
+    yield {"type": "reassessment_done",
+           "data": normalize_reassessment(diagnosis, w,
+                                          question=question, answer=full_answer)}
 
 
 async def _astream(llm_client, system_prompt: str, user_prompt: str,
@@ -732,4 +970,40 @@ class DiagnosisEngine:
             recovery_requested=recovery_requested,
             from_voice=from_voice,
             interviewer_role=interviewer_role,
+        )
+
+    def rewrite_stream(self, question: str, answer: str, diagnosis: dict,
+                       weights: dict | None = None,
+                       resume_text: str = "", jd_text: str = "") -> AsyncGenerator[dict, None]:
+        """v8.6: 独立改写流 —— 自动路径（随诊断跑）与按需路径共用同一实现。"""
+        return run_rewrite_streaming(
+            llm_client=self.llm,
+            question=question,
+            answer=answer,
+            diagnosis=diagnosis,
+            weights=weights,
+            resume_text=resume_text or "",
+            jd_text=jd_text or "",
+        )
+
+    def reassess_stream(self, question: str, answer: str, supplements: list[str],
+                        weights: dict | None = None,
+                        resume_text: str = "", jd_text: str = "",
+                        evidence_package: str = "",
+                        from_voice: bool = False) -> AsyncGenerator[dict, None]:
+        """v8.6: 追问补评（增量重评），返回异步生成器。
+
+        刻意不接 interviewer_role：补评只回答"分数该是多少"，不产出任何话术，
+        注入角色卡只会给评分引入与评分标准无关的噪声。
+        """
+        return run_reassessment_streaming(
+            llm_client=self.llm,
+            question=question,
+            answer=answer,
+            supplements=supplements,
+            weights=weights,
+            resume_text=resume_text or "",
+            jd_text=jd_text or "",
+            evidence_package=evidence_package,
+            from_voice=from_voice,
         )

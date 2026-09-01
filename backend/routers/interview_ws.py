@@ -7,6 +7,7 @@ v8.3: 握手阶段不再校验身份（4001 unauthorized 随认证一起下线�
 """
 import json
 import logging
+import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
@@ -59,6 +60,43 @@ async def _mark_flow(session_id: str, session, state_: "FlowState") -> None:
         await update_session_flow(session_id, state_.value, session.answered_count)
     except Exception as e:  # noqa: BLE001
         logger.debug(f"[flow] 流程状态落库失败 session={session_id} state={state_}: {e}")
+
+
+async def _handle_control_message(websocket, session, msg) -> bool:
+    """
+    v8.6: 处理与"推进主流程"无关的控制类消息（ping / request_rewrite）。
+
+    返回 True = 消息已消费，调用方应继续等下一条。
+
+    为什么单独抽出来：答题等待循环与追问等待循环都必须在等待期间响应这些消息。
+    两处各写一遍迟早漏掉一种——漏掉 request_rewrite 的表现是"用户点了没反应"，
+    而且只在特定时机（恰好在追问等待中）复现，极难定位。
+    """
+    msg_type = msg.get("type", "")
+
+    if msg_type == "ping":
+        await websocket.send_json({"type": "pong", "data": {}})
+        return True
+
+    if msg_type == "request_rewrite":
+        # v8.6: 按需改写 —— 诊断已给出评分，改写等用户需要时再生成，
+        # 避免每题都白等一次完整 LLM 往返（详见 config.AUTO_REWRITE）。
+        data = msg.get("data", {}) or {}
+        try:
+            round_idx = int(data.get("round", -1))
+            question_idx = int(data.get("question_idx", -1))
+        except (TypeError, ValueError):
+            round_idx = question_idx = -1
+        try:
+            async for rw_msg in session.stream_rewrite(round_idx, question_idx):
+                await websocket.send_json(rw_msg)
+        except Exception as e:  # noqa: BLE001
+            # 改写是锦上添花：失败只记日志。诊断与评分此刻已经完整给出，
+            # 改写生成不出来不应该让整场面试卡住。
+            logger.warning(f"[rewrite] 按需改写生成失败: {e}")
+        return True
+
+    return False
 
 
 @router.websocket("/ws/interview/{session_id}")
@@ -149,6 +187,9 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                 session.advance_round()
                 continue
 
+            # v8.6: 服务端墙钟起点（每次出题时设置），用于校验前端上报的思考时长
+            question_sent_at = None
+
             # 题目循环
             while session.has_more_questions_in_round() and not user_ended:
                 q = session.current_question
@@ -157,6 +198,8 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                 # v7.0: 出题即标记"等待回答"并落库 —— 让进程重启后仍能看出
                 # 这场面试停在哪一题（注意：只落进度，不做断点续答）。
                 await _mark_flow(session_id, session, FlowState.WAITING_ANSWER)
+                # v8.6: 服务端墙钟起点，用于交叉校验前端上报的思考时长
+                question_sent_at = time.time()
                 await websocket.send_json({
                     "type": "question",
                     "data": {
@@ -185,8 +228,8 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                     msg_type = msg.get("type", "")
                     data = msg.get("data", {})
 
-                    if msg_type == "ping":
-                        await websocket.send_json({"type": "pong", "data": {}})
+                    # v8.6: ping / request_rewrite 走统一入口（两个等待循环共用）
+                    if await _handle_control_message(websocket, session, msg):
                         continue
 
                     # v5.0: 会话中切换模式/阶段（实时生效）
@@ -321,6 +364,10 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                         })
                         continue
 
+                    # v8.6: 用服务端墙钟差校验前端上报的思考时长（失真时以服务端值为准）
+                    if question_sent_at is not None:
+                        session.annotate_server_thinking(time.time() - question_sent_at)
+
                     # v2.1: 输出泄露检测（check_output 返回 (is_safe, leaked)）
                     out_safe, leaked = check_output(json.dumps(diag, ensure_ascii=False))
                     if not out_safe:
@@ -368,8 +415,7 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                             fu_msg = await websocket.receive_json()
                             fu_type = fu_msg.get("type", "")
 
-                            if fu_type == "ping":
-                                await websocket.send_json({"type": "pong", "data": {}})
+                            if await _handle_control_message(websocket, session, fu_msg):
                                 continue
 
                             if fu_type == "skip_follow_up":
@@ -398,6 +444,34 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                                 fu_text,
                                 (fu_msg.get("data", {}) or {}).get("thinking_seconds", 0) or 0,
                             )
+
+                            # v8.6: 追问补评 —— 让补充回答真正影响分数。
+                            # 此前追问补充"只并入语境、不重评"（session.py 里已披露的取舍），
+                            # 候选人被追问后补出的优质内容不改变已评分，是真实的评分盲区。
+                            # 放在 handle_follow_up_answer 之后：先落文本，再谈改分，
+                            # 任何一步失败都还有一份完整的首评结果在。
+                            if config.FOLLOW_UP_REASSESS:
+                                try:
+                                    async for ra_msg in session.stream_follow_up_reassessment():
+                                        await websocket.send_json(ra_msg)
+                                    # 分数改了 → 雷达与薄弱点面板必须跟着刷新，
+                                    # 否则前端会出现"诊断卡 4.2 分、雷达还停在 3.1"的错位。
+                                    if (session.all_diagnoses
+                                            and session.all_diagnoses[-1].get("follow_up_reassessed")):
+                                        await websocket.send_json({
+                                            "type": "radar_update",
+                                            "data": session.radar_snapshot(),
+                                        })
+                                        await websocket.send_json({
+                                            "type": "weakness_update",
+                                            "data": session.weakness_payload(),
+                                        })
+                                except Exception as e:  # noqa: BLE001
+                                    # 补评是锦上添花：失败即静默降级为"不重评"，
+                                    # 与 _mark_flow 同一风格——面试可用性优先于分数精度。
+                                    logger.warning(
+                                        f"[reassess] {session_id[:8]} 追问补评失败，保留首评分数: {e}")
+
                             await _mark_flow(session_id, session, FlowState.DECIDING_NEXT)
                             await websocket.send_json({
                                 "type": "follow_up_received",
@@ -422,6 +496,8 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                 if not extra_q:
                     break
 
+                # v8.6: 追加题同样是"一道题"，墙钟起点随之重置
+                question_sent_at = time.time()
                 await websocket.send_json({
                     "type": "extra_question",
                     "data": {

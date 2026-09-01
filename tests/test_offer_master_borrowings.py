@@ -45,6 +45,26 @@ class TestIsEndSignal:
     def test_keyword_registry_nonempty(self):
         assert len(END_INTERVIEW_KEYWORDS) >= 5
 
+    def test_long_answer_mentioning_keyword_is_not_signal(self):
+        """v8.6: 长回答里顺带提到"结束面试"四个字，不是退出口令。
+
+        这一条是真实的误伤场景：候选人复盘"上一场面试结束面试环节之后我就走了"，
+        纯子串匹配会把它判成主动结束，正在进行的这场面试直接被掐断，
+        已答题的部分报告也被迫提前生成。
+        """
+        long_answer = (
+            "上一场面试结束面试环节之后我就走了，那次经历让我意识到"
+            "项目复盘要提前准备，所以这次我专门整理了材料。"
+        )
+        assert "结束面试" in long_answer          # 关键词确实出现
+        assert is_end_signal(long_answer) is False
+
+    def test_short_command_still_signal(self):
+        """长度约束不能把真正的口令一起挡掉（含英文口令，长度接近上限）。"""
+        assert is_end_signal("结束面试") is True
+        assert is_end_signal("我想结束，谢谢") is True
+        assert is_end_signal("OK, let's End Interview now") is True
+
 
 # ----- 2. 诊断 prompt：ASR 容错 + 追问引用原话 -----
 

@@ -192,6 +192,11 @@ def build_report(session) -> dict:
             ),
             # v8.x: 本题下的追问（问题 + 回答），还原真实面试的追问环节
             "follow_ups": fu_map.get((d.get("round", 0), d.get("question_idx", 0)), []),
+            # v8.6: 补评留痕（与 qa_breakdown 同字段，Markdown 复盘导出要读这里）
+            "follow_up_reassessed": bool(d.get("follow_up_reassessed", False)),
+            "pre_follow_up": d.get("pre_follow_up") or None,
+            "reassessment_delta": d.get("reassessment_delta", 0),
+            "reassessment_note": d.get("reassessment_note", ""),
         })
 
     # v6.2: qaBreakdown —— 逐题拆解（借鉴 GrillMind）。
@@ -226,6 +231,10 @@ def build_report(session) -> dict:
                 or _fallback_impact(float(score or 0), thinking)
             ),
             "thinking_seconds": thinking,
+            # v8.6: 服务端墙钟差与校验结论。前端上报值不可能大于服务端墙钟差，
+            # 违反即说明前端计时失真（切后台 / 休眠 / 重渲染），此处如实标注。
+            "server_thinking_seconds": _norm_thinking(d.get("server_thinking_seconds", 0)),
+            "thinking_seconds_anomalous": bool(d.get("thinking_seconds_anomalous", False)),
             "risk_points": d.get("risk_points", []) or [],
             "weakness_tags": d.get("weakness_tags", []) or [],
             "has_rewrite": bool(d.get("rewritten_answer", "")),
@@ -241,6 +250,13 @@ def build_report(session) -> dict:
             "score_adjustments": d.get("score_adjustments", []) or [],
             # v8.x: 本题下的追问（问题 + 回答），还原真实面试的追问环节
             "follow_ups": fu_map.get((d.get("round", 0), d.get("question_idx", 0)), []),
+            # v8.6: 追问补评留痕 —— 分数被改过就必须把"改之前是多少"一并给出。
+            # 只改分数不留痕等于让读者无法判断这个分数的成色，与 assisted
+            # / follow_up_skipped 的诚实披露口径保持一致。
+            "follow_up_reassessed": bool(d.get("follow_up_reassessed", False)),
+            "pre_follow_up": d.get("pre_follow_up") or None,
+            "reassessment_delta": d.get("reassessment_delta", 0),
+            "reassessment_note": d.get("reassessment_note", ""),
         })
 
     # v6.3: 借助引导的统计 —— 全场有多少题是在提示下完成的。
@@ -274,6 +290,34 @@ def build_report(session) -> dict:
             f"{suggestions}\n\n⚠️ 本场有 {follow_up_stats['skipped_count']} 次追问被跳过"
             "：真实面试中回避追问会被视为负面信号（面试官追问通常指向薄弱处），"
             "下次遇到追问建议先试着说点什么，哪怕不完整。"
+        )
+
+    # v8.6: 追问补评统计 —— 与 assistance_stats / follow_up_stats 同构。
+    # 补评改了分数，就必须让读者看见"有几道题是补评后的分、平均变动多少"。
+    # avg_delta 接近 0 是健康信号（追问补充大多没带来实质新信息）；
+    # 若长期显著为正，要警惕补评退化成"多说几句就涨分"的送分机制。
+    reassessed_items = [q for q in qa_breakdown if q.get("follow_up_reassessed")]
+    deltas = [float(q.get("reassessment_delta") or 0) for q in reassessed_items]
+    reassessment_stats = {
+        "total": len(qa_breakdown),
+        "reassessed_count": len(reassessed_items),
+        "reassessed_ratio": (round(len(reassessed_items) / len(qa_breakdown), 2)
+                             if qa_breakdown else 0),
+        "avg_delta": round(sum(deltas) / len(deltas), 2) if deltas else 0,
+        "max_delta": round(max(deltas), 2) if deltas else 0,
+        "min_delta": round(min(deltas), 2) if deltas else 0,
+        # 补评后反而降分的题是最值得复盘的样本：补充暴露了新问题
+        "downgraded_questions": [
+            q.get("question", "") for q in reassessed_items
+            if float(q.get("reassessment_delta") or 0) < 0
+        ],
+    }
+
+    if reassessment_stats["reassessed_count"]:
+        suggestions = (
+            f"{suggestions}\n\nℹ️ 本场有 {reassessment_stats['reassessed_count']} 道题在追问补充后"
+            f"重新评定过（平均变动 {reassessment_stats['avg_delta']:+.2f} 分）：逐题拆解里"
+            "保留了首评原分，可对照看补充内容到底补上了什么。"
         )
 
     # v6.2: 思考时长统计（真实面试里"想太久"和"不假思索"都是风险信号）
@@ -325,6 +369,8 @@ def build_report(session) -> dict:
         "assistance_stats": assistance_stats,
         # v7.0.2: 追问回避统计（跳过追问的题数 / 题单，供前端如实披露）
         "follow_up_stats": follow_up_stats,
+        # v8.6: 追问补评统计（补评题数 / 分数变动分布，供前端如实披露）
+        "reassessment_stats": reassessment_stats,
         "pressure_questions_injected": getattr(session, "pressure_injected", 0),
         # v6.5: 公司评估量表（session 携带目标公司风格时输出；
         # getattr 双保险：mock session / 老会话对象没有该属性时不崩）
@@ -512,6 +558,20 @@ def generate_review_markdown(report: dict) -> str:
                         lines.append(f"- 追问{fi}：{fu_q}")
                     if fu_a:
                         lines.append(f"  - 你的回答：{fu_a}")
+            # v8.6: 补评留痕 —— 本题分数是追问补充后重评出来的，必须显示首评原分，
+            # 否则读者会以为这个分数从头到尾就是这样。
+            if qa.get("follow_up_reassessed"):
+                pre = qa.get("pre_follow_up") or {}
+                pre_score = pre.get("overall_score", 0)
+                delta = float(qa.get("reassessment_delta") or 0)
+                trend = "上调" if delta > 0 else ("下调" if delta < 0 else "维持")
+                lines.append(
+                    f"\n> 追问补充后已重新评定：首评 {pre_score} → 终评 "
+                    f"{qa.get('overall_score', 0)}（{trend} {abs(delta):.2f} 分）"
+                )
+                note = qa.get("reassessment_note", "")
+                if note:
+                    lines.append(f"> 评分变动说明：{note}")
             lines.append("")
 
     # 5. 下次面试 TODO
