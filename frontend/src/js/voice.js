@@ -68,10 +68,6 @@ export function setTTSVoice(name) {
   currentVoice = (name || 'default').trim() || 'default';
 }
 
-export function getTTSVoice() {
-  return currentVoice;
-}
-
 /** 记一次失败。未达阈值只计数（本次降级播，下次仍可重试）；达阈值才熔断。 */
 function _markMimoFailed() {
   mimoFailures += 1;
@@ -123,7 +119,6 @@ function emit(event, data) {
 
 // ===== TTS（文字转语音）=====
 
-let ttsUtterance = null;
 let ttsSpeaking = false;
 let mimoAudio = null;   // 当前 MiMo 播放的 <audio>
 // v6.3 语音世代号（真打断的核心）：
@@ -148,7 +143,6 @@ export function stopSpeaking() {
   if (ttsSpeaking || speechSynthesis.speaking) {
     speechSynthesis.cancel();
     ttsSpeaking = false;
-    ttsUtterance = null;
     emit('tts:stop');
   }
 }
@@ -187,18 +181,15 @@ function browserSpeak(text, opts = {}) {
 
   utterance.onstart = () => {
     ttsSpeaking = true;
-    ttsUtterance = utterance;
     emit('tts:start', { text, engine: 'browser' });
   };
   utterance.onend = () => {
     ttsSpeaking = false;
-    ttsUtterance = null;
     emit('tts:end');
     fireEnd();
   };
   utterance.onerror = (e) => {
     ttsSpeaking = false;
-    ttsUtterance = null;
     emit('tts:error', { error: e.error });
     if (e.error !== 'canceled' && e.error !== 'interrupted') {
       console.warn('[Voice] 浏览器 TTS 错误:', e.error);

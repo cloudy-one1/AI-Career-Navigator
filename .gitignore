@@ -31,9 +31,29 @@ frontend/dist/
 /interview_*.txt
 /test_output.txt
 /docs/AI对话存档/
+# v8.4 整理：实测 .grimp_cache/ 与 .pytest_cache/ 此前均未被覆盖——
+# .pytest_cache 靠 pytest 自己在目录内写的 .gitignore 才没进 git status，
+# .grimp_cache 同理依赖工具自写规则。依赖关系方自觉不如自己声明，故显式补上。
+.grimp_cache/
+.pytest_cache/
 .import_linter_cache/
 .coverage
 htmlcov/
+
+# === [v8.3.2] 过程性资料：本地保留、不入库 ===
+# 本仓库定位为**对外展示的作品集**，公开面是代码与工程文档的专业度。
+# 以下属课程过程稿 / 学习资料 / 验收材料，留在本地供答辩与复盘查阅，不随仓库公开：
+#   - docs/archive/  week1-week10 需求文档（含 AI 协作全过程记录）+ 竞品深度研读
+#   - docs/research/ 竞品对标调研与学习报告（性质同 archive，一并排除）
+#   - 答辩要点 / 测评问题记录 / 演示模式评估 / 初验演示脚本与讲稿
+# 注意：这些文件**不删除**，只是不再被 git 跟踪。
+docs/archive/
+docs/research/
+docs/答辩要点_测试与质量保障.md
+docs/测评问题记录.md
+docs/演示模式方案评估.md
+docs/初验演示脚本.md
+docs/初验演示讲稿.md
 
 # === 二进制 / 产品文档（不入库） ===
 *.docx

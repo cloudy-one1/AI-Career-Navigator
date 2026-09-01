@@ -90,25 +90,6 @@ export function stepIndexOf(tab) {
   return TAB_STEP.get(tab) ?? -1;
 }
 
-/** 后端 journey 的步骤 key（backend/profile_service.py 的 JOURNEY_KEYS） */
-export const JOURNEY_KEYS = ['positioning', 'resume', 'practice', 'diagnosis', 'career_path'];
-
-/**
- * journey.current_key → 落点 tab。
- *
- * 后端 JOURNEY_KEYS 的顺序与前端 JOURNEY_STEPS **严格对应**（见 profile_service.py
- * 的注释），故可按下标取该步的首个入口作为落点。集中在这里做映射，避免两侧各
- * 维护一份映射表，任一侧调整都会静默错位。
- *
- * @param {string|null} key positioning|resume|practice|diagnosis|career_path
- * @returns {string} 落点 tab；无法映射时回退 'home'（能力档案总能给出下一步建议）
- */
-export function stepKeyToTab(key) {
-  const idx = key ? JOURNEY_KEYS.indexOf(key) : -1;
-  if (idx < 0) return 'home';
-  return JOURNEY_STEPS[idx]?.children?.[0]?.tab || 'home';
-}
-
 // ── 壳层渲染 ───────────────────────────────────────
 
 function navButton(item) {

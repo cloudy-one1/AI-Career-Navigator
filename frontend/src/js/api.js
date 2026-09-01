@@ -75,11 +75,6 @@ export async function getCompanyProfiles() {
   return request('GET', '/api/company-profiles');
 }
 
-/** 单题诊断（HTTP 兼容模式） */
-export async function diagnose(req) {
-  return request('POST', '/api/diagnose', req);
-}
-
 /** 获取会话详情 */
 export async function getSession(sessionId) {
   return request('GET', `/api/sessions/${sessionId}`);
@@ -102,11 +97,6 @@ export async function exportReview(sessionId) {
   URL.revokeObjectURL(url);
 }
 
-/** v2.7: 获取薄弱点画像 */
-export async function getWeaknessProfile(sessionId) {
-  return request('GET', `/api/weakness-profile/${sessionId}`);
-}
-
 /** v2.7: 获取全局薄弱点聚合。v8.4: 支持按岗位过滤 */
 export async function getGlobalWeaknessProfile(positionId = null) {
   const qs = positionId ? `?position_id=${encodeURIComponent(positionId)}` : '';
@@ -122,13 +112,6 @@ export async function getWeaknessPoints(includeResolved = false, limit = 200, po
   return request('GET', `/api/weakness-profile/points${qs}`);
 }
 
-/** 复习建议（最该优先补的未解决薄弱点）。v8.4: 支持按岗位过滤 */
-export async function getWeaknessSuggestions(limit = 5, positionId = null) {
-  let qs = `?limit=${limit}`;
-  if (positionId) qs += `&position_id=${encodeURIComponent(positionId)}`;
-  return request('GET', `/api/weakness-profile/suggestions${qs}`);
-}
-
 /** 标记已解决 / 恢复未解决 */
 export async function resolveWeakness(pointId, resolved = true) {
   return request('PUT', `/api/weakness-profile/${pointId}/resolve`, { resolved });
@@ -142,16 +125,6 @@ export async function deleteWeakness(pointId) {
 /** 获取所有会话 */
 export async function listSessions() {
   return request('GET', '/api/sessions');
-}
-
-/** 获取所有 AI 后端及当前后端 */
-export async function getProviders() {
-  return request('GET', '/api/providers');
-}
-
-/** 切换 AI 后端 */
-export async function switchProvider(provider) {
-  return request('POST', '/api/switch-provider', { provider });
 }
 
 // ===== v2.2 题库管理 =====

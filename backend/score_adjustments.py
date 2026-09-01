@@ -390,11 +390,3 @@ def apply_adjustments(dimensions: dict, adjustments: list[Adjustment]) -> dict:
 def adjustments_payload(adjustments: list[Adjustment]) -> list[dict]:
     """修正项的标准输出结构（进诊断结果与报告）。"""
     return [a.to_dict() for a in adjustments or []]
-
-
-def describe_adjustments(adjustments: list[Adjustment]) -> str:
-    """一行中文摘要，供报告/日志阅读。"""
-    if not adjustments:
-        return "无规则化修正"
-    parts = [f"{a.label}{a.delta:+.0f}" for a in adjustments]
-    return "；".join(parts)

@@ -1,18 +1,121 @@
 # 变更日志（CHANGELOG）
 
-> 记录 v2 → v8.1 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+> 记录 v2 → v8.3 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的"AI 求职陪跑"为历史名称，保留不删。**
 
 ---
 
-## v8.2.0 市场数据分析 + AI 解读 + 产品落地页（2026-08-31）
+## v8.3.3 外部评估报告复核与低成本收尾（2026-09-01）
 
-> 补齐「数据分析」视图的数据底座与可解释性，并新增产品落地页（landing）。
+> 起因是用户递来一份第三方《AI 求职领航（AI 模拟面试官）· 深度评估报告》（v8.3 快照，综合评级 A / 8.6 分，只读评估产物存放于项目目录之外），要求「评估」。本轮只做**复核 + 低成本收尾**：先逐条核验报告结论的真伪与时效性，再把仍然成立、且改动成本最低的项收尾。用户明确划定的范围是「低成本收尾」三项，**不含**部署边界加固、前端补测与演示加固。
 
-- **后端（L2）**：新增 `backend/market/analytics.py`——为「数据分析」视图一次性取回、可直接渲染的图表数据聚合（城市/学历/薪资等维度分布），与 `store.get_stats()` 刻意分离（给 LLM 的摘要 vs 给人看的图表关注点不同）；新增 `backend/market/insight.py`——市场图表 AI 解读，section 注册表驱动、5 分钟 TTL 缓存 + 显式失效、按需调用、失败可降级（无 Key / 异常一律返回 `{"error": ...}`，不阻塞图表渲染）；`routers/market.py` 接入 analytics / insight 两能力。
-- **前端**：新增落地页 `frontend/landing.html` + `src/css/pages/landing.css` + `src/js/cityCoords.js`（城市坐标，支撑市场数据地理可视化）。
-- **测试**：新增 `tests/test_market_analytics.py` / `test_market_insight.py` / `test_market_to_position.py`。
+### 1. 复核：三条结论已过时，不是待修项
+- 报告称「README 3 处写 1026 用例，实测 1039」→ 实测 `1026` **零命中**，README 四处均为 1039（v8.3.2 已统一）。
+- 报告称「根目录有垃圾文件 `({` / `b.textContent)`」→ v8.3.2 已删除，当前根目录仅白名单文件。
+- 报告称「`.dockerignore` 中文注释 GBK/UTF-8 混编码乱码」→ 实测为正常 UTF-8，未复现。
+
+### 2. 删除孤儿密钥文件 `data/.auth_secret`
+- v8.3 按 DC-10 下线认证后遗留的一行 64 位密钥。`git ls-files` 确认**未被跟踪**（`.gitignore:15` 的 `data/` 已覆盖），故直接删文件，无需 `git rm --cached`。
+- 全仓 `auth_secret|AUTH_SECRET` 仅命中 `CHARTER.md` / `CHANGELOG.md` / `docs/archive/week8_认证与资源归属_需求.md` 三处历史叙事，**代码零引用**，删除零功能风险。
+
+### 3. 前端死代码清理（ESLint warnings 26 → 24）
+- `voice.js`：删 `ttsUtterance`（声明 1 处 + 赋值 4 处，全程只写不读）。**保留**同段的 `ttsSpeaking` / `mimoAudio` / `speechSeq`——后三者是 v6.3「真打断」机制的真实载体，误删会破坏打断语义。
+- `report.js`：移除未使用的 `escHtml` 导入。**`utils.js` 的 `escHtml` 本体保留**（`interview.js` / `history.js` 在用）——为消一条警告砍掉活代码是负收益。
+
+### 4. `drawGeoMap` 不是死代码，而是「渲染器已就绪、卡片未接线」
+- 报告将其列为死代码（且误记为在 `interview.js`，实际在 `marketData.js`）。核查发现它**不能按死代码删除**：后端 `backend/market/insight.py` 已注册 `Section(key="geo", title="岗位地理分布")`，`tests/test_market_insight.py` 断言 `SECTIONS` 集合含 `"geo"`；前端渲染器、柱状图降级、`cityCoords.js` 坐标表、`china-geo.json` 资产、vite 懒加载配置**全部就位**，只差两步接线——`CHART_CARDS` 缺一项 `kind:'geo'`、`drawAllCharts` 缺一个 `else if (kind === 'geo')` 分发分支。
+- 判据：删除需连带处置后端 section 与测试断言（跨模块），接线属新增功能，二者均超出本轮范围。故本轮**保留代码 + 三处注释**：`CHART_CARDS` 上方写清状态与两步接线方式；`marketData.js` 地理专区段首写防误删警示（点名后端 section 与测试断言）；`cityCoords.js` 头部标注唯一消费者及处置绑定关系。
+- ESLint 的 `drawGeoMap` 未使用告警**刻意保留**：它是"未接线"这一事实的真实信号，消掉反而丢失信息。
+
+### 5. 文档数字核对（一处真漂移）
+- 一致：README / CODEBUDDY / `docs/API.md` 的 **1039 用例**（本次无后端改动，沿用 v8.3.2 实测基线）、**前端 16 例**（vitest 实测 16 passed）、**59 HTTP + 1 WebSocket**（按 `backend/routers/*.py` 逐域重数复核，与 API.md 一致；口径为 11 个 router 注册的路由，不含 `main.py` 直接注册的 `GET /` 落地页，已在 API.md 补注）。
+- 修正：README 称已知局限「19 条」，实测 `docs/LIMITATIONS.md` 表格 **21 条**（README 两处均已改）；`LIMITATIONS.md` 结论句中过时的「50 个测试用例通过」→ **1039 个用例通过**。
+
+### 6. 本轮明确未做（后续可选项）
+- 部署边界加固：Docker/compose 默认 `0.0.0.0` 暴露 + 无认证，公网部署须反向代理鉴权，或在 README / `.env.example` 加醒目警告（守 DC-10，不重建认证）。
+- 前端补测：`interview.js` 的 WS 状态处理与 `profileCard` 渲染仍是测试盲区（前端仅 voice.js 16 例）。
+- 演示加固：进程重启会丢进行中面试（已披露），演示脚本未标注"演示前勿 reload"。
+- 其余约 22 条 ESLint 未使用变量警告。
+- `geo` 卡片接线，或整条孤岛（含后端 section 与测试断言）一并下线——二选一，需单独一轮。
+
+验证：`npm run lint` 0 errors / 24 warnings（原 26）；`npm run test` 16 passed；`npm run build` 256 模块转换成功、4.42s。本轮无后端改动，未跑全量 pytest。
+
+---
+
+## v8.3.2 仓库整理：清垃圾、docs 分层、根目录白名单（2026-09-01）
+
+> 起因是用户的要求："全面整理项目，清理垃圾文件，整理架构"。诊断下来是三类「脏」叠加：根目录堆了运行产物与散落文档、`docs/` 40 篇文档平铺无分层、文档叙述与代码现状脱节。本轮**只做整理，不新增功能、不动架构分层**。
+
+### 1. 根目录清垃圾
+- 删畸形文件 `({` 与 `b.textContent)`（某次命令误写产生）、对话上传附件 `upload_*.jpg`×2；清掉 `.pytest_cache/`、`.grimp_cache/`、`.import_linter_cache/`、`.coverage` 与全部 `__pycache__/`。
+- **`.gitignore` 补两条实测遗漏**：`git check-ignore -v` 实测只有 `.coverage` 与 `.agnes/` 命中规则——`.grimp_cache/` 与 `.pytest_cache/` 不出现在 `git status` 纯属依赖 pytest 自己在缓存目录内写 `.gitignore`。依赖关系方自觉不如自己声明。
+
+### 2. 根目录文档归档（不再散落）
+- `AI模拟面试官_项目立项报告_V1.0.docx` → `docs/立项报告/` 并 `git rm --cached`——靠 `.gitignore` 已有的 `*.docx` 规则做到**本地保留、不入库**，不为二进制破例开白名单；`career-copilot-学习报告.md` → `docs/research/`；未跟踪的 `初验演示脚本.md` / `初验演示讲稿.md` → `docs/` 并纳入版本管理。
+
+### 3. docs/ 四区分层
+- 新增 `docs/README.md` 作为索引：**现行基线**（`docs/` 根）/ **设计稿** `specs/` / **调研** `research/` / **归档** `archive/`。
+- **归档只搬不删**：week1–week10 需求文档与 6 篇竞品研读移入 `docs/archive/`——它们是 CHARTER「开发纪律」要求的批判性思维证据，删掉等于销毁评分依据；已下线功能的两篇（报告分享与招聘端 **DC-08**、认证与资源归属 **DC-10**）文首加状态警示后归档。
+- `docs/superpowers/specs/` → `docs/specs/`，删除 superpowers 空壳目录。
+
+### 4. 死代码清理（逐项 grep 验证后才删）
+- 前端：`api.js` 删 `diagnose` / `getWeaknessProfile` / `getWeaknessSuggestions` / `getProviders` / `switchProvider`；`utils.js` 删 `clone`；`voice.js` 删 `getTTSVoice`；`navConfig.js` 删 `stepKeyToTab` 与 `JOURNEY_KEYS`。
+- 后端：`score_adjustments.py` 删 `describe_adjustments`。
+- **核查后保留（不是遗漏）**：`api.js` 的 `uploadResume` / `uploadJd`（分别被 `careerPlan.js` 与 `interview.js` 的 v8.3.x `handleSetupUpload` 调用）、`landing.html`（v8.2 活入口）、`utils.js` 的 `stampIn` / `shake`（与 `motion.css` 的 `.stamp-in` / `.shake` 成对，单删 JS 会留下孤儿 CSS，收益低于风险）。
+
+### 5. 防复发：根目录白名单断言
+- `tests/test_repo_hygiene.py` 新增第 4 条 `test_root_directory_whitelist`。原三条都是**黑名单**（禁 `_` 前缀 / 禁散落 `test_*.py` / 禁运行产物），**拦不住"任意新散落文件"**——本轮那两个畸形文件与两份散落文档一条黑名单都不违反，黑名单只能针对已知模式，白名单才能回答"这个文件凭什么在根目录"。已反证：临时 `probe.txt` 执行 `git add -N` 后该断言如期红灯（探针已撤销）。
+
+### 6. 文档与现状对齐
+- CHANGELOG：顶部章节按「新 → 旧」重排（原 v8.2.0 压在 v8.3.0 之上、v8.3.0 又压在 v8.3.1 之上）；文件头版本区间 v8.1 → v8.3；更正 v8.3.1 中"`api.js` 两个导出待下一轮清理"的叙述（实为活代码）。
+- README / CODEBUDDY：项目结构树与真实目录对齐（补 landing.html、简历库/岗位库模块、CI 工作流、docs 分层），测试基线 1026 → **1039 passed / 1 skipped**。
+- **链接有效性**：新增一次性校验（扫描 108 个 Markdown 的 47 条相对链接），修掉 7 条因 docs 迁移而失效的链接（CHANGELOG 指向 week8 需求文档 ×2、`docs/archive/*` 的 `../CHANGELOG.md` 应为 `../../`×3、演示模式方案评估与 MockFlow 研读互链 ×2）。
+
+### 7. README 标准化 + 新增 API 参考
+- **新增 `docs/API.md`**：从 `backend/routers/*.py` 装饰器逐条提取全量端点——**59 个 HTTP 端点 + 1 个 WebSocket**（其中 `assets.py` 的 2 个 `PATCH` 端点首轮按 get/post/put/delete 提取时被漏掉，补全后核对总数）。按域分组给出方法/路径/说明/限流档位，并单列 WS 帧格式、客户端→服务端 4 种消息、服务端→客户端 19 种消息与关闭码语义。此前 40+ 端点**零参考文档**——README 里唯一的 `/api/` 字样还都是历史流水账顺带提到的。
+- **README 重排为标准骨架**：目录 → 项目简介 → 核心特性 → 快速开始 → 使用说明 → 项目结构 → 技术栈 → **API 参考** → 诊断体系 → 面试模式 → 内容护栏 → 测试策略 → 已知局限 → 开发文档 → 贡献 → 许可证。原本「使用说明」被压在「内容护栏」之后（真正的用法是全篇最薄的一节），已提到「快速开始」之后。
+- **「核心亮点」75 行 → 「核心特性」15 条**：原清单每条都挂 `（v8.0）/（v7.4）/（v6.1）` 版本号，等于把 CHANGELOG 抄进 README；版本叙事的归宿是 CHANGELOG，README 只答"这项目能干什么"。砍下的内容在 CHANGELOG 里一条不少，零信息损失。
+- **已知局限外迁 `docs/LIMITATIONS.md`**：19 行大表移出 README 主体（README 保留 6 条要点 + 指针），既缩短首屏，也让局限文档可被单独引用。
+- 新增 `docs/API.md` / `docs/LIMITATIONS.md` 已登记进 `docs/README.md` 索引与 `CODEBUDDY.md` 深入文档指针。
+
+> 未做的部分：**无截图**（用户本轮选择先解决文档结构）。这是 GitHub 首屏观感影响最大的单项，留待后续补 `docs/screenshots/`。
+
+### 8. 明确公开范围：过程性资料退出远端（本地保留）
+
+用户确认本仓库定位为**作品集 / 对外展示**，公开面应是代码与工程文档的专业度，故把过程性资料从 git 索引移除（**文件不删**，留在本地供答辩与复盘查阅）：
+
+| 类别 | 内容 | 处理 |
+|---|---|---|
+| 课程过程稿 | `docs/archive/` 的 week1–week10 需求文档 19 篇 | 退出索引（含 AI 协作全过程记录，属作业材料） |
+| 竞品研读 | `docs/archive/` 6 篇深度研读 + `docs/research/` 3 篇 | 退出索引（分析他人项目的学习资料） |
+| 验收材料 | 答辩要点 / 测评问题记录 / 演示模式评估 / 初验演示脚本与讲稿 | 退出索引（含对外自曝缺点的测评记录） |
+| 立项报告、AI 对话存档 | docx 与会话存档 | 本就由 `.gitignore` 排除，维持不变 |
+
+`.gitignore` 新增「过程性资料：本地保留、不入库」条目并逐条列明，注释写清**判断依据是仓库定位**而非文件重要性——后续若要当作业提交，删掉对应条目即可恢复跟踪，可逆。
+
+- **连带修掉 5 处"本地正常、远端 404"的链接**（README 3 处指向 archive、CHANGELOG 2 处指向 week8 需求文档）：改为纯文本文件名并注明「本地过程资料，未入库」。这类坏链接只在使用 GitHub 渲染时才暴露，本机完全看不出来。
+- **新增第 5 条卫生断言 `test_markdown_links_point_to_tracked_files`**：被跟踪的 Markdown 里，相对链接的目标必须也被跟踪，否则 CI 红灯（已反证：临时插入坏链接如期失败，探针已撤销）。
+- **`_tracked_files()` 改用 `git -c core.quotepath=false ls-files`**：此前 Windows 下非 ASCII 路径会输出成八进制转义，做字符串比对时误判"文件未跟踪"（写这条断言时才暴露出来）。
+- `docs/README.md` 索引重写为「公开文档 / 过程性资料」两类，README 与 CODEBUDDY 的结构树同步。
+
+验证：`pytest tests/test_repo_hygiene.py -q` **5 例通过**；`run.py lint` 分层契约通过；远端 404 检测覆盖 12 个被跟踪 Markdown / 29 条相对链接，全部指向已跟踪文件。
+
+验证：`pytest tests/test_repo_hygiene.py -q` 4 例通过；`run.py lint` 分层契约通过；前端 `npm run build` 通过。
+
+---
+
+## v8.3.1 面试入口收敛：简历/岗位来源只保留「从库选」（2026-08-31）
+
+> 起因是用户的要求："模拟面试入口里只需要留一个从岗位库选择，从简历库选择就行了，且要用圆角括号"。诊断下来的真问题是：原本 Step 1 同时提供「上传文件」「粘贴文本」「从库选」三种来源，对一个已被前置（简历库/岗位库 Tab）承载好的产品来说，是在重复同一件事——引导用户走"先入简历库、再来面试"的主路径能减少"上传了又丢"、"粘贴到一半换页"等半成品状态。
+
+- **Step 1 DOM 收敛**：`interview.js` 移除「上传简历文件 / 解析文件」「上传 JD / 解析 JD」「粘贴 / 上传」「粘贴 JD」整组入口，只剩「简历来源（从简历库选择）」「岗位来源（从岗位库选择）」两个库选择下拉，括号按要求统一为圆角 `（）`。
+- **死代码清理**：`handleUpload` / `handleJdUpload` 函数、`sourceSwitch` 函数、`onSourceChange` 函数全部移除（它们的前置 DOM 已不存在，保留只会增加阅读负担）；`onSourceChange` 改写为 `loadLibraryPicker`，挂载到 `setup` 视图末尾自动展开两个库选择下拉（去掉 `value !== 'library'` 的隐藏分支，因为来源只剩一种）。
+- **导入收敛**：`interview.js` 不再 import `uploadResume` / `uploadJd`；`api.js` 仍保留这两个函数（导出端保留可避免其他可能的本地调用失败，移除属于下一轮清理范围）。
+  - **v8.3.2 更正**：随后以 `handleSetupUpload()` 把「上传本机文件」作为「从库选」的**并列入口**加回 setup（简历走 `/api/resumes/upload` 入库、JD 走 `/api/upload-jd` 仅解析回填），故 `uploadJd` 重新被 `interview.js` 调用、`uploadResume` 由 `careerPlan.js` 调用——两个导出端**都是活代码**，不属于「下一轮清理范围」。本条按 CHARTER 纪律保留原文（历史叙述不改写），仅标注更正。
+- **校验与提示语同步更新**：「下一步」按钮文案从「可直接粘贴或上传解析」改为「先从简历库选择一份简历，或直接在文本框中填写」；textarea 的 placeholder 改为「从上方库下拉中选择后将自动填入此处，仍可手动编辑」。
+
+验证：前端 `npm run build` 通过（dist 已更新），前端 vitest 16 例通过；后端无接口层变化，无需重跑后端测试。
 
 ---
 
@@ -41,16 +144,13 @@
 
 ---
 
-## v8.3.1 面试入口收敛：简历/岗位来源只保留「从库选」（2026-08-31）
+## v8.2.0 市场数据分析 + AI 解读 + 产品落地页（2026-08-31）
 
-> 起因是用户的要求："模拟面试入口里只需要留一个从岗位库选择，从简历库选择就行了，且要用圆角括号"。诊断下来的真问题是：原本 Step 1 同时提供「上传文件」「粘贴文本」「从库选」三种来源，对一个已被前置（简历库/岗位库 Tab）承载好的产品来说，是在重复同一件事——引导用户走"先入简历库、再来面试"的主路径能减少"上传了又丢"、"粘贴到一半换页"等半成品状态。
+> 补齐「数据分析」视图的数据底座与可解释性，并新增产品落地页（landing）。
 
-- **Step 1 DOM 收敛**：`interview.js` 移除「上传简历文件 / 解析文件」「上传 JD / 解析 JD」「粘贴 / 上传」「粘贴 JD」整组入口，只剩「简历来源（从简历库选择）」「岗位来源（从岗位库选择）」两个库选择下拉，括号按要求统一为圆角 `（）`。
-- **死代码清理**：`handleUpload` / `handleJdUpload` 函数、`sourceSwitch` 函数、`onSourceChange` 函数全部移除（它们的前置 DOM 已不存在，保留只会增加阅读负担）；`onSourceChange` 改写为 `loadLibraryPicker`，挂载到 `setup` 视图末尾自动展开两个库选择下拉（去掉 `value !== 'library'` 的隐藏分支，因为来源只剩一种）。
-- **导入收敛**：`interview.js` 不再 import `uploadResume` / `uploadJd`；`api.js` 仍保留这两个函数（导出端保留可避免其他可能的本地调用失败，移除属于下一轮清理范围）。
-- **校验与提示语同步更新**：「下一步」按钮文案从「可直接粘贴或上传解析」改为「先从简历库选择一份简历，或直接在文本框中填写」；textarea 的 placeholder 改为「从上方库下拉中选择后将自动填入此处，仍可手动编辑」。
-
-验证：前端 `npm run build` 通过（dist 已更新），前端 vitest 16 例通过；后端无接口层变化，无需重跑后端测试。
+- **后端（L2）**：新增 `backend/market/analytics.py`——为「数据分析」视图一次性取回、可直接渲染的图表数据聚合（城市/学历/薪资等维度分布），与 `store.get_stats()` 刻意分离（给 LLM 的摘要 vs 给人看的图表关注点不同）；新增 `backend/market/insight.py`——市场图表 AI 解读，section 注册表驱动、5 分钟 TTL 缓存 + 显式失效、按需调用、失败可降级（无 Key / 异常一律返回 `{"error": ...}`，不阻塞图表渲染）；`routers/market.py` 接入 analytics / insight 两能力。
+- **前端**：新增落地页 `frontend/landing.html` + `src/css/pages/landing.css` + `src/js/cityCoords.js`（城市坐标，支撑市场数据地理可视化）。
+- **测试**：新增 `tests/test_market_analytics.py` / `test_market_insight.py` / `test_market_to_position.py`。
 
 ---
 
@@ -189,26 +289,6 @@
 
 ---
 
-## v7.3.0 产品定位延伸：全流程求职陪跑平台（2026-08-31）
-
-> 起因是项目复盘中的一个直感："功能是不是太多且太独立了，给人一种很混乱的感觉"。全量盘点结论：「功能太多」成立、「各自为政」不成立（api.js/tokens.css/身份联动等共享基建与跨功能数据链路已经很统一）——混乱来自"产品边界失控的叙事"：一个月七期专项迭代堆出 15 个功能域，产品名仍叫"模拟面试官"。本轮范围纪律：**功能零增删、后端业务逻辑零改动**（main.py 路由拆分与 CSS 双轨合流已由同日的 v7.2.2 工程整改完成），只动叙事、导航与品牌。
-
-### 1. 定位与决策
-
-- 产品定位向上延伸：「AI 模拟面试官与职业规划」→「**AI 求职陪跑平台**」，一句话定位"从定方向到拿 Offer 的全流程 AI 求职陪跑"；原命题的"诊断 + 规划"两条产品线成为六步旅程中的两步（诊弱点 / 定规划），命题不废、向上生长。方案全文见 `docs/产品定位延伸_全流程求职陪跑.md`，决策记录见 CHARTER **DC-07**（放弃的替代方案：收缩定位砍孤岛功能 / 维持原定位仅做文档修补）。
-
-### 2. 信息架构（导航重组）
-
-- 侧边栏域分组（面试域/资产域/洞察域/招聘端）→ 旅程分组：**备战**（简历库/岗位库/市场数据）/ **演练**（模拟面试/题库/历史记录）/ **洞察**（综合报告/长期记忆/职业规划）/ **连接**（收到的报告）+ 账户；成员按旅程顺序重排，默认落地面板仍为模拟面试，分组随身份显隐机制（`data-audience`）不变。
-- 移动端底部导航按同一旅程顺序重排（简历→岗位→市场→面试→题库→历史→报告→记忆→规划→收件箱→账户）。
-
-### 3. 品牌文案统一
-
-- `index.html` 标题与 Header 品牌、`share.html` 品牌行与免责声明、报告导出页品牌（`backend/routers/reports.py`）、FastAPI title（"AI 面试官 v3.1" 自 v3.1 起失更，一并修正为 "AI 求职陪跑平台"，version 7.3.0）与启动日志、题库模板头（`questionBank.js`）、采集子包 docstring、`docker-compose.yml` 注释、`frontend/package.json` description——全部统一为「AI 求职陪跑」；版本徽标 v7.2 → v7.3。
-- 主文档同步：CHARTER（产品命题改写 + DC-07）、README（标题/标语/简介/亮点置顶条目）、CODEBUDDY（定位/当前版本/结构树补齐 6 个缺失前端文件与 routers/）。
-
----
-
 ## v7.3.2 全功能端到端冒烟：修复题库「看得见、改不了」（2026-08-31）
 
 > 起因是对项目做了一次**全功能端到端冒烟**：真实服务（localhost:8000）+ 真实 LLM（DeepSeek/Qwen 实调）+ 真实 Playwright 采集 + MiMo 云端语音 TTS→ASR 闭环，共验证 89 个检查点（基础/市场/资产/面试主循环/报告/规划/分享招聘端/题库/语音/运维），覆盖六步旅程全部功能域。冒烟发现 1 个真实缺陷，本轮修复。（注：本条目与 v7.4.0 同晚并行完成，发布时版本号让位于语音链路强化，APP_VERSION 随 v7.4.0 发布。）
@@ -259,6 +339,26 @@
 
 - 消除 Vite 构建的两条 dynamic/static import 警告：`api.js` 对 `auth.js`（`auth.js` 只依赖 `utils.js`，不存在原注释所担心的循环依赖）、`interview.js` 对 `api.js`（顶部已静态引用，却又在 4 处 `await import()`）的动态导入全部收敛为静态导入——两者都已无法拆出独立 chunk，动态化零收益。构建恢复干净输出。
 - `CHARTER.md` 决策记录卡按 DC-01 ~ DC-07 重排（此前 DC-06 误排在 DC-05 之前）。
+
+---
+
+## v7.3.0 产品定位延伸：全流程求职陪跑平台（2026-08-31）
+
+> 起因是项目复盘中的一个直感："功能是不是太多且太独立了，给人一种很混乱的感觉"。全量盘点结论：「功能太多」成立、「各自为政」不成立（api.js/tokens.css/身份联动等共享基建与跨功能数据链路已经很统一）——混乱来自"产品边界失控的叙事"：一个月七期专项迭代堆出 15 个功能域，产品名仍叫"模拟面试官"。本轮范围纪律：**功能零增删、后端业务逻辑零改动**（main.py 路由拆分与 CSS 双轨合流已由同日的 v7.2.2 工程整改完成），只动叙事、导航与品牌。
+
+### 1. 定位与决策
+
+- 产品定位向上延伸：「AI 模拟面试官与职业规划」→「**AI 求职陪跑平台**」，一句话定位"从定方向到拿 Offer 的全流程 AI 求职陪跑"；原命题的"诊断 + 规划"两条产品线成为六步旅程中的两步（诊弱点 / 定规划），命题不废、向上生长。方案全文见 `docs/产品定位延伸_全流程求职陪跑.md`，决策记录见 CHARTER **DC-07**（放弃的替代方案：收缩定位砍孤岛功能 / 维持原定位仅做文档修补）。
+
+### 2. 信息架构（导航重组）
+
+- 侧边栏域分组（面试域/资产域/洞察域/招聘端）→ 旅程分组：**备战**（简历库/岗位库/市场数据）/ **演练**（模拟面试/题库/历史记录）/ **洞察**（综合报告/长期记忆/职业规划）/ **连接**（收到的报告）+ 账户；成员按旅程顺序重排，默认落地面板仍为模拟面试，分组随身份显隐机制（`data-audience`）不变。
+- 移动端底部导航按同一旅程顺序重排（简历→岗位→市场→面试→题库→历史→报告→记忆→规划→收件箱→账户）。
+
+### 3. 品牌文案统一
+
+- `index.html` 标题与 Header 品牌、`share.html` 品牌行与免责声明、报告导出页品牌（`backend/routers/reports.py`）、FastAPI title（"AI 面试官 v3.1" 自 v3.1 起失更，一并修正为 "AI 求职陪跑平台"，version 7.3.0）与启动日志、题库模板头（`questionBank.js`）、采集子包 docstring、`docker-compose.yml` 注释、`frontend/package.json` description——全部统一为「AI 求职陪跑」；版本徽标 v7.2 → v7.3。
+- 主文档同步：CHARTER（产品命题改写 + DC-07）、README（标题/标语/简介/亮点置顶条目）、CODEBUDDY（定位/当前版本/结构树补齐 6 个缺失前端文件与 routers/）。
 
 ---
 
@@ -607,7 +707,7 @@
 
 - 新增 `test_weakness_ema.py`（28 例）/ `test_interview_skills.py`（29 例）/ `test_difficulty.py`（26 例）；全量 **830 例通过**，`run.py lint` 通过。
 - 契约：`weakness_memory` + `difficulty` 注册 L2，`interview_skills` 注册 L3。
-- 需求文档：[week8_记忆衰减与技能难度_需求.md](docs/week8_记忆衰减与技能难度_需求.md)。
+- 需求文档：`docs/archive/week8_记忆衰减与技能难度_需求.md`（本地过程资料，未入库）。
 
 ### 范围边界（诚实披露）
 
@@ -651,7 +751,7 @@
 
 - 新增 `tests/test_company_profiles.py`（25 例：加载/匹配/片段生成/会话角色卡集成/坏 YAML 与空目录降级）+ `test_resume_parser.py` 追加 45 例修复用例；全量 **747 例通过**。
 - `company_profiles` 注册 L2 层，`.importlinter` 契约同步，`run.py lint` 通过；`requirements.txt` 新增 `pyyaml>=6.0`（缺失时该层整体降级，非硬依赖）。
-- 需求文档：[week8_公司风格配置与PDF文本修复_需求.md](docs/week8_公司风格配置与PDF文本修复_需求.md)。
+- 需求文档：`docs/archive/week8_公司风格配置与PDF文本修复_需求.md`（本地过程资料，未入库）。
 
 ---
 

@@ -65,9 +65,6 @@ export const DIM_NAMES = {
   professional_depth: '专业深度',
 };
 
-/** 深拷贝 */
-export function clone(obj) { return JSON.parse(JSON.stringify(obj)); }
-
 /** HTML 转义（防 XSS） */
 export function escHtml(str) {
   if (!str) return '';
