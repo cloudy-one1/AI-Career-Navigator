@@ -1,5 +1,5 @@
 # ============================================================
-# AI求职陪跑 v7.3 — Docker Compose 标准化部署
+# AI 求职领航 v7.3 — Docker Compose 标准化部署
 # 
 # 使用方式:
 #   1. cp .env.example .env   # 编辑 .env，填入 API KEY

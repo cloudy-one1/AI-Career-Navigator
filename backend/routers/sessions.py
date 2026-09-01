@@ -3,7 +3,7 @@ import asyncio
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Request, UploadFile, File
+from fastapi import APIRouter, HTTPException, Request, UploadFile, File
 
 from ..config import config
 from ..db import (
@@ -21,12 +21,11 @@ from ..schemas import (
     ModeSwitchRequest, ModeSwitchResponse,
 )
 from ..web_research import enrich_jd_with_research
-from .. import auth
 from .. import gap_analyzer
 from .. import company_profiles
 from ..market import service as market_service
 from . import state
-from .deps import require_user, assert_session_owner, ALLOWED_UPLOAD_EXT
+from .deps import ALLOWED_UPLOAD_EXT
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -34,26 +33,20 @@ router = APIRouter()
 
 @router.post("/api/sessions", response_model=SessionCreateResponse)
 @state.limiter.limit(config.RATE_LIMIT_SESSION)
-async def create_session(req: SessionCreateRequest,
-                         user: "auth.UserContext" = Depends(require_user),
-                         request: Request = None):
+async def create_session(req: SessionCreateRequest, request: Request = None):
     session_id = uuid.uuid4().hex[:12]
 
     # v7.0: 简历/岗位优先从库中取（传入 id 时），未传 id 则沿用"直接传文本"的旧行为。
-    # 库内资源不存在 / 不属于当前用户 → 404（与会话归属同一口径，不泄露资源存在性）。
+    # v8.3: 库内资源不存在 → 404（此前还要比对 owner，认证下线后只剩存在性判断）。
     if req.resume_id:
         row = await get_resume(req.resume_id)
         if not row:
-            raise HTTPException(404, "简历不存在或无权访问")
-        if config.AUTH_ENABLED and not user.is_anonymous and row.get("owner_id") != user.id:
-            raise HTTPException(404, "简历不存在或无权访问")
+            raise HTTPException(404, "简历不存在")
         req.resume_text = row.get("raw_text") or ""
     if req.position_id:
         row = await get_position(req.position_id)
         if not row:
-            raise HTTPException(404, "岗位不存在或无权访问")
-        if config.AUTH_ENABLED and not user.is_anonymous and row.get("owner_id") != user.id:
-            raise HTTPException(404, "岗位不存在或无权访问")
+            raise HTTPException(404, "岗位不存在")
         req.jd_text = row.get("jd_text") or ""
 
     # 解析简历
@@ -130,7 +123,6 @@ async def create_session(req: SessionCreateRequest,
     await save_session(session_id, style=req.style or "friendly",
                        resume_filename="inline", jd_text=jd_final,
                        resume_text=resume_text,
-                       owner_id=user.id,              # v7.0 归属（匿名模式下为 None）
                        resume_id=req.resume_id,       # v7.0 关联简历库（可空）
                        position_id=req.position_id)   # v7.0 关联岗位库（可空）
 
@@ -241,16 +233,14 @@ async def upload_jd(request: Request, file: UploadFile = File(...)):
 
 
 @router.get("/api/sessions")
-async def api_list_sessions(user: "auth.UserContext" = Depends(require_user)):
-    """v7.0: 按归属过滤。匿名模式（AUTH_ENABLED=false）返回全部，等同 v6.x。"""
-    sessions = await list_sessions(owner_id=auth.ownership_filter(user))
+async def api_list_sessions():
+    """v8.3: 单用户本地工具，返回全部会话（认证下线后不再有归属维度）。"""
+    sessions = await list_sessions()
     return {"sessions": sessions}
 
 
 @router.get("/api/sessions/{session_id}")
-async def api_get_session(session_id: str,
-                          user: "auth.UserContext" = Depends(require_user)):
-    await assert_session_owner(session_id, user)   # 越权/不存在一律 404
+async def api_get_session(session_id: str):
     session = await get_session(session_id)
     if not session:
         raise HTTPException(404, "会话不存在")
@@ -263,9 +253,7 @@ async def api_get_session(session_id: str,
 @router.post("/api/interview/{session_id}/mode", response_model=ModeSwitchResponse)
 @state.limiter.limit(config.RATE_LIMIT_SESSION)
 async def switch_interview_mode(session_id: str, req: ModeSwitchRequest,
-                                 user: "auth.UserContext" = Depends(require_user),
                                  request: Request = None):
-    await assert_session_owner(session_id, user)
     async with state.session_lock:
         session = state.active_sessions.get(session_id)
     if not session:

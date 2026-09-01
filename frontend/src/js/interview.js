@@ -8,8 +8,10 @@ import { $, $$, el, toast, DIM_NAMES, scoreClass, escHtml } from './utils.js';
 // 动态化零收益，统一收敛到这里。
 import {
   createInterviewWS, request,
-  getCompanyProfiles, uploadResume, uploadJd, generateQuestions,
-  refreshProfile,   // v8.0: 出报告后让能力档案的缓存失效
+  getCompanyProfiles, generateQuestions,
+  refreshProfile,           // v8.0: 出报告后让能力档案的缓存失效
+  uploadResumeToLibrary,    // v8.3.x: 上传本机简历并入库（解析后回填 setup）
+  uploadJd,                 // v8.3.x: 上传本机 JD 文件，解析后回填 setup（不入库）
 } from './api.js';
 import {
   voiceSupport, speak, stopSpeaking, isSpeaking,
@@ -125,58 +127,58 @@ export function initInterview() {
         ),
       ),
 
-      // Step 1：简历与岗位
+      // Step 1：简历与岗位（v8.2 收敛来源为「从库选」一种；v8.3.x 恢复上传本机文件做并列入口 —— 后端入库/解析端点均沿用 v7.0，未引入新路由）
       el('div', { className: 'step-card active', 'data-step-card': '1' },
         el('div', { className: 'form-group' },
-          el('label', { className: 'form-label', textContent: '上传简历文件' }),
-          el('div', { className: 'form-upload' },
-            el('input', { id: 'resume-file', type: 'file', accept: '.pdf,.docx,.txt,.doc' }),
-            el('button', {
-              id: 'upload-btn', className: 'btn btn-secondary btn-sm',
-              textContent: '解析文件',
-              onClick: handleUpload,
-            }),
+          el('label', { className: 'form-label', textContent: '简历来源（从简历库选择）' }),
+          // 直接展开库选择器 picker（保留 id 供 loadLibraryPicker 定位）
+          el('div', { id: 'resume-library-picker' }),
+          // v8.3.x: 并列入口 —— 上传本机简历后自动入库 + 解析 + 选入 setup，
+          // 与「从库选」互不干扰（label 包隐藏 input 是 resumeLibrary 已验证的同款交互）
+          el('div', { className: 'library-upload-row' },
+            el('label', { className: 'btn btn-pill btn-sm', style: 'margin:8px 0 0;cursor:pointer;' },
+              '📎 上传本机简历（.pdf/.docx/.txt）',
+              el('input', {
+                type: 'file', accept: '.pdf,.docx,.txt',
+                style: 'display:none;',
+                onChange: e => handleSetupUpload('resume', e.target),
+              }),
+            ),
+            el('span', { className: 'session-mode-hint', style: 'margin-left:10px;',
+              textContent: '上传后自动入库并填入下方文本框，下次还能从库里选' }),
           ),
         ),
-        // v7.0: 简历来源 —— 库内选用 / 本地粘贴上传。
-        // 库只是"填充器"：选中后把文本写进下面同一个 textarea，之后仍可编辑。
         el('div', { className: 'form-group' },
-          el('label', { className: 'form-label', textContent: '简历来源' }),
-          sourceSwitch('resume-src', [
-            { v: 'paste', label: '粘贴 / 上传' },
-            { v: 'library', label: '从简历库选择' },
-          ], v => onSourceChange('resume', v)),
-          el('div', { id: 'resume-library-picker', className: 'hidden' }),
-        ),
-        el('div', { className: 'form-group' },
-          el('label', { className: 'form-label', textContent: '简历文本（必填，可直接粘贴）' }),
+          el('label', { className: 'form-label', textContent: '简历文本（必填）' }),
           el('textarea', { id: 'resume-text', className: 'form-textarea',
-            placeholder: '粘贴简历内容，或点击上方"解析文件"自动填入...',
+            placeholder: '从上方「简历库」下拉中选择一份简历或上传本机简历后，将自动填入此处，仍可手动编辑...',
             // v7.0: 手改文本即脱离"库来源"——提交内容以编辑框为准，
             // 避免"选了 A 简历却发出去手改后的内容且仍标记成 A"这种难以归因的情况。
             onInput: () => { selectedResumeId = null; updateSummary(); } }),
         ),
         el('div', { className: 'form-group' },
-          el('label', { className: 'form-label', textContent: '岗位来源' }),
-          sourceSwitch('jd-src', [
-            { v: 'paste', label: '粘贴 JD' },
-            { v: 'library', label: '从岗位库选择' },
-          ], v => onSourceChange('jd', v)),
-          el('div', { id: 'jd-library-picker', className: 'hidden' }),
+          el('label', { className: 'form-label', textContent: '岗位来源（从岗位库选择）' }),
+          // 直接展开库选择器 picker（保留 id 供 loadLibraryPicker 定位）
+          el('div', { id: 'jd-library-picker' }),
+          // v8.3.x: 并列入口 —— JD 文件解析后直接回填文本框（不入库，与 v7.0.2 同款语义；
+          // 真正持久化去「岗位库」另行添加，避免 setup 步骤过度膨胀）
+          el('div', { className: 'library-upload-row' },
+            el('label', { className: 'btn btn-pill btn-sm', style: 'margin:8px 0 0;cursor:pointer;' },
+              '📎 上传本机 JD（.pdf/.docx/.txt）',
+              el('input', {
+                type: 'file', accept: '.pdf,.docx,.txt',
+                style: 'display:none;',
+                onChange: e => handleSetupUpload('jd', e.target),
+              }),
+            ),
+            el('span', { className: 'session-mode-hint', style: 'margin-left:10px;',
+              textContent: '解析后自动填入下方文本框，本次面试使用' }),
+          ),
         ),
         el('div', { className: 'form-group' },
           el('label', { className: 'form-label', textContent: '岗位描述 JD（可选，让问题更贴合）' }),
-          // v7.0.2: JD 支持文件上传解析（PDF/TXT/DOCX），解析结果回填文本框
-          el('div', { className: 'form-upload' },
-            el('input', { id: 'jd-file', type: 'file', accept: '.pdf,.txt,.docx' }),
-            el('button', {
-              id: 'upload-jd-btn', className: 'btn btn-secondary btn-sm',
-              textContent: '解析文件',
-              onClick: handleJdUpload,
-            }),
-          ),
           el('textarea', { id: 'jd-text', className: 'form-textarea',
-            placeholder: '粘贴目标岗位描述，或点击上方"解析文件"自动填入...',
+            placeholder: '从上方「岗位库」下拉中选择一份岗位后，将自动填入此处，仍可手动编辑...',
             style: 'min-height: 80px;',
             onInput: () => { selectedPositionId = null; updateSummary(); } }),
         ),
@@ -352,43 +354,52 @@ export function initInterview() {
     ),
   ));
 
+  // v8.x: 上一场面试刚结束 —— 在引导页顶部给出"查看本场报告"入口
+  if (window._showLatestReport) {
+    panel.appendChild(buildLatestReportBanner());
+  }
+
   // 面试进行区（实战态 / 复盘态挂载点）
   panel.appendChild(el('div', { id: 'interview-area', className: 'hidden' }));
 
   updateSummary();
   loadCompanyProfiles();   // v6.5: 异步填充公司风格下拉（失败静默，保留兜底选项）
+  // v8.2: 来源只剩"从库选"一种，不再有分段控件 → 在 setup 挂载时直接把库选择器展开
+  loadLibraryPicker('resume');
+  loadLibraryPicker('jd');
 }
 
-/* v7.0: 来源分段控件（与 mode-option / style-option 同构，不引入新组件） */
-function sourceSwitch(id, options, onPick) {
-  const box = el('div', { className: 'source-switch', id });
-  options.forEach((o, i) => {
-    box.appendChild(el('button', {
-      type: 'button',
-      className: `source-option${i === 0 ? ' selected' : ''}`,
-      'data-value': o.v,
-      textContent: o.label,
-      onClick: e => {
-        [...box.querySelectorAll('.source-option')].forEach(b => b.classList.remove('selected'));
-        e.currentTarget.classList.add('selected');
-        onPick(o.v);
-      },
-    }));
+/** v8.x: 上一场面试结束后的"查看本场报告"入口横幅 */
+function buildLatestReportBanner() {
+  const banner = el('div', {
+    className: 'report-ready-banner',
+    style: 'display:flex;align-items:center;gap:12px;padding:14px 18px;margin-bottom:16px;'
+      + 'background:linear-gradient(90deg,var(--primary-soft),transparent);'
+      + 'border:1px solid var(--primary);border-radius:12px;',
   });
-  return box;
+  banner.appendChild(el('div', {
+    style: 'font-size:1.4rem;',
+    textContent: '📊',
+  }));
+  const wrap = el('div', { style: 'flex:1;' },
+    el('div', { style: 'font-weight:600;', textContent: '本场面试已结束，报告已生成' }),
+    el('div', { style: 'font-size:.82rem;color:var(--text-secondary);margin-top:2px;',
+      textContent: '点击右侧按钮查看本场五维评分与逐题拆解' }),
+  );
+  banner.appendChild(wrap);
+  banner.appendChild(el('button', {
+    className: 'btn btn-primary',
+    textContent: '查看本场报告',
+    onClick: viewLatestReport,
+  }));
+  return banner;
 }
 
-/* v7.0: 切换简历/岗位来源 —— 切到"库"时加载选择器 */
-async function onSourceChange(kind, value) {
+/* v8.2: 直接加载简历/岗位库选择器（替代 v7.0 的 sourceSwitch + onSourceChange——来源已收敛为"从库选"一种） */
+async function loadLibraryPicker(kind) {
   const pickerId = kind === 'resume' ? '#resume-library-picker' : '#jd-library-picker';
   const picker = $(pickerId);
   if (!picker) return;
-  if (value !== 'library') {
-    picker.classList.add('hidden');
-    picker.replaceChildren();
-    return;
-  }
-  picker.classList.remove('hidden');
   picker.replaceChildren(el('div', { className: 'library-hint', textContent: '加载中…' }));
   try {
     const path = kind === 'resume' ? '/api/resumes' : '/api/positions';
@@ -432,6 +443,51 @@ async function applyFromLibrary(kind, id) {
   }
 }
 
+/* v8.3.x: setup 步骤的本机文件上传处理（与「从库选」并列入口）
+ *  - kind='resume' → 后端 /api/resumes/upload（入库 + 解析，零截断），上传成功后
+ *    直接复用 applyFromLibrary 选入文本框，并刷新 picker 让下拉包含新条目
+ *  - kind='jd'     → 后端 /api/upload-jd（仅解析回文本，不入库 —— 与 v7.0.2 同款语义；
+ *    真要持久化请到「岗位库」另行添加，保持 setup 步骤不引入新建岗位的旁支 UI）
+ *  - 不动 session.phase 与 inputLock —— 上传是 setup 视图内的辅助动作，与面试主流程解耦
+ */
+async function handleSetupUpload(kind, input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  input.value = '';   // 允许重复选同一文件
+  // 前端只做软提示（10MB）——后端 RequestSizeLimitMiddleware 是权威，过大会返回 413
+  const SOFT_LIMIT = 10 * 1024 * 1024;
+  if (file.size > SOFT_LIMIT) {
+    toast(`文件较大（${(file.size / 1024 / 1024).toFixed(1)}MB），上传可能失败`, 'warning');
+  }
+  toast(kind === 'resume' ? '正在解析简历…' : '正在解析 JD…', 'info');
+  try {
+    if (kind === 'resume') {
+      const result = await uploadResumeToLibrary(file);
+      const id = result?.resume?.id;
+      if (!id) throw new Error('入库响应缺少 id');
+      toast('简历已入库', 'success');
+      // 复用「从库选」填充路径：文本填入 + 设 selectedResumeId
+      await applyFromLibrary('resume', id);
+      // 刷新 picker 让下拉立刻包含新条目（用户也可能改主意再选一次）
+      await loadLibraryPicker('resume');
+    } else {
+      const result = await uploadJd(file);
+      const text = result?.text || result?.jd_text || '';
+      if (!text.trim()) throw new Error(result?.message || '未能从文件中提取到文本');
+      const target = $('#jd-text');
+      if (target) {
+        target.value = text;
+        // v7.0: 文件来源 ≠ 库来源；selectedPositionId 置空让 onInput 语义清晰
+        selectedPositionId = null;
+        updateSummary();
+      }
+      toast(`JD 已解析（${text.length} 字）`, 'success');
+    }
+  } catch (err) {
+    toast(err.message || (kind === 'resume' ? '简历上传失败' : 'JD 上传失败'), 'error');
+  }
+}
+
 /* v6.5: 目标公司风格下拉（选项来自 GET /api/company-profiles） */
 async function loadCompanyProfiles() {
   const sel = $('#company-select');
@@ -470,7 +526,7 @@ function setSetupStep(step) {
 function handleNextStep() {
   if (setupStep === 1) {
     const resumeText = $('#resume-text').value.trim();
-    if (!resumeText) { toast('请先填写简历内容（可直接粘贴或上传解析）', 'warning'); return; }
+    if (!resumeText) { toast('请先从「简历库」选择一份简历，或直接在文本框中填写', 'warning'); return; }
   }
   if (setupStep < 3) setSetupStep(setupStep + 1);
   else startInterview();
@@ -561,52 +617,10 @@ function getQuestionTypeMix() {
   };
 }
 
-async function handleUpload() {
-  const fileInput = $('#resume-file');
-  const file = fileInput.files[0];
-  if (!file) { toast('请先选择文件', 'warning'); return; }
-
-  const btn = $('#upload-btn');
-  btn.disabled = true;
-  btn.textContent = '解析中...';
-
-  try {
-    const res = await uploadResume(file);
-    $('#resume-text').value = res.text;
-    toast('简历解析成功', 'success');
-  } catch (e) {
-    toast('解析失败: ' + e.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '解析文件';
-  }
-}
-
-// v7.0.2: JD 文件上传解析（测评问题 #2）—— 与 handleUpload 同款交互
-async function handleJdUpload() {
-  const fileInput = $('#jd-file');
-  const file = fileInput.files[0];
-  if (!file) { toast('请先选择文件', 'warning'); return; }
-
-  const btn = $('#upload-jd-btn');
-  btn.disabled = true;
-  btn.textContent = '解析中...';
-
-  try {
-    const res = await uploadJd(file);
-    $('#jd-text').value = res.text;
-    selectedPositionId = null;   // 上传内容以编辑框为准，脱离岗位库关联
-    toast('JD 解析成功', 'success');
-    updateSummary();
-  } catch (e) {
-    toast('解析失败: ' + e.message, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.textContent = '解析文件';
-  }
-}
-
 async function startInterview() {
+  // v8.x: 开启新一场前清掉"查看本场报告"横幅，避免残留到全新流程
+  window._showLatestReport = false;
+
   const resumeText = $('#resume-text').value.trim();
   if (!resumeText) { toast('请输入简历内容', 'warning'); return; }
 
@@ -823,7 +837,7 @@ function handleWSMessage(type, data) {
       reactivateAnswerInput();
       break;
 
-    case 'round_start':
+    case 'round_start': {
       currentRound = data.round;
       document.querySelectorAll('.stage-dot').forEach(d => {
         const r = parseInt(d.dataset.round);
@@ -836,6 +850,7 @@ function handleWSMessage(type, data) {
         el('div', { style: 'font-size:1.1rem;font-weight:600;margin-top:4px;', textContent: data.name }),
       ));
       break;
+    }
 
     case 'question':
       currentQuestion = data;
@@ -878,13 +893,14 @@ function handleWSMessage(type, data) {
       break;
 
     // v2.1: 安全拦截
-    case 'security_block':
+    case 'security_block': {
       toast('⚠ 回答被拦截: ' + data.reason, 'error');
       // 重新激活输入（v6.3: 统一入口；语义：安全拦截 = 解锁 + 清空 + 聚焦）
       const sbBtn = $('#submit-answer');
       if (sbBtn) sbBtn.textContent = '提交回答';
       setInputLocked(false, { clear: true, focus: true });
       break;
+    }
 
     case 'follow_up':
       prefetchTTS(data.question);  // v6.1: 追问同样预取 TTS
@@ -1836,7 +1852,6 @@ function finishInterview(data) {
 
   // v4.0: 回到准备态（重建 Setup，清除已填内容）
   setPhase(PHASE.DONE);      // v6.3: 先入 done（副作用：状态灯熄灭）
-  initInterview();           // 内部 setPhase(SETUP) 重建引导页
 
   // 保存报告数据到全局，供 report.js 使用
   // 后端 interview_done 的 data 即为报告本体
@@ -1849,6 +1864,18 @@ function finishInterview(data) {
   refreshProfile();
 
   resetLiveRadar();
+
+  // v8.x: 不直接跳走，而是回到引导页并在顶部给出"查看本场报告"按钮，
+  // 由用户主动点击再跳到报告页（report.js 识别 _pendingLatestReport 自动加载）。
+  window._showLatestReport = true;
+  initInterview();
+}
+
+/** 引导页"查看本场报告"按钮回调：跳到报告页并自动加载上一场报告 */
+function viewLatestReport() {
+  window._showLatestReport = false;
+  window._pendingLatestReport = true;
+  location.hash = '#/report';
 }
 
 // v2.5: 提交诊断反馈

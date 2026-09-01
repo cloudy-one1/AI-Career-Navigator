@@ -1,12 +1,15 @@
 """市场域：岗位画像研究 + 市场数据导入/检索/统计 + 实时采集（job-crawler B 档内嵌）。"""
 import logging
 import os
+import uuid
 from typing import List, Optional
 
 from fastapi import APIRouter, Form, HTTPException, Query, Request
 
+from .. import db
 from ..config import config
 from ..market import store as market_store, service as market_service
+from ..market import analytics as market_analytics, insight as market_insight
 from ..market.crawler import tasks as crawler_tasks
 from ..market.crawler.adapters import build_jd_text
 from ..web_research import enrich_jd_with_research
@@ -14,6 +17,33 @@ from . import state
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+async def _annotate_in_library(jobs: list) -> None:
+    """为市场岗位批量注入 in_library 字段（已导入岗位库？）。
+
+    前端列表/详情据此渲染「✓ 已在岗位库」vs「＋ 加入」状态。
+    仅对有 id 的 dict 生效。v8.3 起无归属过滤，全局查询即可。
+    """
+    if not jobs:
+        return
+    ids = [j["id"] for j in jobs if isinstance(j, dict) and j.get("id") is not None]
+    if not ids:
+        return
+    placeholders = ",".join("?" * len(ids))
+    conn = await db.get_db()
+    try:
+        cur = await conn.execute(
+            f"SELECT market_job_id FROM positions WHERE market_job_id IN ({placeholders})",
+            ids,
+        )
+        rows = await cur.fetchall()
+    finally:
+        await conn.close()
+    imported = {r["market_job_id"] for r in rows}
+    for j in jobs:
+        if isinstance(j, dict) and j.get("id") is not None:
+            j["in_library"] = j["id"] in imported
 
 
 @router.post("/api/research-position")
@@ -74,6 +104,8 @@ async def market_import(
         city=city.strip() if city else None,
         limit=max(1, min(limit, 10000)),
     )
+    # 数据已变化，此前生成的 AI 解读结论全部作废
+    market_insight.invalidate()
     return {"status": "ok", **result}
 
 
@@ -88,11 +120,14 @@ async def market_jobs(
     offset: int = Query(0, ge=0),
 ):
     """岗位列表查询（关键词/城市/学历/薪资区间过滤 + 分页）"""
-    return await market_store.query_jobs(
+    result = await market_store.query_jobs(
         keyword=keyword, city=city, education=education,
         salary_min=salary_min, salary_max=salary_max,
         limit=limit, offset=offset,
     )
+    # 注入 in_library：前端据此渲染「✓ 已在岗位库」vs「＋ 加入」
+    await _annotate_in_library(result.get("items", []))
+    return result
 
 
 @router.get("/api/market/stats")
@@ -167,6 +202,7 @@ async def market_job_detail(job_id: int):
     job = await market_store.get_job_by_id(job_id)
     if job is None:
         raise HTTPException(404, "岗位不存在")
+    await _annotate_in_library([job])
     return {"job": job, "jd_text": build_jd_text(job)}
 
 
@@ -182,3 +218,72 @@ async def market_toggle_interest(job_id: int):
     if state_ is None:
         raise HTTPException(404, "岗位不存在")
     return {"job_id": job_id, "is_interested": state_}
+
+
+@router.post("/api/market/jobs/{job_id}/to-position")
+async def market_job_to_position(job_id: int):
+    """把市场岗位导入岗位库，之后在面试页可直接选用这份 JD。
+
+    为什么是"物化"而不是"引用"：market.db 与面试库物理分离（前者是可再采集的
+    公共缓存，后者是用户私有记录，生命周期不同），跨库无法用外键或 JOIN；
+    且岗位库要求 JD 文本随时可用，不能依赖"市场库那条记录还在"。
+    因此把 JD 文本复制进 positions，仅保留 market_job_id 用于溯源与幂等。
+
+    幂等：同一市场岗位重复导入不会产生第二条，返回 created=False 与既有记录。
+    """
+    job = await market_store.get_job_by_id(job_id)
+    if job is None:
+        raise HTTPException(404, "岗位不存在")
+
+    existed = await db.find_position_by_market_job(job_id)
+    if existed:
+        return {"position": await db.get_position(existed["id"]), "created": False}
+
+    # 原文链接只在岗位库里补：build_jd_text 同时供 Gap 分析喂 LLM，
+    # 不宜为其掺入与能力评估无关的 URL。
+    jd_text = build_jd_text(job)
+    if job.get("url"):
+        jd_text = f"{jd_text}\n\n原文链接：{job['url']}"
+
+    position_id = uuid.uuid4().hex[:12]
+    await db.save_position(
+        position_id,
+        title=(job.get("title") or "未命名岗位").strip(),
+        jd_text=jd_text,
+        department=job.get("company") or None,   # 卡片徽章位展示公司名
+        source="market",
+        market_job_id=job_id,
+    )
+    logger.info("市场岗位导入岗位库: job_id=%s -> position_id=%s", job_id, position_id)
+    return {"position": await db.get_position(position_id), "created": True}
+
+
+@router.get("/api/market/charts")
+async def market_charts(keyword: Optional[str] = Query(None)):
+    """全部分析图表的聚合数据（一次性取回，避免每张卡片各发一次请求）。
+
+    纯 SQL 聚合 + Python 侧分档，毫秒级；空库返回 total=0 与各维度空数组，
+    前端据此渲染空态，无需特判异常。
+    """
+    return await market_analytics.get_charts(keyword=keyword)
+
+
+@router.post("/api/market/insight")
+@state.limiter.limit("20/minute")
+async def market_insight_api(
+    request: Request,
+    section: str = Form("overview"),
+    keyword: Optional[str] = Form(None),
+    fresh: bool = Form(False),
+):
+    """对指定图表 section 生成 AI 解读（点击触发，服务端 TTL 缓存 5 分钟）。
+
+    section 取值见 ``backend/market/insight.py`` 的 SECTIONS 注册表。
+    失败统一返回 ``{"error": ...}`` 而非抛 500——解读是增强能力，
+    失败只应在卡片内降级展示，绝不影响图表本身。
+    """
+    return await market_insight.analyze(
+        section=section.strip(),
+        keyword=keyword.strip() if keyword else None,
+        fresh=fresh,
+    )

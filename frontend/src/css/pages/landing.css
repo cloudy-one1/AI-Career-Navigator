@@ -1,0 +1,438 @@
+/* ===================================================
+   landing.css — 独立产品主页（v8.2 起由单独的 landing.html 承载）
+   设计：深色沉浸 Hero（墨黑通栏）+ 纸墨风内容区
+   ---------------------------------------------------
+   三条纪律：
+   1. 全部色值/间距/缓动引用 tokens.css，不私写数值；
+   2. 全部动效挂 prefers-reduced-motion 降级（承接 motion.css 的全局机制）；
+   3. Hero 的深墨底是**设计意图本身**，不随主题切换变浅——仅在深色主题下
+      做边界微调，否则会与深色页面融为一体而失去"沉浸区块"的轮廓。
+   =================================================== */
+
+/* ── 通用排版 ─────────────────────────────────────── */
+
+.ld-eyebrow {
+  margin: 0;
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--brass);
+}
+
+.ld-h2 {
+  margin: var(--space-2) 0 0;
+  font-family: var(--font-serif);
+  font-size: var(--text-2xl);
+  font-weight: 700;
+  letter-spacing: 0.01em;
+  color: var(--ink);
+  line-height: 1.35;
+}
+
+.ld-lead {
+  margin: var(--space-3) 0 0;
+  max-width: 62ch;
+  font-size: var(--text-base);
+  line-height: 1.85;
+  color: var(--ink-soft);
+}
+
+.ld-section {
+  padding: var(--space-8) 0 0;
+}
+
+/* 独立 landing.html 的页面容器：提供与 .container 一致的横向内边距，
+   让 .ld-hero 的负 margin 仍能正确通栏出血。 */
+.ld-page {
+  padding: var(--space-6) var(--space-5) var(--space-7);
+}
+
+/* ── 区块一：深色沉浸 Hero ────────────────────────── */
+
+/* 通栏出血：用负 margin 抵消 .container 的 padding（32px 24px），
+   不动壳层——改 .app-body 布局会与 sticky 侧栏冲突，风险远大于收益。 */
+.ld-hero {
+  position: relative;
+  overflow: hidden;
+  margin: calc(var(--space-6) * -1) calc(var(--space-5) * -1) 0;
+  padding: var(--space-8) var(--space-5) var(--space-7);
+  background: var(--slate-900);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+  color: var(--paper);
+}
+
+/* 极淡径向墨晕：纯 CSS，不引入图片资源 */
+.ld-hero::before {
+  content: '';
+  position: absolute;
+  inset: -40% -10% auto;
+  height: 150%;
+  background:
+    radial-gradient(58% 46% at 22% 18%, rgba(var(--primary-rgb), 0.20), transparent 62%),
+    radial-gradient(46% 40% at 82% 82%, rgba(160, 137, 69, 0.16), transparent 66%);
+  pointer-events: none;
+}
+
+/* 顶部一条极细黄铜分隔线，给深色区块一个"被裱起来"的边界 */
+.ld-hero::after {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(160, 137, 69, 0.55), transparent);
+  pointer-events: none;
+}
+
+.ld-hero-inner {
+  position: relative;
+  z-index: 1;
+  max-width: 760px;
+  margin: 0 auto;
+  text-align: center;
+}
+
+.ld-hero-title {
+  margin: var(--space-4) 0 0;
+  font-family: var(--font-serif);
+  font-size: 44px;
+  font-weight: 900;
+  line-height: 1.22;
+  letter-spacing: 0.01em;
+  color: var(--paper);
+}
+
+/* 视觉锚点。深底上 --stamp(#C44F3A) 偏暗，故取阶梯中更亮的一档保证对比度 */
+.ld-hero-accent {
+  color: var(--indigo-400);
+}
+
+.ld-hero-sub {
+  margin: var(--space-4) 0 0;
+  font-family: var(--font-serif);
+  font-size: var(--text-xl);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: rgba(244, 242, 237, 0.88);
+}
+
+.ld-hero-desc {
+  margin: var(--space-4) auto 0;
+  max-width: 60ch;
+  font-size: var(--text-base);
+  line-height: 1.9;
+  color: rgba(244, 242, 237, 0.62);
+}
+
+.ld-hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  justify-content: center;
+  margin-top: var(--space-6);
+}
+
+.ld-hero-note {
+  margin: var(--space-4) 0 0;
+  font-size: var(--text-xs);
+  letter-spacing: 0.06em;
+  color: rgba(244, 242, 237, 0.42);
+}
+
+/* ── 按钮 ─────────────────────────────────────────── */
+
+.ld-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 12px var(--space-5);
+  border: 1.5px solid transparent;
+  border-radius: var(--radius-full);
+  font-size: var(--text-base);
+  font-weight: 600;
+  font-family: inherit;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: transform var(--dur-fast) var(--ease-out),
+              background var(--dur-fast) var(--ease-out),
+              border-color var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out),
+              box-shadow var(--dur-fast) var(--ease-out);
+}
+.ld-btn:active { transform: translateY(1px); }
+
+.ld-btn-primary {
+  background: var(--stamp);
+  border-color: var(--stamp);
+  color: #fff;
+  box-shadow: 0 6px 18px -6px rgba(var(--primary-rgb), 0.55);
+}
+.ld-btn-primary:hover {
+  background: var(--indigo-700);
+  border-color: var(--indigo-700);
+  box-shadow: 0 10px 24px -8px rgba(var(--primary-rgb), 0.62);
+}
+
+/* 幽灵按钮：在深底上是浅描边，在纸墨区自动转为墨色描边 */
+.ld-btn-ghost {
+  background: transparent;
+  border-color: rgba(244, 242, 237, 0.32);
+  color: rgba(244, 242, 237, 0.9);
+}
+.ld-btn-ghost:hover {
+  border-color: rgba(244, 242, 237, 0.7);
+  background: rgba(244, 242, 237, 0.08);
+}
+
+/* ── 区块二：五步主线 ─────────────────────────────── */
+
+.ld-steps {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--space-3);
+  margin-top: var(--space-6);
+}
+
+.ld-step {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-5) var(--space-3);
+  text-align: center;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform var(--dur-base) var(--ease-out),
+              border-color var(--dur-base) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out);
+}
+
+/* 步骤间的细连接线（最后一步不需要） */
+.ld-step:not(:last-child)::after {
+  content: '';
+  position: absolute;
+  top: 50%;
+  right: calc(var(--space-3) * -1);
+  width: var(--space-3);
+  height: 1px;
+  background: var(--line);
+  transition: background var(--dur-base) var(--ease-out);
+}
+.ld-step.is-visible:not(:last-child)::after { background: var(--brass); }
+
+.ld-step:hover {
+  transform: translateY(-3px);
+  border-color: var(--stamp);
+  box-shadow: var(--shadow-lg);
+}
+
+.ld-step-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 1.5px solid var(--line);
+  background: var(--paper);
+  color: var(--stamp);
+  transition: border-color var(--dur-base) var(--ease-out),
+              background var(--dur-base) var(--ease-out);
+}
+.ld-step-icon > svg { width: 20px; height: 20px; display: block; }
+.ld-step:hover .ld-step-icon {
+  border-color: var(--stamp);
+  background: var(--accent-light);
+}
+
+.ld-step-num {
+  font-family: var(--font-serif);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--brass);
+}
+
+.ld-step-title {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+
+.ld-step-note {
+  font-size: var(--text-xs);
+  line-height: 1.7;
+  color: var(--ink-soft);
+}
+
+/* ── 区块三：能力卡片 ─────────────────────────────── */
+
+.ld-cards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--space-4);
+  margin-top: var(--space-6);
+}
+
+.ld-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-5);
+  text-align: left;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  font-family: inherit;
+  transition: transform var(--dur-base) var(--ease-out),
+              border-color var(--dur-base) var(--ease-out),
+              box-shadow var(--dur-base) var(--ease-out);
+}
+.ld-card:hover {
+  transform: translateY(-3px);
+  border-color: var(--stamp);
+  box-shadow: var(--shadow-lg);
+}
+
+.ld-card-icon { color: var(--stamp); }
+.ld-card-icon > svg { width: 20px; height: 20px; display: block; }
+
+.ld-card-title {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--ink);
+  letter-spacing: 0.02em;
+}
+
+.ld-card-note {
+  flex: 1;
+  font-size: var(--text-sm);
+  line-height: 1.8;
+  color: var(--ink-soft);
+}
+
+.ld-card-go {
+  margin-top: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  color: var(--teal);
+  opacity: 0;
+  transform: translateX(-4px);
+  transition: opacity var(--dur-base) var(--ease-out),
+              transform var(--dur-base) var(--ease-out);
+}
+.ld-card:hover .ld-card-go { opacity: 1; transform: none; }
+
+/* ── 区块四：页脚 CTA ─────────────────────────────── */
+
+.ld-footer { padding-bottom: var(--space-7); }
+
+.ld-footer-box {
+  padding: var(--space-7) var(--space-6);
+  text-align: center;
+  background: var(--card);
+  border: 1px solid var(--line);
+  /* 底部黄铜细线收边，与 Hero 的顶部黄铜线首尾呼应 */
+  border-bottom: 2px solid var(--brass);
+  border-radius: var(--radius-lg);
+}
+
+.ld-footer-actions { margin-top: var(--space-5); }
+
+/* ── 滚动揭晓 ─────────────────────────────────────── */
+
+/* 揭晓：默认**可见**，只有 JS 接管（挂上 .ld-js）后才启用隐藏与入场。
+   这个顺序不能反：若 CSS 无条件隐藏、再靠 JS 去显示，那么 JS
+   一旦加载失败或被拦截，整页内容就会停在 opacity:0 永久看不见——
+   把"锦上添花的动效"变成"全站单点故障"，是典型的反向渐进增强。 */
+.ld-reveal.ld-js {
+  opacity: 0;
+  transform: translateY(16px);
+  transition: opacity var(--dur-slow) var(--ease-out),
+              transform var(--dur-slow) var(--ease-out);
+  transition-delay: var(--popd, 0ms);
+}
+.ld-reveal.ld-js.is-visible { opacity: 1; transform: none; }
+
+/* Hero 载入即错峰入场（首屏无需等待滚动） */
+@keyframes ld-rise {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: none; }
+}
+.ld-hero .ld-eyebrow   { animation: ld-rise 620ms var(--ease-out) both; }
+.ld-hero-title         { animation: ld-rise 620ms var(--ease-out) 90ms both; }
+.ld-hero-sub           { animation: ld-rise 620ms var(--ease-out) 180ms both; }
+.ld-hero-desc          { animation: ld-rise 620ms var(--ease-out) 270ms both; }
+.ld-hero-actions       { animation: ld-rise 620ms var(--ease-out) 360ms both; }
+.ld-hero-note          { animation: ld-rise 620ms var(--ease-out) 450ms both; }
+
+/* ── 深色主题：Hero 边界微调（不变浅，只加轮廓）────── */
+
+html.theme-dark .ld-hero {
+  background: var(--slate-800);
+  box-shadow: inset 0 0 0 1px rgba(244, 242, 237, 0.08);
+}
+
+/* ── 响应式 ───────────────────────────────────────── */
+
+@media (max-width: 1024px) {
+  .ld-steps { grid-template-columns: repeat(3, 1fr); }
+  .ld-cards { grid-template-columns: repeat(2, 1fr); }
+}
+
+@media (max-width: 720px) {
+  .ld-hero {
+    margin: calc(var(--space-6) * -1) calc(var(--space-5) * -1) 0;
+    padding: var(--space-7) var(--space-4) var(--space-6);
+  }
+  .ld-hero-title { font-size: 32px; }
+  .ld-hero-sub { font-size: var(--text-lg); }
+
+  /* 五步转为纵向时间线：横向五列在窄屏会挤成不可读的细条 */
+  .ld-steps { grid-template-columns: 1fr; gap: var(--space-2); }
+  .ld-step {
+    flex-direction: row;
+    align-items: center;
+    text-align: left;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+  }
+  .ld-step:not(:last-child)::after {
+    top: auto;
+    right: auto;
+    bottom: calc(var(--space-2) * -1);
+    left: 50%;
+    width: 1px;
+    height: var(--space-2);
+  }
+  .ld-step-note { flex: 1; }
+
+  .ld-cards { grid-template-columns: 1fr; }
+  .ld-footer-box { padding: var(--space-6) var(--space-4); }
+  .ld-section { padding-top: var(--space-7); }
+}
+
+/* ── 降级：偏好减弱动效时全部静默为直接可见 ────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .ld-reveal,
+  .ld-hero .ld-eyebrow,
+  .ld-hero-title,
+  .ld-hero-sub,
+  .ld-hero-desc,
+  .ld-hero-actions,
+  .ld-hero-note {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+    transition: none !important;
+  }
+}

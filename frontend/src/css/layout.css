@@ -26,7 +26,8 @@
   gap: 10px;
   font-family: var(--font-serif);   /* v5.0 纸墨：品牌用衬线 */
   font-weight: 900;
-  font-size: var(--text-md);
+  font-size: var(--text-xl);
+  letter-spacing: 0.5px;
   color: var(--color-text);
 }
 
@@ -47,16 +48,6 @@
   transition: transform var(--dur-base) var(--ease-spring);
 }
 .brand-logo:hover { transform: rotate(0deg) scale(1.08); }
-
-.version-badge {
-  font-size: var(--text-xs);
-  color: var(--indigo-700);
-  background: var(--indigo-50);
-  border: 1px solid var(--indigo-100);
-  padding: 2px 8px;
-  border-radius: var(--radius-full);
-  font-weight: 500;
-}
 
 .header-right {
   display: flex;
@@ -163,6 +154,42 @@
               color var(--dur-fast) var(--ease-out),
               box-shadow var(--dur-fast) var(--ease-out);
 }
+/* 步骤图标：五步各用一个彩色具象图形（靶心/文档/对话/仪表盘/地图），
+   作为侧栏步骤的唯一视觉标识——不再用中文数字或勾选标记。 */
+.journey-step-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-md);
+  background: transparent;
+  transition: background var(--dur-fast) var(--ease-out),
+              color var(--dur-fast) var(--ease-out);
+}
+.journey-step-icon > svg {
+  width: 20px;
+  height: 20px;
+  display: block;
+}
+/* 每步一个专属色，让图标本身就有辨识度 */
+.journey-step:nth-child(1) .journey-step-icon { color: #6366F1; } /* 靛蓝 · 职业定位 */
+.journey-step:nth-child(2) .journey-step-icon { color: #F59E0B; } /* 琥珀 · 简历准备 */
+.journey-step:nth-child(3) .journey-step-icon { color: #10B981; } /* 翠绿 · 面试演练 */
+.journey-step:nth-child(4) .journey-step-icon { color: #8B5CF6; } /* 紫罗兰 · 能力诊断 */
+.journey-step:nth-child(5) .journey-step-icon { color: #EC4899; } /* 品红 · 发展路径 */
+
+/* 选中态：浅底 + 图标加深 */
+.journey-step.current .journey-step-icon {
+  background: var(--accent-light);
+  color: var(--stamp);
+}
+/* 完成态：青绿实心底 + 白色图标 */
+.journey-step.is-done .journey-step-icon {
+  background: var(--teal);
+  color: #fff;
+}
+
 .journey-title {
   font-size: 11px;
   font-weight: 600;
@@ -235,13 +262,6 @@
   border-bottom: 1px dashed var(--line);
   font-weight: 600;
   color: var(--ink);
-}
-
-/* 账户：独立入口，钉在侧栏底部 */
-.nav-account {
-  margin-top: auto;
-  border-top: 1px dashed var(--line);
-  padding-top: 12px;
 }
 
 .nav-item {
@@ -345,6 +365,18 @@
               color var(--dur-fast) var(--ease-out),
               box-shadow var(--dur-fast) var(--ease-out);
 }
+/* 进度条节点内直接放步骤图标（省去中文数字，横向空间更紧）。
+   完成后**不换勾选**：保留图标、只把底变青绿实心（图标随 color 转白），
+   这样"完成了"与"是哪一步"两个信息可以同时读到。 */
+.jp-step-icon {
+  display: flex;
+}
+.jp-step-icon > svg {
+  width: 12px;
+  height: 12px;
+  display: block;
+}
+
 .jp-line {
   flex: 0 0 18px;
   height: 1.5px;
@@ -402,9 +434,6 @@
   .journey-step:not(:last-of-type)::before {
     left: 20px;
     top: 30px;
-  }
-  .nav-account {
-    padding-top: 0;
   }
 
   .nav-item.active::before {

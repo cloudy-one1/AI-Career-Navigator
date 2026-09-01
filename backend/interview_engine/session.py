@@ -1077,10 +1077,15 @@ class InterviewSession:
         """
         self.last_answer_text = answer_text
         thinking = _normalize_thinking_seconds(thinking_seconds)
+        # v8.x: 保留追问问题文本，供复盘还原"面试官追问了什么"。
+        # 此前只存追问回答，问题文本丢失，导致报告/复盘完全看不到追问内容。
+        fu_question = (self.pending_follow_up or "").strip()
         if self.answer_history:
-            self.answer_history[-1].setdefault("follow_ups", []).append(answer_text)
+            h = self.answer_history[-1]
+            h.setdefault("follow_ups", []).append(answer_text)
+            if fu_question:
+                h.setdefault("follow_up_questions", []).append(fu_question)
             if thinking > 0:
-                h = self.answer_history[-1]
                 fu_key = "follow_up_thinking_seconds"
                 h[fu_key] = round(float(h.get(fu_key, 0)) + thinking, 1)
                 h["thinking_seconds"] = round(float(h.get("thinking_seconds", 0)) + thinking, 1)

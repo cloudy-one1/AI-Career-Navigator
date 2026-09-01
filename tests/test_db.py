@@ -29,6 +29,7 @@ from backend.db import (
     import_questions_from_session,
     increment_usage,
     init_db,
+    list_journey_marks,
     list_questions,
     list_sessions,
     lookup_jd_weights,
@@ -257,3 +258,94 @@ class TestJdWeightsCache:
         finally:
             await db.close()
         assert await lookup_jd_weights("bad") is None
+
+
+class TestAuthRemovalMigration:
+    """[v8.3] 认证下线的老库迁移（CHARTER DC-10）。
+
+    这是本轮唯一不可逆的改动：删 users 表、删三张表的 owner_id 列、
+    把 journey_marks 从 (owner_id, step_key) 重建为 step_key 主键。
+    删错了会丢数据，因此必须钉住两件事——**该删的确实删了**，
+    以及**该留的数据还在**（尤其是打点记录，它是用户唯一无法重建的进度）。
+    """
+
+    @staticmethod
+    async def _build_legacy_db(path: str) -> None:
+        """造一个 v8.2 形态的老库：有 users 表、owner_id 列、带 owner 的 journey_marks。"""
+        import aiosqlite
+
+        async with aiosqlite.connect(path) as conn:
+            await conn.execute("""
+                CREATE TABLE users (
+                    id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE,
+                    password_hash TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'jobseeker',
+                    display_name TEXT, created_at TEXT, last_login_at TEXT
+                )""")
+            await conn.execute(
+                "INSERT INTO users (id, username, password_hash) VALUES ('u1', 'alice', 'hash')")
+            await conn.execute("""
+                CREATE TABLE journey_marks (
+                    owner_id TEXT NOT NULL, step_key TEXT NOT NULL,
+                    marked_at TEXT DEFAULT (datetime('now','localtime')),
+                    PRIMARY KEY (owner_id, step_key)
+                )""")
+            await conn.execute(
+                "INSERT INTO journey_marks (owner_id, step_key, marked_at) "
+                "VALUES ('u1', 'career_path', '2026-08-01 10:00:00')")
+            await conn.execute(
+                "INSERT INTO journey_marks (owner_id, step_key, marked_at) "
+                "VALUES ('u2', 'career_path', '2026-08-15 10:00:00')")
+            await conn.commit()
+
+    @pytest.mark.asyncio
+    async def test_users_table_dropped(self, tmp_path):
+        path = str(tmp_path / f"legacy{uuid.uuid4().hex}.db")
+        cfg.DB_PATH = path
+        await self._build_legacy_db(path)
+        await init_db()
+
+        db = await get_db()
+        try:
+            async with db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='users'"
+            ) as cur:
+                assert await cur.fetchone() is None
+        finally:
+            await db.close()
+
+    @pytest.mark.asyncio
+    async def test_owner_id_columns_dropped(self, tmp_path):
+        path = str(tmp_path / f"legacy{uuid.uuid4().hex}.db")
+        cfg.DB_PATH = path
+        await self._build_legacy_db(path)
+        await init_db()
+
+        db = await get_db()
+        try:
+            for table in ("sessions", "resumes", "positions"):
+                async with db.execute(f"PRAGMA table_info({table})") as cur:
+                    cols = {row[1] for row in await cur.fetchall()}
+                assert "owner_id" not in cols, f"{table} 仍残留 owner_id 列"
+        finally:
+            await db.close()
+
+    @pytest.mark.asyncio
+    async def test_journey_marks_rebuilt_and_data_kept(self, tmp_path):
+        """重建后主键变为 step_key，且多个 owner 的打点按最晚时间归并成一行。"""
+        path = str(tmp_path / f"legacy{uuid.uuid4().hex}.db")
+        cfg.DB_PATH = path
+        await self._build_legacy_db(path)
+        await init_db()
+
+        marks = await list_journey_marks()
+        assert list(marks.keys()) == ["career_path"]
+        # 两个 owner 都打过 career_path，归并时取最晚的那条
+        assert marks["career_path"] == "2026-08-15 10:00:00"
+
+        db = await get_db()
+        try:
+            async with db.execute("PRAGMA table_info(journey_marks)") as cur:
+                cols = {row[1] for row in await cur.fetchall()}
+        finally:
+            await db.close()
+        assert cols == {"step_key", "marked_at"}

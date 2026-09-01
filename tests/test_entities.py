@@ -4,9 +4,8 @@ test_entities.py —— v7.0 简历库 / 岗位库（可复用输入资产）
 覆盖：
 1. CRUD 正常路径
 2. 列表不返回大字段（raw_text 可能上万字符，N 条会把响应撑到几 MB）
-3. 归属隔离：A 看不到 B 的简历/岗位；认证关闭时不过滤（回归底线）
-4. 老数据兼容：owner_id 为 NULL 的行，在认证开启后对任何登录者都不可见
-5. 创建会话时关联 resume_id / position_id，且未传 id 时行为不变（向后兼容）
+3. 列表语义：无归属维度，返回全部（v8.3 认证下线，见 CHARTER DC-10）
+4. 创建会话时关联 resume_id / position_id，且未传 id 时行为不变（向后兼容）
 """
 
 import uuid
@@ -44,7 +43,7 @@ async def setup_db(tmp_path):
 class TestResumeCRUD:
     @pytest.mark.asyncio
     async def test_save_and_get(self):
-        await save_resume("r1", "我的简历", "张三 Python 3年", owner_id="u1", filename="cv.pdf")
+        await save_resume("r1", "我的简历", "张三 Python 3年", filename="cv.pdf")
         row = await get_resume("r1")
         assert row is not None
         assert row["title"] == "我的简历"
@@ -55,8 +54,8 @@ class TestResumeCRUD:
     @pytest.mark.asyncio
     async def test_list_excludes_raw_text(self):
         """列表不含 raw_text —— 这是性能约定，不是疏漏。"""
-        await save_resume("r1", "简历A", "x" * 10000, owner_id="u1")
-        rows = await list_resumes(owner_id="u1")
+        await save_resume("r1", "简历A", "x" * 10000)
+        rows = await list_resumes()
         assert len(rows) == 1
         assert "raw_text" not in rows[0]
         # 详情才有
@@ -64,7 +63,7 @@ class TestResumeCRUD:
 
     @pytest.mark.asyncio
     async def test_update_title_and_parsed(self):
-        await save_resume("r1", "旧标题", "text", owner_id="u1")
+        await save_resume("r1", "旧标题", "text")
         await update_resume("r1", title="新标题", parsed_json='{"skills":["Python"]}')
         row = await get_resume("r1")
         assert row["title"] == "新标题"
@@ -75,7 +74,7 @@ class TestResumeCRUD:
 
     @pytest.mark.asyncio
     async def test_delete(self):
-        await save_resume("r1", "t", "text", owner_id="u1")
+        await save_resume("r1", "t", "text")
         await delete_resume("r1")
         assert await get_resume("r1") is None
 
@@ -85,7 +84,7 @@ class TestResumeCRUD:
 class TestPositionCRUD:
     @pytest.mark.asyncio
     async def test_save_and_get(self):
-        await save_position("p1", "高级 Python", "JD 内容", owner_id="u1", department="技术部")
+        await save_position("p1", "高级 Python", "JD 内容", department="技术部")
         row = await get_position("p1")
         assert row["title"] == "高级 Python"
         assert row["jd_text"] == "JD 内容"
@@ -93,7 +92,7 @@ class TestPositionCRUD:
 
     @pytest.mark.asyncio
     async def test_update_partial(self):
-        await save_position("p1", "旧岗位", "旧JD", owner_id="u1")
+        await save_position("p1", "旧岗位", "旧JD")
         await update_position("p1", jd_text="新JD")
         row = await get_position("p1")
         assert row["jd_text"] == "新JD"
@@ -101,51 +100,46 @@ class TestPositionCRUD:
 
     @pytest.mark.asyncio
     async def test_update_with_nothing_is_noop(self):
-        await save_position("p1", "岗位", "JD", owner_id="u1")
+        await save_position("p1", "岗位", "JD")
         await update_position("p1")       # 全空：不应报错，也不应改动
         assert (await get_position("p1"))["jd_text"] == "JD"
 
     @pytest.mark.asyncio
     async def test_delete(self):
-        await save_position("p1", "t", "JD", owner_id="u1")
+        await save_position("p1", "t", "JD")
         await delete_position("p1")
         assert await get_position("p1") is None
 
 
-# ===== 3. 归属隔离 =====
+# ===== 3. 列表语义 =====
 
-class TestEntityOwnership:
-    @pytest.mark.asyncio
-    async def test_list_filters_by_owner(self):
-        await save_resume("r1", "A的简历", "t", owner_id="u1")
-        await save_resume("r2", "B的简历", "t", owner_id="u2")
-        rows = await list_resumes(owner_id="u1")
-        assert len(rows) == 1 and rows[0]["id"] == "r1"
+class TestEntityListing:
+    """v8.3: 本类原为「归属隔离」（A 看不到 B 的简历/岗位）。
+
+    认证下线后不存在第二个使用者，"按 owner 过滤"这一语义连同它的参数一起消失。
+    这里改为钉住剩下的唯一语义——列表返回全部、且只受 limit 约束，
+    防止将来有人重新引入过滤条件却按旧的多用户前提理解它。
+    """
 
     @pytest.mark.asyncio
-    async def test_list_without_filter_returns_all(self):
-        """owner_id=None 是匿名模式（AUTH_ENABLED=false）的语义，不过滤。"""
-        await save_resume("r1", "A", "t", owner_id="u1")
-        await save_resume("r2", "B", "t", owner_id="u2")
+    async def test_list_returns_everything(self):
+        await save_resume("r1", "简历A", "t")
+        await save_resume("r2", "简历B", "t")
         assert len(await list_resumes()) == 2
+
+    @pytest.mark.asyncio
+    async def test_list_positions_empty_by_default(self):
+        await save_resume("r1", "简历A", "t")
         assert len(await list_positions()) == 0
 
     @pytest.mark.asyncio
-    async def test_legacy_rows_without_owner_are_hidden(self):
-        """老库遗留（owner=NULL）：登录态下不可见，但数据仍在（关认证可查）。"""
-        await save_resume("legacy", "老简历", "t")   # 不传 owner_id
-        assert len(await list_resumes(owner_id="u1")) == 0
-        assert len(await list_resumes()) == 1        # 匿名模式仍可见 → 不是数据丢失
-
-    @pytest.mark.asyncio
-    async def test_position_ownership_same_rule(self):
-        await save_position("p1", "A的岗位", "JD", owner_id="u1")
-        await save_position("p2", "B的岗位", "JD", owner_id="u2")
-        assert len(await list_positions(owner_id="u2")) == 1
-        assert (await list_positions(owner_id="u2"))[0]["id"] == "p2"
+    async def test_list_respects_limit(self):
+        for i in range(5):
+            await save_resume(f"r{i}", f"简历{i}", "t")
+        assert len(await list_resumes(limit=2)) == 2
 
 
-# ===== 4. HTTP 层：鉴权与关联 =====
+# ===== 4. HTTP 层：CRUD 与关联 =====
 
 class TestEntityEndpoints:
     @pytest_asyncio.fixture
@@ -156,19 +150,12 @@ class TestEntityEndpoints:
         with TestClient(app) as c:
             yield c
 
-    def test_requires_login_when_enabled(self, client):
-        cfg.AUTH_ENABLED = True
-        assert client.get("/api/resumes").status_code == 401
-        assert client.get("/api/positions").status_code == 401
-
-    def test_list_accessible_when_disabled(self, client):
-        """回归底线：认证关闭时列表可用（等同 v6.x 无此端点前的"不阻断"语义）。"""
-        cfg.AUTH_ENABLED = False
+    def test_list_is_open(self, client):
+        """回归底线：列表端点无需任何凭据即可访问（v8.3 起无认证层）。"""
         assert client.get("/api/resumes").status_code == 200
         assert client.get("/api/positions").status_code == 200
 
     def test_crud_roundtrip(self, client):
-        cfg.AUTH_ENABLED = False
         created = client.post("/api/resumes", json={
             "title": "测试简历", "raw_text": "张三 Python", "filename": "cv.pdf"})
         assert created.status_code == 201
@@ -185,12 +172,10 @@ class TestEntityEndpoints:
         assert client.get(f"/api/resumes/{rid}").status_code == 404
 
     def test_missing_resource_is_404(self, client):
-        cfg.AUTH_ENABLED = False
         assert client.get("/api/resumes/nope").status_code == 404
         assert client.get("/api/positions/nope").status_code == 404
 
     def test_position_crud_roundtrip(self, client):
-        cfg.AUTH_ENABLED = False
         created = client.post("/api/positions", json={
             "title": "Python 工程师", "jd_text": "要求 3 年经验", "department": "技术"})
         assert created.status_code == 201
@@ -208,7 +193,6 @@ class TestUploadToLibrary:
     """
 
     def test_upload_keeps_full_text(self, client):
-        cfg.AUTH_ENABLED = False
         long_text = "张三 高级Python工程师 " + "负责订单系统重构与性能优化。" * 400  # 远超 5000 字
         files = {"file": ("cv.txt", long_text.encode("utf-8"), "text/plain")}
         resp = client.post("/api/resumes/upload", files=files)
@@ -221,13 +205,11 @@ class TestUploadToLibrary:
         assert detail["title"] == "cv"                  # 默认用文件名去扩展名
 
     def test_upload_rejects_bad_extension(self, client):
-        cfg.AUTH_ENABLED = False
         files = {"file": ("cv.exe", b"MZ\x00\x00", "application/octet-stream")}
         assert client.post("/api/resumes/upload", files=files).status_code == 400
 
     def test_legacy_upload_endpoint_still_truncates(self, client):
         """回归底线：旧端点行为不变（截断到 5000），既有前端依赖这个约定。"""
-        cfg.AUTH_ENABLED = False
         long_text = "字" * 8000
         files = {"file": ("cv.txt", long_text.encode("utf-8"), "text/plain")}
         resp = client.post("/api/sessions/upload", files=files)
@@ -241,7 +223,6 @@ class TestSessionUsesLibrary:
     """创建会话时引用库内简历/岗位 —— D2 的"冒烟：选库内简历开新会话"。"""
 
     def test_session_records_library_refs(self, client):
-        cfg.AUTH_ENABLED = False
         rid = client.post("/api/resumes", json={
             "title": "库内简历", "raw_text": "张三 Python 3年 Django Redis"}).json()["resume"]["id"]
         pid = client.post("/api/positions", json={
@@ -255,7 +236,6 @@ class TestSessionUsesLibrary:
         assert resp.status_code not in (403, 404), resp.text
 
     def test_session_rejects_missing_ref(self, client):
-        cfg.AUTH_ENABLED = False
         resp = client.post("/api/sessions", json={
             "resume_id": "不存在的id", "resume_text": "", "jd_text": ""})
         assert resp.status_code == 404

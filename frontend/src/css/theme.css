@@ -66,11 +66,7 @@ html.theme-dark .brand-logo {
   background: var(--stamp) !important;
   color: #20140F !important;
 }
-html.theme-dark .version-badge {
-  background: rgba(201,169,97,0.12) !important;
-  color: var(--brass) !important;
-  border-color: rgba(201,169,97,0.30) !important;
-}
+
 
 /* ---------- 4. 卡片（墨纸卡底 + hover 朱砂描边）---------- */
 html.theme-dark .card,

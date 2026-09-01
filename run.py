@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""一键启动脚本：AI 求职陪跑平台 — 本地开发模式"""
+"""一键启动脚本：AI 求职领航 — 本地开发模式"""
 import logging
 import os
 import shutil

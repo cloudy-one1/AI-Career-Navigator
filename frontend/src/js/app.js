@@ -4,7 +4,7 @@
 // 单一数据源），面板初始化收敛为 tabRegistry——新增页面注册一行即可。
 // hash 路由（#/interview …）：刷新/后退/分享直达对应页。
 // 兼容桌面侧边导航 / 平板图标栏 / 移动端底部导航（统一 .nav-item[data-tab]）
-// v7.0: 接入账户面板 + 401 全局处理 + 启动时拉取登录态
+// v8.3: 账户面板与 401 全局处理随认证一并下线（CHARTER DC-10）
 // ===================================================
 
 import { $, $$ } from './utils.js';
@@ -18,14 +18,13 @@ import { initQuestionBank } from './questionBank.js';
 import { initCareerPlan } from './careerPlan.js';
 import { initMarketData } from './marketData.js';
 import { initMemory } from './memoryGraph.js';   // v6.3 长期记忆
-import { initAuth, refreshAuthStatus, updateHeaderUser, isLoggedIn } from './auth.js';  // v7.0 认证
 import { initResumeLibrary } from './resumeLibrary.js';       // v7.0 简历库
 import { initPositionLibrary } from './positionLibrary.js';   // v7.0 岗位库
-import { initProfile } from './profileCard.js';               // v8.0 能力档案（求职档案首屏）
+import { initProfile } from './profileCard.js';               // v8.0 能力档案
 
 /** tab → 面板 init。新增页面在此注册一行即可，不再需要改 if/else 链。 */
 const tabRegistry = {
-  'home': initProfile,        // v8.0 默认首屏：档案 + 下一步最佳动作
+  'home': initProfile,        // v8.2 默认首屏：能力档案（landing 已独立为单独 HTML）
   'interview': initInterview,
   'report': initReport,
   'history': initHistory,
@@ -35,7 +34,6 @@ const tabRegistry = {
   'memory': initMemory,
   'resume-library': initResumeLibrary,
   'position-library': initPositionLibrary,
-  'account': initAuth,
 };
 
 let currentTab = null;
@@ -89,7 +87,7 @@ function applyTab(tabName) {
 /** 切换 tab。hash 与目标不一致时只改 hash（进浏览器历史），
  *  由 hashchange 回环触发真正的 applyTab，保证后退/前进与视图一致。 */
 function switchTab(tabName) {
-  if (!tabRegistry[tabName]) tabName = 'interview';
+  if (!tabRegistry[tabName]) tabName = 'home';
   if (tabName === currentTab) return;
   const target = `#/${tabName}`;
   if (location.hash !== target) {
@@ -123,41 +121,17 @@ document.addEventListener('DOMContentLoaded', () => {
 
   $('#interview-status')?.addEventListener('click', () => switchTab('interview'));
 
-  // v7.0: 顶部账户按钮 → 跳到账户面板
-  $('#user-btn')?.addEventListener('click', () => switchTab('account'));
-
   // v7.6: hash 路由——浏览器后退/前进、手动改 hash 均直达对应页
   window.addEventListener('hashchange', () => {
-    switchTab(tabFromHash() || currentTab || 'interview');
+    switchTab(tabFromHash() || currentTab || 'home');
   });
 
-  // v7.0: 登录态变化（登录/退出）后同步顶部显示，并让历史等面板感知归属变化。
-  // v7.5: 删除了招聘者身份分流（CHARTER DC-08）——退出后回到求职者默认视图。
-  window.addEventListener('auth:changed', (e) => {
-    const { justLoggedOut } = e.detail || {};
-    updateHeaderUser();
-    if (justLoggedOut) switchTab('interview');
-  });
-
-  // v7.0: 任意请求被 401（token 过期/被吊销）→ 清登录态并引导到账户页。
-  // 只在"原本是登录态"时提示，避免每次匿名访问都弹一个没意义的 toast。
-  window.addEventListener('auth:unauthorized', () => {
-    const wasLoggedIn = isLoggedIn();
-    refreshAuthStatus().then(() => {
-      if (wasLoggedIn && !isLoggedIn()) {
-        switchTab('account');
-      }
-    });
-  });
-
-  // v8.0: 默认首屏改为能力档案（档案视角）；hash 指向合法 tab 时直达
+  // v8.2: 产品主页已独立为 landing.html；SPA 内默认首屏回到能力档案
+  // 注意：此处须与 index.html 中带 .active 的静态兜底面板保持一致，否则 JS 执行前会闪错面板。
   const initial = tabFromHash() || 'home';
   // replaceState 同步 URL 但不触发 hashchange（首屏直接 apply，避免空白闪帧）
   if (location.hash !== `#/${initial}`) {
     history.replaceState(null, '', `#/${initial}`);
   }
   applyTab(initial);
-
-  // v7.0: 启动时拉取一次登录态（失败静默降级为未登录，不阻断首屏）
-  refreshAuthStatus().catch(() => {});
 });

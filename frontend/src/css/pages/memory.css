@@ -29,18 +29,36 @@
   display: grid; grid-template-columns: minmax(0, 1fr) 340px;
   gap: 16px; align-items: start;
 }
+.memory-graph-wrap {
+  min-width: 0;
+  overflow: hidden;
+}
+.memory-detail-wrap {
+  position: relative;
+  z-index: 1;
+}
 
 /* ── 图谱画布 ── */
 .memory-viewport {
   position: relative; overflow: hidden;
-  min-height: 480px; border-radius: var(--radius-md);
-  background: var(--color-bg); border: 1px solid var(--color-border);
+  /* aspect-ratio 放在定位父元素上（而非绝对定位子元素）：
+   * 子元素全部 absolute → 父元素无内在高度 → 若 aspect-ratio 在子元素上，
+   * 父元素只靠 min-height 撑住，宽屏时子元素按比例算出的高度超过父元素 → 溢出遮盖右侧明细栏。
+   * 移到这里后父元素自身有确定尺寸，absolute 子元素 inset:0 完美填充。 */
+  aspect-ratio: 1200 / 800;   /* 必须与 memoryGraph.js 的 VB_W/VB_H 同步 */
+  /* min-height 取 460 而非更大：700px 布局基准下按比例算出 467px，
+   * 定得再高就会在常见宽度上打破 3:2，把连线拉变形。 */
+  min-height: 460px; border-radius: var(--radius-md);
+  /* 中心一圈极淡的印章红晕，把视线引向核心节点 */
+  background:
+    radial-gradient(circle at 50% 50%, rgba(var(--primary-rgb), .07) 0%, transparent 58%),
+    var(--color-bg);
+  border: 1px solid var(--color-border);
   touch-action: none; cursor: grab;
 }
 .memory-viewport.dragging { cursor: grabbing; }
 .memory-canvas {
-  position: absolute; inset: 0; width: 100%;
-  aspect-ratio: 1000 / 620;           /* 与 viewBox 同比例，节点与连线永远对齐 */
+  position: absolute; inset: 0; width: 100%; height: 100%;
   transform-origin: 50% 50%;
   will-change: transform;
 }
@@ -48,30 +66,36 @@
   position: absolute; inset: 0; width: 100%; height: 100%;
 }
 
-/* 连线 */
+/* 连线：主干（中心→维度）实线偏粗，分支（维度→子节点）虚线偏细，层级分明 */
 .mlink-dim, .mlink-sub {
-  fill: none; stroke: var(--color-border);
-  stroke-width: 1.5; opacity: .8;
+  fill: none; stroke: var(--slate-300); stroke-linecap: round;
   transition: stroke var(--dur-fast) var(--ease-standard),
-              opacity var(--dur-fast) var(--ease-standard);
+              opacity var(--dur-fast) var(--ease-standard),
+              stroke-width var(--dur-fast) var(--ease-standard);
 }
-.mlink-sub { stroke-dasharray: 4 4; stroke-width: 1.2; }
-.mlink-dim.hot, .mlink-sub.hot {
-  stroke: var(--color-primary); opacity: 1; stroke-width: 2.2;
-}
+.mlink-dim { stroke-width: 2; opacity: .9; }
+.mlink-sub { stroke-width: 1.2; opacity: .65; stroke-dasharray: 3 4; }
+.mlink-dim.hot, .mlink-sub.hot { stroke: var(--color-primary); opacity: 1; }
+.mlink-dim.hot { stroke-width: 3; }
+.mlink-sub.hot { stroke-width: 2; stroke-dasharray: none; }
 
 /* ── 节点 ── */
 .memory-nodes { position: absolute; inset: 0; }
 .memory-node {
   position: absolute; transform: translate(-50%, -50%);
-  display: flex; flex-direction: column; align-items: center; gap: 4px;
-  cursor: pointer; z-index: 1;
+  display: flex; flex-direction: column; align-items: center; gap: 3px;
+  cursor: default; z-index: 1;
 }
+.memory-node.mnode-point { cursor: pointer; }
+.memory-node:hover { z-index: 6; }   /* 悬停置顶，否则会被相邻节点压住 */
+
+/* 尺寸必须与 memoryGraph.js 的 estimateLabelPx 估算一致，
+   否则松弛按错的占位去避让，仍会压盖。 */
 .mnode-label {
   font-size: 11px; line-height: 1.3; text-align: center;
   color: var(--text-secondary); background: var(--color-surface);
   border: 1px solid var(--color-border); border-radius: var(--radius-full);
-  padding: 2px 10px; max-width: 170px; overflow: hidden;
+  padding: 3px 11px; max-width: 132px; overflow: hidden;
   text-overflow: ellipsis; white-space: nowrap;
   box-shadow: var(--shadow-xs);
   transition: transform var(--dur-fast) var(--ease-standard),
@@ -79,35 +103,58 @@
               border-color var(--dur-fast) var(--ease-standard);
 }
 .memory-node:hover .mnode-label {
-  transform: translateY(-2px) scale(1.04);
+  transform: translateY(-2px) scale(1.06);
   box-shadow: var(--shadow-md);
   border-color: var(--color-primary);
 }
+
+/* 中心：实心印章色，整张图的视觉锚点 */
 .mnode-center .mnode-label {
-  font-weight: 700; color: var(--color-primary);
+  font-weight: 700; font-size: 13px;
+  color: #fff;
+  background: var(--color-primary);
   border-color: var(--color-primary);
-  background: var(--color-primary-soft);
-  padding: 6px 16px; font-size: 13px;
+  padding: 8px 20px;
+  box-shadow: var(--shadow-md);
 }
-.mnode-overflow {
-  font-size: 10px; color: var(--text-muted);
+
+/* 维度：比子节点重一档，撑起中间层 */
+.mnode-dim .mnode-label {
+  font-size: 12px; font-weight: 600;
+  color: var(--text);
+  border-color: var(--slate-300);
+  padding: 5px 13px; max-width: 170px;
+  box-shadow: var(--shadow-sm);
 }
+
+.mnode-overflow { font-size: 10px; color: var(--text-muted); }
 
 /* 严重度配色（颜色即数据；token 化，深色主题自动适配） */
 .mnode-point .mnode-label { border-left-width: 3px; }
-.mnode-point.tier-danger .mnode-label { border-left-color: var(--color-danger); }
-.mnode-point.tier-warn   .mnode-label { border-left-color: var(--color-warning); }
-.mnode-point.tier-info   .mnode-label { border-left-color: var(--color-info); }
+.mnode-point.tier-danger .mnode-label {
+  border-left-color: var(--color-danger);
+  background: rgba(var(--danger-rgb), .10);
+  color: var(--text);
+}
+.mnode-point.tier-warn .mnode-label {
+  border-left-color: var(--color-warning);
+  background: rgba(var(--warning-rgb), .13);
+  color: var(--text);
+}
+.mnode-point.tier-info .mnode-label {
+  border-left-color: var(--color-info);
+  background: rgba(var(--success-rgb), .10);
+}
 .mnode-point.tier-resolved .mnode-label {
   opacity: .55; text-decoration: line-through;
   border-left-color: var(--text-muted);
 }
 
-/* ── 图例（玻璃态悬浮）── */
+/* ── 图例（画布下方横条，不悬浮在画布内）── */
 .memory-legend {
-  position: absolute; right: 12px; bottom: 12px; z-index: 2;
-  display: flex; flex-direction: column; gap: 6px;
-  padding: 10px 14px; font-size: .74rem; color: var(--text-secondary);
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  margin-top: 10px; padding: 0 2px;
+  font-size: .74rem; color: var(--text-secondary);
 }
 .legend-item { display: inline-flex; align-items: center; gap: 6px; }
 .legend-dot {

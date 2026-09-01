@@ -153,6 +153,33 @@ def parse_experience(raw: str) -> tuple[Optional[float], Optional[float]]:
     return (None, None)
 
 
+# ===== 城市名归一化 =====
+
+_CITY_SEP_RE = re.compile(r"[-—–·/、]")
+
+
+def extract_city(raw: str) -> str:
+    """
+    从岗位地址提取城市名（供统计聚合与地图定位使用）。
+
+    51job 的 address 混存多种形态：'上海'、'上海-徐汇区'、'北京·朝阳区'、'北京市'。
+    采集侧（adapters.to_standard_job）直接存了完整地址，若读取侧不归一化，
+    ``GROUP BY city`` 会把同一城市拆成多行（统计碎片化），地图散点也会大面积匹配失败。
+
+    '上海-徐汇区' → '上海'；'北京·朝阳区' → '北京'；'北京市' → '北京'；'' → ''
+    """
+    if not raw:
+        return ""
+    s = str(raw).strip()
+    if not s:
+        return ""
+    s = _CITY_SEP_RE.split(s, 1)[0].strip()
+    # 去行政后缀：'北京市' → '北京'；'市辖区' 这类两字地名保持原样
+    if len(s) > 2 and s.endswith("市"):
+        s = s[:-1]
+    return s
+
+
 # ===== 技能标签提取 =====
 
 _SKILLS_CACHE: Optional[dict] = None

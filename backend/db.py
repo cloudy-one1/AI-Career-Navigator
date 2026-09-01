@@ -140,19 +140,27 @@ async def init_db():
         await _ensure_weakness_columns(db)
 
         # v6.5: 长期薄弱点记忆（EMA 衰减 + 过期淘汰）。
+        # v8.4: 主键从 dimension 单键改为 (dimension, position_id) 复合主键，
+        #   支持按岗位隔离薄弱点数据。
+        #   注意：SQLite UNIQUE 约束中 NULL != NULL，故 position_id 用空字符串 ''
+        #   作为'全局/未知岗位'的哨兵值（由 _normalize_position_id 统一处理）。
         # 新建表用 CREATE TABLE IF NOT EXISTS 即可（新增表对老库也生效，
         # 只有"给已有表加列"才需要下面的 PRAGMA+ALTER 迁移）。
         await db.execute("""
             CREATE TABLE IF NOT EXISTS weakness_memory (
-                dimension TEXT PRIMARY KEY,
+                dimension TEXT NOT NULL,
+                position_id TEXT NOT NULL DEFAULT '',
                 weakness_score REAL NOT NULL DEFAULT 0,
                 occurrence_count INTEGER NOT NULL DEFAULT 0,
                 last_score REAL,
                 last_seen TEXT,
                 expires_at TEXT,
-                updated_at TEXT
+                updated_at TEXT,
+                PRIMARY KEY (dimension, position_id)
             )
         """)
+        # v8.4: 老库迁移——为 weakness_memory 补 position_id 列，重建主键
+        await _ensure_weakness_memory_position_column(db)
 
         # v3.1: JD 权重缓存表（避免同一 JD 重复调 LLM 分析权重）
         await db.execute("""
@@ -164,28 +172,13 @@ async def init_db():
             )
         """)
 
-        # ===== v7.0: 认证（users）+ 简历/岗位库 =====
-        # 新建表用 CREATE TABLE IF NOT EXISTS 即可（对老库自动生效）。
-        # 注意：不加 FOREIGN KEY —— 见 _ensure_owner_columns 注释（SQLite ALTER 限制）。
-        await db.execute("""
-            CREATE TABLE IF NOT EXISTS users (
-                id TEXT PRIMARY KEY,
-                username TEXT NOT NULL UNIQUE,
-                password_hash TEXT NOT NULL,
-                role TEXT NOT NULL DEFAULT 'jobseeker',
-                display_name TEXT,
-                created_at TEXT DEFAULT (datetime('now', 'localtime')),
-                last_login_at TEXT
-            )
-        """)
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)"
-        )
-
+        # ===== v7.0: 简历/岗位库（可复用输入资产）=====
+        # v8.3: owner_id 列随认证下线一并移除（CHARTER DC-10），老库由
+        # _drop_auth_columns 迁移，新建库直接无此列。
+        # 注意：不加 FOREIGN KEY —— 见 _ensure_session_columns 注释（SQLite ALTER 限制）。
         await db.execute("""
             CREATE TABLE IF NOT EXISTS resumes (
                 id TEXT PRIMARY KEY,
-                owner_id TEXT,
                 title TEXT NOT NULL,
                 filename TEXT,
                 raw_text TEXT NOT NULL,
@@ -195,62 +188,65 @@ async def init_db():
                 updated_at TEXT DEFAULT (datetime('now', 'localtime'))
             )
         """)
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_resumes_owner ON resumes(owner_id)"
-        )
 
         await db.execute("""
             CREATE TABLE IF NOT EXISTS positions (
                 id TEXT PRIMARY KEY,
-                owner_id TEXT,
                 title TEXT NOT NULL,
                 department TEXT,
                 jd_text TEXT NOT NULL,
+                -- v8.2 来源区分：manual=手工新建，market=从市场数据收藏导入。
+                -- market_job_id 记录 market.db 的岗位 id，仅 market 来源有值：
+                -- 既用于溯源（可回看 51job 原文），也用于"同一市场岗位只导入一次"的幂等判断。
+                source TEXT DEFAULT 'manual',
+                market_job_id INTEGER,
                 created_at TEXT DEFAULT (datetime('now', 'localtime')),
                 updated_at TEXT DEFAULT (datetime('now', 'localtime'))
             )
         """)
-        await db.execute(
-            "CREATE INDEX IF NOT EXISTS idx_positions_owner ON positions(owner_id)"
-        )
 
         # v8.1: 旅程关键动作打点。
         # 设计取舍——**能推导的就不落库**：五步里前四步都能从档案实时算出来
         # （有简历 / 有目标岗位 / 开过场 / 出过报告），只有"是否已生成发展路径"
         # 无法推导，才需要这张极小的表。避免一张冗余宽表与双写一致性问题。
+        # v8.3: 主键由 (owner_id, step_key) 收敛为 step_key——单用户下 owner 是伪维度。
         await db.execute("""
             CREATE TABLE IF NOT EXISTS journey_marks (
-                owner_id TEXT NOT NULL,
-                step_key TEXT NOT NULL,
-                marked_at TEXT DEFAULT (datetime('now', 'localtime')),
-                PRIMARY KEY (owner_id, step_key)
+                step_key TEXT PRIMARY KEY,
+                marked_at TEXT DEFAULT (datetime('now', 'localtime'))
             )
         """)
 
         # v7.0: 老库升级（给已有表加列必须走 PRAGMA+ALTER 迁移，不能用 CREATE 覆盖）
-        await _ensure_owner_columns(db)
+        await _ensure_session_columns(db)
+        await _ensure_position_source_columns(db)
+        # v8.3: 认证下线——删 users 表、删 owner_id 列、journey_marks 去 owner
+        await _drop_auth_columns(db)
 
         await db.commit()
-        logger.info("数据库初始化完成（含 question_bank、diagnosis_feedback、weakness_profile、jd_weights_cache、users、resumes、positions、journey_marks 表）")
+        logger.info("数据库初始化完成（含 question_bank、diagnosis_feedback、weakness_profile、jd_weights_cache、resumes、positions、journey_marks 表）")
     finally:
         await db.close()
 
 
 # ===== Sessions =====
 
-async def _ensure_owner_columns(db) -> None:
-    """v7.0 幂等迁移：为 sessions 补 owner_id / resume_id / position_id / flow_state 等列。
+async def _ensure_session_columns(db) -> None:
+    """v7.0 幂等迁移：为 sessions 补 resume_id / position_id / flow_state 等列。
 
     范式与 _ensure_weakness_columns 一致：老库上 CREATE TABLE IF NOT EXISTS 不生效，
     必须 PRAGMA table_info 探测后按需 ALTER，否则所有新列查询报 "no such column"。
 
+    v8.3: 本函数原名为 _ensure_owner_columns、首列是 owner_id，认证下线后
+    该列由 _drop_auth_columns 反向删除，这里只留与归属无关的四个列。
+
     ⚠️ SQLite 限制：ALTER TABLE ADD COLUMN **不支持 REFERENCES**，
-    因此这三列都不带外键约束，引用完整性由应用层（auth.can_access_session 等）保证。
-    这是 SQLite 的硬限制，不是实现偷懒 —— 若将来迁移到 PostgreSQL 应补上外键。
+    因此这三列都不带外键约束。这是 SQLite 的硬限制，不是实现偷懒 ——
+    若将来迁移到 PostgreSQL 应补上外键。
     """
     async with db.execute("PRAGMA table_info(sessions)") as cur:
         existing = {row[1] for row in await cur.fetchall()}
-    for col in ("owner_id", "resume_id", "position_id",
+    for col in ("resume_id", "position_id",
                 "flow_state", "flow_updated_at", "answered_count"):
         if col in existing:
             continue
@@ -265,21 +261,92 @@ async def _ensure_owner_columns(db) -> None:
     await db.execute("DROP TABLE IF EXISTS share_links")
 
 
+async def _drop_auth_columns(db) -> None:
+    """v8.3 幂等迁移：删除认证遗留（users 表 / 三张表的 owner_id 列 / journey_marks 的 owner 维度）。
+
+    为什么是 DROP 而不是"留着不读写"：留一列永不读写的 owner_id 等于在 schema 层
+    保留了一套已被废弃的身份模型，下次改动的人必须重新判断"这列还有没有用"。
+    删除的代价是一次不可逆迁移，收益是 schema 与代码语义一致（CHARTER DC-10）。
+
+    为什么整段包 try/except：迁移失败不该让服务起不来。最坏情况是老库仍带着
+    死列（代码已不读它，功能不受影响），下次启动会再试一次。
+
+    journey_marks 为什么要重建表而不是 DROP COLUMN：它的主键是
+    (owner_id, step_key)，去掉 owner_id 后主键本身要改，SQLite 无法用 ALTER
+    改主键，只能建新表搬数据再改名的标准三步。
+    """
+    try:
+        # 1) 先删索引：SQLite 对"被索引引用的列"执行 DROP COLUMN 会报错
+        for idx in ("idx_users_username", "idx_resumes_owner", "idx_positions_owner"):
+            await db.execute(f"DROP INDEX IF EXISTS {idx}")
+
+        # 2) 删 owner_id 列（sessions / resumes / positions）
+        for table in ("sessions", "resumes", "positions"):
+            async with db.execute(f"PRAGMA table_info({table})") as cur:
+                cols = {row[1] for row in await cur.fetchall()}
+            if "owner_id" in cols:
+                await db.execute(f"ALTER TABLE {table} DROP COLUMN owner_id")
+                logger.info(f"[db] {table} 迁移：删除 owner_id 列")
+
+        # 3) 删 users 表（除认证外无任何用途，无外键引用）
+        await db.execute("DROP TABLE IF EXISTS users")
+
+        # 4) journey_marks：带 owner_id 的老表 → 重建为 step_key 主键
+        async with db.execute("PRAGMA table_info(journey_marks)") as cur:
+            jm_cols = {row[1] for row in await cur.fetchall()}
+        if "owner_id" in jm_cols:
+            await db.execute("""
+                CREATE TABLE IF NOT EXISTS journey_marks_v2 (
+                    step_key TEXT PRIMARY KEY,
+                    marked_at TEXT DEFAULT (datetime('now', 'localtime'))
+                )
+            """)
+            # 同一 step_key 在老表里可能有多行（每个 owner 一行），按最晚时间归并
+            await db.execute("""
+                INSERT OR REPLACE INTO journey_marks_v2 (step_key, marked_at)
+                SELECT step_key, MAX(marked_at) FROM journey_marks GROUP BY step_key
+            """)
+            await db.execute("DROP TABLE journey_marks")
+            await db.execute("ALTER TABLE journey_marks_v2 RENAME TO journey_marks")
+            logger.info("[db] journey_marks 迁移：重建为 step_key 主键")
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[db] 认证遗留清理未完成（不影响使用，下次启动重试）: {e}")
+
+
+async def _ensure_position_source_columns(db) -> None:
+    """v8.2 幂等迁移：为 positions 补 source / market_job_id 列。
+
+    与 _ensure_owner_columns 同一范式：老库上 CREATE TABLE IF NOT EXISTS 不生效，
+    必须 PRAGMA table_info 探测后按需 ALTER，否则新列查询报 "no such column"。
+    存量岗位统一标记为 manual（它们确实都是手工新建的）。
+    """
+    async with db.execute("PRAGMA table_info(positions)") as cur:
+        existing = {row[1] for row in await cur.fetchall()}
+    if not existing:      # 表尚不存在（极低概率），交给 CREATE TABLE 处理
+        return
+    if "source" not in existing:
+        await db.execute(
+            "ALTER TABLE positions ADD COLUMN source TEXT DEFAULT 'manual'")
+        logger.info("[db] positions 迁移：新增 source 列")
+    if "market_job_id" not in existing:
+        await db.execute("ALTER TABLE positions ADD COLUMN market_job_id INTEGER")
+        logger.info("[db] positions 迁移：新增 market_job_id 列")
+
+
 async def save_session(session_id: str, style: str = "friendly",
                         resume_filename: str = "", jd_text: str = "",
                         resume_text: str = "",
-                        owner_id: str | None = None,
                         resume_id: str | None = None,
                         position_id: str | None = None) -> None:
-    """v7.0: 后三个参数为可选——不传时行为与 v6.x 完全一致（向后兼容）。"""
+    """新建 / 覆盖会话。v8.3: 已无 owner_id 参数（认证下线）。"""
     db = await get_db()
     try:
         await db.execute(
             """INSERT OR REPLACE INTO sessions
-               (id, style, resume_filename, jd_text, resume_text, owner_id, resume_id, position_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+               (id, style, resume_filename, jd_text, resume_text, resume_id, position_id)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
             (session_id, style, resume_filename, jd_text, resume_text,
-             owner_id, resume_id, position_id),
+             resume_id, position_id),
         )
         await db.commit()
     finally:
@@ -308,19 +375,6 @@ async def update_session_flow(session_id: str, flow_state: str,
         await db.close()
 
 
-async def get_session_owner(session_id: str) -> str | None:
-    """取会话 owner_id（不存在返回 None，无主返回 None —— 与"不存在"在同一分支处理）。"""
-    db = await get_db()
-    try:
-        async with db.execute(
-            "SELECT owner_id FROM sessions WHERE id = ?", (session_id,)
-        ) as cur:
-            row = await cur.fetchone()
-        return row["owner_id"] if row else None
-    finally:
-        await db.close()
-
-
 async def update_session_status(session_id: str, status: str) -> None:
     db = await get_db()
     try:
@@ -343,22 +397,15 @@ async def get_session(session_id: str) -> Optional[dict]:
         await db.close()
 
 
-async def list_sessions(limit: int = 50, owner_id: str | None = None) -> list[dict]:
-    """v7.0: owner_id 非空时按归属严格过滤；为 None 时不过滤（匿名模式，等同 v6.x）。
+async def list_sessions(limit: int = 50) -> list[dict]:
+    """最近 N 个会话，按更新时间倒序。
 
-    与 resumes/positions 的 list_* 保持同一约定：用「一个可空参数」同时表达
-    「按用户过滤」与「不过滤」两种语义，避免为匿名模式再写一套查询。
+    v8.3: owner_id 过滤参数随认证下线——单用户下"按归属过滤"等价于"不过滤"。
     """
     db = await get_db()
     try:
-        if owner_id is None:
-            async with db.execute(
-                "SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?", (limit,)
-            ) as cur:
-                return [dict(row) for row in await cur.fetchall()]
         async with db.execute(
-            "SELECT * FROM sessions WHERE owner_id = ? ORDER BY updated_at DESC LIMIT ?",
-            (owner_id, limit),
+            "SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?", (limit,)
         ) as cur:
             return [dict(row) for row in await cur.fetchall()]
     finally:
@@ -421,66 +468,57 @@ async def get_report(session_id: str) -> Optional[dict]:
         await db.close()
 
 
-async def mark_journey_step(owner_id: str, step_key: str) -> None:
+async def mark_journey_step(step_key: str) -> None:
     """打点一个旅程关键动作（幂等：同一步重复写入只更新，不报错）。
 
-    未登录（owner_id 为空）一律**不落库**——匿名进度由档案实时推导即可，
-    若用 '__anon__' 之类的哨兵键会把所有匿名用户的数据混在一起。
+    v8.3: owner_id 参数随认证下线——单用户下它只会带来"匿名要不要落库"的
+    伪问题（此前未登录一律不落库，导致第⑤步在匿名模式下永远打不上）。
     """
-    if not owner_id or not step_key:
+    if not step_key:
         return
     db = await get_db()
     try:
         await db.execute(
-            "INSERT INTO journey_marks (owner_id, step_key) VALUES (?, ?) "
-            "ON CONFLICT(owner_id, step_key) DO UPDATE SET marked_at = datetime('now', 'localtime')",
-            (owner_id, step_key),
+            "INSERT INTO journey_marks (step_key) VALUES (?) "
+            "ON CONFLICT(step_key) DO UPDATE SET marked_at = datetime('now', 'localtime')",
+            (step_key,),
         )
         await db.commit()
     finally:
         await db.close()
 
 
-async def list_journey_marks(owner_id: str | None) -> dict:
-    """读取已打点的旅程步骤 → {step_key: marked_at}。未登录返回空。"""
-    if not owner_id:
-        return {}
+async def list_journey_marks() -> dict:
+    """读取已打点的旅程步骤 → {step_key: marked_at}。"""
     db = await get_db()
     try:
         async with db.execute(
-            "SELECT step_key, marked_at FROM journey_marks WHERE owner_id = ?",
-            (owner_id,),
+            "SELECT step_key, marked_at FROM journey_marks"
         ) as cur:
             return {row[0]: row[1] for row in await cur.fetchall()}
     finally:
         await db.close()
 
 
-async def list_recent_reports(owner_id: str | None = None,
-                              limit: int = 10) -> list[dict]:
+async def list_recent_reports(limit: int = 10) -> list[dict]:
     """最近 N 份报告（含时间与 JSON），按时间倒序。
 
     为什么必须一次 JOIN 取回：能力成长曲线要的是"每场一份"的历史序列，
     若沿用 get_report 逐份查询，N 场就是 N 次 IO（N+1 问题）。
-    `reports` 表**没有 owner 列**，归属只能靠 JOIN `sessions` 判定——
-    这与 list_sessions 一致：owner_id 为空时不过滤（匿名模式，等同 v8.0 之前）。
+
+    v8.3: `reports` 表本就没有 owner 列，归属此前靠 JOIN `sessions` 判定，
+    认证下线后过滤条件消失；JOIN 本身保留，确保只取"会话仍在"的报告——
+    让成长曲线不会画出无主的场次。
     """
     db = await get_db()
     try:
-        if owner_id is None:
-            sql = """SELECT r.session_id, r.report_json, r.created_at
-                     FROM reports r
-                     JOIN sessions s ON s.id = r.session_id
-                     ORDER BY r.created_at DESC LIMIT ?"""
-            params = (limit,)
-        else:
-            sql = """SELECT r.session_id, r.report_json, r.created_at
-                     FROM reports r
-                     JOIN sessions s ON s.id = r.session_id
-                     WHERE s.owner_id = ?
-                     ORDER BY r.created_at DESC LIMIT ?"""
-            params = (owner_id, limit)
-        async with db.execute(sql, params) as cur:
+        async with db.execute(
+            """SELECT r.session_id, r.report_json, r.created_at
+               FROM reports r
+               JOIN sessions s ON s.id = r.session_id
+               ORDER BY r.created_at DESC LIMIT ?""",
+            (limit,),
+        ) as cur:
             return [dict(row) for row in await cur.fetchall()]
     finally:
         await db.close()
@@ -747,7 +785,7 @@ async def get_feedback_stats(session_id: str) -> dict:
 # ===== v2.7: Weakness Profile（v6.3 扩展为长期记忆闭环）=====
 
 async def _ensure_weakness_columns(db) -> None:
-    """幂等迁移：为 weakness_profile 补 resolved / updated_at 两列。
+    """幂等迁移：为 weakness_profile 补 resolved / updated_at / position_id 列。
 
     为什么必须独立做：init_db 建表用的是 CREATE TABLE IF NOT EXISTS，
     对**已存在的旧库**完全不生效——直接把新列写进建表语句只对新库有效，
@@ -764,20 +802,70 @@ async def _ensure_weakness_columns(db) -> None:
     if "updated_at" not in existing:
         await db.execute("ALTER TABLE weakness_profile ADD COLUMN updated_at TEXT")
         logger.info("[db] weakness_profile 迁移：新增 updated_at 列")
+    # v8.4: 岗位隔离——记录每条薄弱点快照关联的岗位
+    if "position_id" not in existing:
+        await db.execute("ALTER TABLE weakness_profile ADD COLUMN position_id TEXT")
+        logger.info("[db] weakness_profile 迁移：新增 position_id 列")
+
+
+async def _ensure_weakness_memory_position_column(db) -> None:
+    """v8.4 幂等迁移：weakness_memory 从 dimension 单键改为 (dimension, position_id) 复合主键。
+
+    SQLite 不支持直接 DROP PRIMARY KEY 或 ALTER 主键定义，迁移步骤：
+      1. 新建临时表（含 position_id 列 + 复合主键）
+      2. 迁移旧数据（position_id 填 NULL 表示全局/未知）
+      3. 删旧表，重命名新表
+    对新建库（已有复合主键）此函数无效果（检测到 position_id 列存在即跳过）。
+    """
+    async with db.execute("PRAGMA table_info(weakness_memory)") as cur:
+        existing = {row[1] for row in await cur.fetchall()}
+    if "position_id" in existing:
+        return  # 已是新结构，跳过
+
+    logger.info("[db] weakness_memory 迁移：单键 → 复合主键 (dimension, position_id)")
+    # 1. 建新结构表（先清理上次可能残留的临时表，保证幂等）
+    await db.execute("DROP TABLE IF EXISTS weakness_memory_new")
+    await db.execute("""
+        CREATE TABLE weakness_memory_new (
+            dimension TEXT NOT NULL,
+            position_id TEXT NOT NULL DEFAULT '',
+            weakness_score REAL NOT NULL DEFAULT 0,
+            occurrence_count INTEGER NOT NULL DEFAULT 0,
+            last_score REAL,
+            last_seen TEXT,
+            expires_at TEXT,
+            updated_at TEXT,
+            PRIMARY KEY (dimension, position_id)
+        )
+    """)
+    # 2. 迁移数据（旧表无 position_id 列，旧数据统一以空字符串 '' 作为'全局'哨兵值）
+    await db.execute("""
+        INSERT INTO weakness_memory_new
+            (dimension, position_id, weakness_score, occurrence_count,
+             last_score, last_seen, expires_at, updated_at)
+        SELECT dimension, '', weakness_score, occurrence_count,
+               last_score, last_seen, expires_at, updated_at
+        FROM weakness_memory
+    """)
+    # 3. 替换
+    await db.execute("DROP TABLE weakness_memory")
+    await db.execute("ALTER TABLE weakness_memory_new RENAME TO weakness_memory")
+    logger.info("[db] weakness_memory 迁移完成")
 
 
 async def save_weakness_profile(session_id: str, dimension: str,
                                  avg_score: float, weight: float,
-                                 risk_points: list[str] = None) -> None:
-    """保存单次会话的维度薄弱点快照"""
+                                 risk_points: list[str] = None,
+                                 position_id: str | None = None) -> None:
+    """保存单次会话的维度薄弱点快照。v8.4: 支持 position_id 岗位隔离。"""
     db = await get_db()
     try:
         await db.execute(
             """INSERT INTO weakness_profile
-               (session_id, dimension, avg_score, weight, risk_points)
-               VALUES (?, ?, ?, ?, ?)""",
+               (session_id, dimension, avg_score, weight, risk_points, position_id)
+               VALUES (?, ?, ?, ?, ?, ?)""",
             (session_id, dimension, avg_score, weight,
-             json.dumps(risk_points or [], ensure_ascii=False)),
+             json.dumps(risk_points or [], ensure_ascii=False), position_id),
         )
         await db.commit()
     finally:
@@ -804,20 +892,24 @@ async def get_weakness_profile(session_id: str) -> list[dict]:
         await db.close()
 
 
-async def get_global_weakness_profile() -> list[dict]:
-    """获取全局薄弱点聚合：各维度历史平均分"""
+async def get_global_weakness_profile(position_id: str | None = None) -> list[dict]:
+    """获取薄弱点聚合：各维度历史平均分。v8.4: 支持按岗位过滤。"""
     db = await get_db()
     try:
-        async with db.execute("""
+        sql = """
             SELECT dimension,
                    ROUND(AVG(avg_score), 2) as historical_avg,
                    ROUND(AVG(weight), 2) as avg_weight,
                    COUNT(DISTINCT session_id) as session_count,
                    SUM(CASE WHEN COALESCE(resolved, 0) = 0 THEN 1 ELSE 0 END) as open_count
             FROM weakness_profile
-            GROUP BY dimension
-            ORDER BY historical_avg ASC
-        """) as cur:
+        """
+        params: list = []
+        if position_id:
+            sql += " WHERE position_id = ?"
+            params.append(position_id)
+        sql += " GROUP BY dimension ORDER BY historical_avg ASC"
+        async with db.execute(sql, params) as cur:
             rows = await cur.fetchall()
             return [dict(r) for r in rows]
     finally:
@@ -827,8 +919,9 @@ async def get_global_weakness_profile() -> list[dict]:
 # ===== v6.3: 长期记忆闭环（记忆图谱 / 复习建议 / 面试回注入共用同一查询口径）=====
 
 async def list_weakness_points(include_resolved: bool = False,
-                               limit: int | None = None) -> list[dict]:
-    """薄弱点明细列表（长期记忆的数据源）。
+                               limit: int | None = None,
+                               position_id: str | None = None) -> list[dict]:
+    """薄弱点明细列表（长期记忆的数据源）。v8.4: 支持按岗位过滤。
 
     include_resolved=False（默认）只返回未解决的——这是面试回注入、
     复习建议、图谱主视图的统一口径。
@@ -837,13 +930,19 @@ async def list_weakness_points(include_resolved: bool = False,
     与"优先复习最要命的短板"这一产品意图一致。
     """
     sql = """
-        SELECT id, session_id, dimension, avg_score, weight, risk_points,
+        SELECT id, session_id, dimension, avg_score, weight, risk_points, position_id,
                COALESCE(resolved, 0) as resolved, created_at, updated_at
         FROM weakness_profile
     """
     params: list = []
+    # 岗位过滤
+    if position_id:
+        sql += " WHERE position_id = ?"
+        params.append(position_id)
+    # 已解决过滤（注意：与岗位过滤是 AND 关系）
     if not include_resolved:
-        sql += " WHERE COALESCE(resolved, 0) = 0"
+        sql += " WHERE" if not params else " AND"
+        sql += " COALESCE(resolved, 0) = 0"
     sql += " ORDER BY avg_score ASC, weight DESC"
     if limit and limit > 0:
         sql += " LIMIT ?"
@@ -907,15 +1006,25 @@ async def delete_weakness(point_id: int) -> bool:
 #   weakness_memory  = 当前状态（每维度一行，带薄弱度/计数/过期时间）
 # 纯计算在 L2 的 weakness_memory.py，这里只做 CRUD（L1 不得反向依赖 L2）。
 
-async def get_weakness_memory(dimension: str) -> dict | None:
-    """读取单个维度的长期薄弱点状态（不存在返回 None）。"""
+def _normalize_position_id(position_id: str | None) -> str:
+    """v8.4: SQLite 的 UNIQUE 约束中 NULL != NULL，故用空字符串作为'全局'哨兵值。
+
+    这样 (dimension, '') 能正确匹配 ON CONFLICT，实现同一维度全局数据的 upsert 语义。
+    """
+    return position_id if position_id is not None else ''
+
+
+async def get_weakness_memory(dimension: str,
+                             position_id: str | None = None) -> dict | None:
+    """读取单个维度的长期薄弱点状态（不存在返回 None）。v8.4: 支持按岗位隔离。"""
     db = await get_db()
+    pid = _normalize_position_id(position_id)
     try:
         async with db.execute(
-            """SELECT dimension, weakness_score, occurrence_count, last_score,
+            """SELECT dimension, position_id, weakness_score, occurrence_count, last_score,
                       last_seen, expires_at, updated_at
-               FROM weakness_memory WHERE dimension = ?""",
-            (dimension,),
+               FROM weakness_memory WHERE dimension = ? AND position_id = ?""",
+            (dimension, pid),
         ) as cur:
             row = await cur.fetchone()
             return dict(row) if row else None
@@ -923,16 +1032,18 @@ async def get_weakness_memory(dimension: str) -> dict | None:
         await db.close()
 
 
-async def upsert_weakness_memory(dimension: str, state: dict) -> None:
-    """写入/更新单个维度的长期薄弱点状态（由 L2 算好状态后传入）。"""
+async def upsert_weakness_memory(dimension: str, state: dict,
+                                 position_id: str | None = None) -> None:
+    """写入/更新单个维度的长期薄弱点状态（由 L2 算好状态后传入）。v8.4: 支持岗位隔离。"""
     db = await get_db()
+    pid = _normalize_position_id(position_id)
     try:
         await db.execute(
             """INSERT INTO weakness_memory
-               (dimension, weakness_score, occurrence_count, last_score,
+               (dimension, position_id, weakness_score, occurrence_count, last_score,
                 last_seen, expires_at, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(dimension) DO UPDATE SET
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(dimension, position_id) DO UPDATE SET
                    weakness_score=excluded.weakness_score,
                    occurrence_count=excluded.occurrence_count,
                    last_score=excluded.last_score,
@@ -941,6 +1052,7 @@ async def upsert_weakness_memory(dimension: str, state: dict) -> None:
                    updated_at=excluded.updated_at""",
             (
                 dimension,
+                pid,
                 float(state.get("weakness_score") or 0.0),
                 int(state.get("occurrence_count") or 0),
                 float(state.get("last_score") or 0.0),
@@ -954,64 +1066,27 @@ async def upsert_weakness_memory(dimension: str, state: dict) -> None:
         await db.close()
 
 
-# ===== v7.0: Users（认证层，L1 数据访问；业务规则在 L2 的 auth.py）=====
-
-async def create_user(user_id: str, username: str, password_hash: str,
-                      role: str = "jobseeker",
-                      display_name: str | None = None) -> None:
-    """新建用户。username 唯一，冲突抛 IntegrityError（由调用方转成 409）。"""
-    db = await get_db()
-    try:
-        await db.execute(
-            """INSERT INTO users (id, username, password_hash, role, display_name)
-               VALUES (?, ?, ?, ?, ?)""",
-            (user_id, username, password_hash, role, display_name),
-        )
-        await db.commit()
-    finally:
-        await db.close()
-
-
-async def get_user_by_username(username: str) -> Optional[dict]:
-    db = await get_db()
-    try:
-        async with db.execute("SELECT * FROM users WHERE username = ?", (username,)) as cur:
-            row = await cur.fetchone()
-            return dict(row) if row else None
-    finally:
-        await db.close()
-
-
-async def get_user_by_id(user_id: str) -> Optional[dict]:
-    db = await get_db()
-    try:
-        async with db.execute("SELECT * FROM users WHERE id = ?", (user_id,)) as cur:
-            row = await cur.fetchone()
-            return dict(row) if row else None
-    finally:
-        await db.close()
-
-
 # ===== v7.0: 简历库 / 岗位库（可复用输入资产）=====
 #
-# 归属过滤沿用与 list_sessions 相同的约定：owner_id 非空时加 WHERE，为 None 时不过滤。
+# v8.3: 归属过滤（owner_id）随认证下线一并移除，见 CHARTER DC-10。
 # 列表类接口一律不返回大字段（raw_text / jd_text 可能上万字符），详情才返回 ——
 # 否则 N 条简历能把响应撑到几 MB。
 
-_RESUME_LIST_COLUMNS = "id, owner_id, title, filename, char_count, created_at, updated_at"
-_POSITION_LIST_COLUMNS = "id, owner_id, title, department, created_at, updated_at"
+_RESUME_LIST_COLUMNS = "id, title, filename, char_count, created_at, updated_at"
+_POSITION_LIST_COLUMNS = ("id, title, department, "
+                          "source, market_job_id, created_at, updated_at")
 
 
 async def save_resume(resume_id: str, title: str, raw_text: str,
-                      owner_id: str | None = None, filename: str | None = None,
+                      filename: str | None = None,
                       parsed_json: str | None = None) -> None:
     db = await get_db()
     try:
         await db.execute(
             """INSERT OR REPLACE INTO resumes
-               (id, owner_id, title, filename, raw_text, parsed_json, char_count, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
-            (resume_id, owner_id, title, filename, raw_text, parsed_json, len(raw_text or "")),
+               (id, title, filename, raw_text, parsed_json, char_count, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
+            (resume_id, title, filename, raw_text, parsed_json, len(raw_text or "")),
         )
         await db.commit()
     finally:
@@ -1029,20 +1104,13 @@ async def get_resume(resume_id: str) -> Optional[dict]:
         await db.close()
 
 
-async def list_resumes(owner_id: str | None = None, limit: int = 50) -> list[dict]:
+async def list_resumes(limit: int = 50) -> list[dict]:
     """列表（不含 raw_text）。"""
     db = await get_db()
     try:
-        if owner_id is None:
-            async with db.execute(
-                f"SELECT {_RESUME_LIST_COLUMNS} FROM resumes ORDER BY updated_at DESC LIMIT ?",
-                (limit,),
-            ) as cur:
-                return [dict(row) for row in await cur.fetchall()]
         async with db.execute(
-            f"SELECT {_RESUME_LIST_COLUMNS} FROM resumes WHERE owner_id = ? "
-            f"ORDER BY updated_at DESC LIMIT ?",
-            (owner_id, limit),
+            f"SELECT {_RESUME_LIST_COLUMNS} FROM resumes ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
         ) as cur:
             return [dict(row) for row in await cur.fetchall()]
     finally:
@@ -1082,17 +1150,37 @@ async def delete_resume(resume_id: str) -> None:
 
 
 async def save_position(position_id: str, title: str, jd_text: str,
-                        owner_id: str | None = None,
-                        department: str | None = None) -> None:
+                        department: str | None = None,
+                        source: str = "manual",
+                        market_job_id: int | None = None) -> None:
+    """保存岗位。source/market_job_id 仅市场导入时需要传入，手工新建走默认值。"""
     db = await get_db()
     try:
         await db.execute(
             """INSERT OR REPLACE INTO positions
-               (id, owner_id, title, department, jd_text, updated_at)
-               VALUES (?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
-            (position_id, owner_id, title, department, jd_text),
+               (id, title, department, jd_text, source, market_job_id, updated_at)
+               VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
+            (position_id, title, department, jd_text, source, market_job_id),
         )
         await db.commit()
+    finally:
+        await db.close()
+
+
+async def find_position_by_market_job(market_job_id: int) -> Optional[dict]:
+    """按市场岗位 id 查找已导入的岗位，用于幂等判断（同一市场岗位只导入一次）。
+
+    v8.3: 归属过滤消失后这条查询退化为单条件，不再需要处理
+    `owner_id = NULL` 恒不匹配的坑（那是"可空归属列"带来的，不是本查询固有）。
+    """
+    db = await get_db()
+    try:
+        async with db.execute(
+            "SELECT id, title FROM positions WHERE market_job_id = ?",
+            (market_job_id,),
+        ) as cur:
+            row = await cur.fetchone()
+        return dict(row) if row else None
     finally:
         await db.close()
 
@@ -1107,19 +1195,12 @@ async def get_position(position_id: str) -> Optional[dict]:
         await db.close()
 
 
-async def list_positions(owner_id: str | None = None, limit: int = 50) -> list[dict]:
+async def list_positions(limit: int = 50) -> list[dict]:
     db = await get_db()
     try:
-        if owner_id is None:
-            async with db.execute(
-                f"SELECT {_POSITION_LIST_COLUMNS} FROM positions ORDER BY updated_at DESC LIMIT ?",
-                (limit,),
-            ) as cur:
-                return [dict(row) for row in await cur.fetchall()]
         async with db.execute(
-            f"SELECT {_POSITION_LIST_COLUMNS} FROM positions WHERE owner_id = ? "
-            f"ORDER BY updated_at DESC LIMIT ?",
-            (owner_id, limit),
+            f"SELECT {_POSITION_LIST_COLUMNS} FROM positions ORDER BY updated_at DESC LIMIT ?",
+            (limit,),
         ) as cur:
             return [dict(row) for row in await cur.fetchall()]
     finally:
@@ -1157,45 +1238,40 @@ async def delete_position(position_id: str) -> None:
         await db.close()
 
 
-async def touch_user_login(user_id: str) -> None:
-    """更新最后登录时间（登录成功后调用；失败不影响登录流程）。"""
+async def delete_weakness_memory(dimension: str,
+                               position_id: str | None = None) -> None:
+    """删除单个维度的长期薄弱点状态（计数归零 / 已解决时调用）。v8.4: 支持岗位隔离。"""
     db = await get_db()
+    pid = _normalize_position_id(position_id)
     try:
         await db.execute(
-            "UPDATE users SET last_login_at = datetime('now', 'localtime') WHERE id = ?",
-            (user_id,),
+            "DELETE FROM weakness_memory WHERE dimension = ? AND position_id = ?",
+            (dimension, pid),
         )
         await db.commit()
     finally:
         await db.close()
 
 
-async def delete_weakness_memory(dimension: str) -> None:
-    """删除单个维度的长期薄弱点状态（计数归零 / 已解决时调用）。"""
-    db = await get_db()
-    try:
-        await db.execute(
-            "DELETE FROM weakness_memory WHERE dimension = ?", (dimension,)
-        )
-        await db.commit()
-    finally:
-        await db.close()
-
-
-async def list_active_weakness_memory(limit: int = 10) -> list[dict]:
-    """未过期的长期薄弱点，按薄弱度降序（最要命的排最前）。
+async def list_active_weakness_memory(limit: int = 10,
+                                     position_id: str | None = None) -> list[dict]:
+    """未过期的长期薄弱点，按薄弱度降序（最要命的排最前）。v8.4: 支持按岗位过滤。
 
     过期判定与写入端一致用 localtime（数据库里存的是 localtime 文本）。
     """
     sql = """
-        SELECT dimension, weakness_score, occurrence_count, last_score,
+        SELECT dimension, position_id, weakness_score, occurrence_count, last_score,
                last_seen, expires_at, updated_at
         FROM weakness_memory
         WHERE weakness_score > 0
           AND (expires_at IS NULL OR expires_at > datetime('now', 'localtime'))
-        ORDER BY weakness_score DESC, occurrence_count DESC
     """
     params: list = []
+    if position_id:
+        pid = _normalize_position_id(position_id)
+        sql += " AND position_id = ?"
+        params.append(pid)
+    sql += " ORDER BY weakness_score DESC, occurrence_count DESC"
     if limit and limit > 0:
         sql += " LIMIT ?"
         params.append(limit)

@@ -2,24 +2,21 @@
 import json
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Response
-from typing import Optional
+from fastapi import APIRouter, HTTPException, Response
 
-from ..config import config
 from ..db import get_report
 from ..interview_engine.report import generate_review_markdown
-from .. import auth
-from .deps import require_user, get_current_user, assert_session_owner
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
 @router.get("/api/reports/{session_id}")
-async def api_get_report(session_id: str,
-                         user: "auth.UserContext" = Depends(require_user)):
-    """报告含完整的简历事实与逐题诊断，是隐私敏感度最高的端点，必须校验归属。"""
-    await assert_session_owner(session_id, user)
+async def api_get_report(session_id: str):
+    """报告含完整的简历事实与逐题诊断。
+
+    v8.3: 归属校验随认证一起下线（单用户本地工具，无第二方需要防）。
+    """
     report = await get_report(session_id)
     if not report:
         raise HTTPException(404, "报告不存在")
@@ -101,7 +98,7 @@ _REPORT_HTML_TEMPLATE = """<!DOCTYPE html>
 <body>
 <div class="doc-brand">
   <span class="doc-seal">面</span>
-  <span class="doc-brand-name">AI 求职陪跑 · 复盘报告</span>
+  <span class="doc-brand-name">AI 求职领航 · 复盘报告</span>
   <span class="doc-brand-sub">INTERVIEW REVIEW</span>
 </div>
 <button class="print-btn no-print" onclick="window.print()">🖨 打印 / 另存为 PDF</button>
@@ -111,20 +108,12 @@ _REPORT_HTML_TEMPLATE = """<!DOCTYPE html>
 
 
 @router.get("/api/reports/{session_id}/export.html")
-async def export_report_html(session_id: str,
-                             token: Optional[str] = None,
-                             user: "auth.UserContext" = Depends(get_current_user)):
+async def export_report_html(session_id: str):
     """导出复盘报告 HTML（Markdown 渲染 + 打印样式，浏览器打印即得 PDF）
 
-    v7.3: 本端点经 `window.open` 顶层导航打开，浏览器不会携带 Authorization 头
-    （与 WebSocket 同类限制）——token 支持 query 参数兜底，安全权衡与
-    auth.resolve_ws_user 一致（v7.0 遗漏此路径，认证开启时本页必定 401）。
+    v8.3: 该端点此前因 `window.open` 顶层导航带不了 Authorization 头，
+    需要 query token 兜底；认证下线后这条兜底路径连同它的安全权衡一起删除。
     """
-    if config.AUTH_ENABLED and user.is_anonymous and token:
-        user = await auth.user_from_token(token) or user
-    if config.AUTH_ENABLED and user.is_anonymous:
-        raise HTTPException(status_code=401, detail="需要登录后操作")
-    await assert_session_owner(session_id, user)
     try:
         try:
             import markdown as _md

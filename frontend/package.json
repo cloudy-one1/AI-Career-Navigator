@@ -3,18 +3,24 @@
   "version": "4.0.0",
   "private": true,
   "type": "module",
-  "description": "AI 求职陪跑平台 — 前端（Vite + 原生 ES Module）",
+  "description": "AI 求职领航 — 前端（Vite + 原生 ES Module）",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
   },
   "dependencies": {
-    "chart.js": "^4.4.0"
+    "chart.js": "^4.4.0",
+    "chartjs-chart-geo": "^4.3.6"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.9.1",
+    "globals": "^17.11.0",
     "vite": "^5.4.0",
     "vitest": "^2.1.9"
   }

@@ -143,3 +143,81 @@ async def test_query_jobs_filters_and_paginates():
     assert len(page1["items"]) == 2
     assert len(page2["items"]) == 1
     assert page1["items"][0]["id"] != page2["items"][0]["id"]
+
+
+# ============================================================
+# get_stats() 城市归一化
+# ============================================================
+
+@pytest.mark.asyncio
+async def test_get_stats_cities_are_normalized():
+    """城市分布按归一化城市聚合：同一城市的不同行政区不得被拆成多行。
+
+    采集侧存的是完整地址（'上海-徐汇区'），直接 GROUP BY 会得到两个「上海」，
+    统计碎片化且地图散点匹配失败。归一化在读取侧完成，不动存量数据。
+    """
+    await store.upsert_jobs([
+        _job("c1", city="上海-徐汇区"),
+        _job("c2", city="上海-浦东新区"),
+        _job("c3", city="上海"),
+        _job("c4", city="北京-朝阳区"),
+    ])
+
+    stats = await store.get_stats()
+    cities = {c["city"]: c["cnt"] for c in stats["cities"]}
+
+    assert cities.get("上海") == 3, "同一城市的三种写法应合并计数"
+    assert cities.get("北京") == 1
+    assert "上海-徐汇区" not in cities, "带区名的原始地址不得出现在聚合结果中"
+
+
+@pytest.mark.asyncio
+async def test_get_stats_raw_city_value_preserved():
+    """归一化只在读取侧：库里的 city 列保持原始地址（数据保真、可回滚）"""
+    await store.upsert_jobs([_job("c1", city="上海-徐汇区")])
+    job = (await store.query_jobs())["items"][0]
+    assert job["city"] == "上海-徐汇区"
+
+
+# ============================================================
+# get_stats() 响应契约（前后端字段名对齐）
+# ============================================================
+
+class TestGetStatsContract:
+    """钉住 /api/market/stats 的响应契约。
+
+    前端 marketData.js::loadStats 曾误用 Gap 分析结果的扁平命名
+    （total_samples / avg_salary_k / top_cities），而本接口用的是另一套
+    （total / avg_salary{avg_k} / cities[{city,cnt}]），导致四张统计卡恒为「—」
+    且因引用了不存在的 DOM id 而抛错被静默吞掉。
+    这里钉住后端契约：字段改名必须同步改前端。
+    """
+
+    EXPECTED_KEYS = {
+        "total", "keyword", "cities", "salary_distribution",
+        "education_distribution", "avg_salary", "top_skills", "keywords",
+    }
+
+    @pytest.mark.asyncio
+    async def test_empty_db_keys(self):
+        assert set((await store.get_stats()).keys()) == self.EXPECTED_KEYS
+
+    @pytest.mark.asyncio
+    async def test_populated_db_shape(self):
+        await store.upsert_jobs([_job("d1", city="北京", education="本科")])
+        stats = await store.get_stats()
+
+        assert set(stats.keys()) == self.EXPECTED_KEYS
+        assert isinstance(stats["total"], int) and stats["total"] == 1
+
+        # avg_salary 是对象而非标量——前端须读 avg_salary.avg_k
+        assert isinstance(stats["avg_salary"], dict)
+        assert set(stats["avg_salary"]) == {"avg_k", "min_k", "max_k"}
+
+        # 分布类字段均为对象数组——前端须读 .city / .skill / .education / .bucket
+        assert stats["cities"] and set(stats["cities"][0]) == {"city", "cnt"}
+        assert stats["top_skills"] and set(stats["top_skills"][0]) == {"skill", "count"}
+        assert stats["education_distribution"]
+        assert set(stats["education_distribution"][0]) == {"education", "cnt"}
+        assert stats["salary_distribution"]
+        assert set(stats["salary_distribution"][0]) == {"bucket", "cnt"}

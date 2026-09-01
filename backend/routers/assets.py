@@ -5,7 +5,7 @@
 """
 import uuid
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, HTTPException, Request, UploadFile
 
 from ..config import config
 from ..db import (
@@ -17,23 +17,21 @@ from ..schemas import (
     ResumeCreateRequest, ResumeUpdateRequest,
     PositionCreateRequest, PositionUpdateRequest,
 )
-from .. import auth
 from . import state
-from .deps import require_user, assert_owner, ALLOWED_UPLOAD_EXT
+from .deps import ensure_found, ALLOWED_UPLOAD_EXT
 
 router = APIRouter()
 
 
 @router.get("/api/resumes")
-async def api_list_resumes(user: "auth.UserContext" = Depends(require_user)):
+async def api_list_resumes():
     """列表不含 raw_text（可能上万字符，N 条会把响应撑到几 MB）。"""
-    return {"resumes": await list_resumes(owner_id=auth.ownership_filter(user))}
+    return {"resumes": await list_resumes()}
 
 
 @router.post("/api/resumes/upload", status_code=201)
 @state.limiter.limit(config.RATE_LIMIT_UPLOAD)
 async def upload_resume_to_library(file: UploadFile = File(...),
-                                  user: "auth.UserContext" = Depends(require_user),
                                   request: Request = None):
     """上传简历并写入简历库。
 
@@ -57,19 +55,18 @@ async def upload_resume_to_library(file: UploadFile = File(...),
     resume_id = uuid.uuid4().hex[:12]
     title = file.filename.rsplit(".", 1)[0] or "未命名简历"
     await save_resume(resume_id, title=title, raw_text=raw_text,
-                      owner_id=user.id, filename=file.filename)
+                      filename=file.filename)
     row = await get_resume(resume_id)
     row.pop("raw_text", None)   # 回执不需要回传全文
     return {"resume": row}
 
 
 @router.post("/api/resumes", status_code=201)
-async def api_create_resume(req: ResumeCreateRequest,
-                            user: "auth.UserContext" = Depends(require_user)):
+async def api_create_resume(req: ResumeCreateRequest):
     resume_id = uuid.uuid4().hex[:12]
     await save_resume(
         resume_id, title=req.title.strip() or "未命名简历", raw_text=req.raw_text,
-        owner_id=user.id, filename=req.filename, parsed_json=req.parsed_json,
+        filename=req.filename, parsed_json=req.parsed_json,
     )
     row = await get_resume(resume_id)
     row.pop("raw_text", None)
@@ -77,16 +74,13 @@ async def api_create_resume(req: ResumeCreateRequest,
 
 
 @router.get("/api/resumes/{resume_id}")
-async def api_get_resume(resume_id: str,
-                         user: "auth.UserContext" = Depends(require_user)):
-    assert_owner(await get_resume(resume_id), user)
-    return {"resume": await get_resume(resume_id)}
+async def api_get_resume(resume_id: str):
+    return {"resume": ensure_found(await get_resume(resume_id), "简历")}
 
 
 @router.patch("/api/resumes/{resume_id}")
-async def api_update_resume(resume_id: str, req: ResumeUpdateRequest,
-                            user: "auth.UserContext" = Depends(require_user)):
-    assert_owner(await get_resume(resume_id), user)
+async def api_update_resume(resume_id: str, req: ResumeUpdateRequest):
+    ensure_found(await get_resume(resume_id), "简历")
     await update_resume(resume_id, title=req.title, parsed_json=req.parsed_json)
     row = await get_resume(resume_id)
     row.pop("raw_text", None)
@@ -94,48 +88,42 @@ async def api_update_resume(resume_id: str, req: ResumeUpdateRequest,
 
 
 @router.delete("/api/resumes/{resume_id}")
-async def api_delete_resume(resume_id: str,
-                            user: "auth.UserContext" = Depends(require_user)):
-    assert_owner(await get_resume(resume_id), user)
+async def api_delete_resume(resume_id: str):
+    ensure_found(await get_resume(resume_id), "简历")
     await delete_resume(resume_id)
     return {"ok": True}
 
 
 @router.get("/api/positions")
-async def api_list_positions(user: "auth.UserContext" = Depends(require_user)):
-    return {"positions": await list_positions(owner_id=auth.ownership_filter(user))}
+async def api_list_positions():
+    return {"positions": await list_positions()}
 
 
 @router.post("/api/positions", status_code=201)
-async def api_create_position(req: PositionCreateRequest,
-                              user: "auth.UserContext" = Depends(require_user)):
+async def api_create_position(req: PositionCreateRequest):
     position_id = uuid.uuid4().hex[:12]
     await save_position(
         position_id, title=req.title.strip() or "未命名岗位", jd_text=req.jd_text,
-        owner_id=user.id, department=req.department,
+        department=req.department,
     )
     return {"position": await get_position(position_id)}
 
 
 @router.get("/api/positions/{position_id}")
-async def api_get_position(position_id: str,
-                           user: "auth.UserContext" = Depends(require_user)):
-    assert_owner(await get_position(position_id), user)
-    return {"position": await get_position(position_id)}
+async def api_get_position(position_id: str):
+    return {"position": ensure_found(await get_position(position_id), "岗位")}
 
 
 @router.patch("/api/positions/{position_id}")
-async def api_update_position(position_id: str, req: PositionUpdateRequest,
-                              user: "auth.UserContext" = Depends(require_user)):
-    assert_owner(await get_position(position_id), user)
+async def api_update_position(position_id: str, req: PositionUpdateRequest):
+    ensure_found(await get_position(position_id), "岗位")
     await update_position(position_id, title=req.title, jd_text=req.jd_text,
                           department=req.department)
     return {"position": await get_position(position_id)}
 
 
 @router.delete("/api/positions/{position_id}")
-async def api_delete_position(position_id: str,
-                              user: "auth.UserContext" = Depends(require_user)):
-    assert_owner(await get_position(position_id), user)
+async def api_delete_position(position_id: str):
+    ensure_found(await get_position(position_id), "岗位")
     await delete_position(position_id)
     return {"ok": True}

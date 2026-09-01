@@ -2,27 +2,12 @@
 // api.js — HTTP API + WebSocket 封装
 // ===================================================
 
-// v7.3.1: 改为静态导入。auth.js 只依赖 utils.js、不依赖 api.js，不存在循环；
-// 原先的 await import('./auth.js') 在 auth.js 又被 app.js/report.js 静态引用后
-// 已无法拆出独立 chunk（Vite 每次构建都为此告警），动态化不再有收益。
-import { getToken } from './auth.js';
+// v8.3: 原先在这里静态 import getToken 并统一注入 Authorization 头，
+// 认证下线后（CHARTER DC-10）请求层不再需要感知身份，回归纯粹的 HTTP 封装。
 
 const BASE = '';
 
-/**
- * v7.0: 401 全局事件。
- *
- * 为什么用事件而不是在 request() 里直接跳转：api.js 是最底层模块，
- * 让它去 import 上层的 auth.js / app.js 会造成循环依赖。
- * 这里只"广播一个事实"（有请求被 401 了），由 app.js 决定怎么响应。
- */
-export const AUTH_UNAUTHORIZED_EVENT = 'auth:unauthorized';
-
-function notifyUnauthorized() {
-  window.dispatchEvent(new CustomEvent(AUTH_UNAUTHORIZED_EVENT));
-}
-
-/** 通用 HTTP 请求；opts.raw=true 时返回原始 Response（文件下载等非 JSON 场景），token 注入与 401 广播仍然生效 */
+/** 通用 HTTP 请求；opts.raw=true 时返回原始 Response（文件下载等非 JSON 场景） */
 export async function request(method, path, body, isForm, { raw = false } = {}) {
   const opts = { method };
   const headers = {};
@@ -32,16 +17,9 @@ export async function request(method, path, body, isForm, { raw = false } = {}) 
   } else if (body && isForm) {
     opts.body = body;
   }
-  // v7.0: 全站唯一出口，token 在这里统一注入，各调用点无需感知认证。
-  // getToken 内部已对 localStorage 不可用做兜底（返回空串），此处无需再包一层 try。
-  const token = getToken();
-  if (token) headers.Authorization = `Bearer ${token}`;
   if (Object.keys(headers).length) opts.headers = headers;
 
   const res = await fetch(BASE + path, opts);
-  if (res.status === 401) {
-    notifyUnauthorized();
-  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || err.detail || res.statusText);
@@ -62,6 +40,11 @@ export async function uploadResumeToLibrary(file) {
   const form = new FormData();
   form.append('file', file);
   return request('POST', '/api/resumes/upload', form, true);
+}
+
+/** 获取已入库简历详情（含 raw_text 全文） */
+export async function getResume(id) {
+  return request('GET', `/api/resumes/${id}`);
 }
 
 /** v7.0.2: 上传 JD 文件（PDF/TXT/DOCX），解析结果回填 JD 文本框（不入岗位库） */
@@ -107,7 +90,7 @@ export async function getReport(sessionId) {
   return request('GET', `/api/reports/${sessionId}`);
 }
 
-/** v2.7: 导出复盘 Markdown。v7.2: 曾绕过统一出口导致登录后 401，改走 request({raw}) 补上 token 注入 */
+/** v2.7: 导出复盘 Markdown。走 request({raw}) 统一出口，便于集中处理错误 */
 export async function exportReview(sessionId) {
   const res = await request('GET', `/api/reports/${sessionId}/review`, null, false, { raw: true });
   const blob = await res.blob();
@@ -124,22 +107,26 @@ export async function getWeaknessProfile(sessionId) {
   return request('GET', `/api/weakness-profile/${sessionId}`);
 }
 
-/** v2.7: 获取全局薄弱点聚合 */
-export async function getGlobalWeaknessProfile() {
-  return request('GET', `/api/weakness-profile`);
+/** v2.7: 获取全局薄弱点聚合。v8.4: 支持按岗位过滤 */
+export async function getGlobalWeaknessProfile(positionId = null) {
+  const qs = positionId ? `?position_id=${encodeURIComponent(positionId)}` : '';
+  return request('GET', `/api/weakness-profile${qs}`);
 }
 
 // ===== v6.3 长期记忆闭环 =====
 
-/** 薄弱点明细（记忆图谱数据源） */
-export async function getWeaknessPoints(includeResolved = false, limit = 200) {
-  return request('GET',
-    `/api/weakness-profile/points?include_resolved=${includeResolved}&limit=${limit}`);
+/** 薄弱点明细（记忆图谱数据源）。v8.4: 支持按岗位过滤 */
+export async function getWeaknessPoints(includeResolved = false, limit = 200, positionId = null) {
+  let qs = `?include_resolved=${includeResolved}&limit=${limit}`;
+  if (positionId) qs += `&position_id=${encodeURIComponent(positionId)}`;
+  return request('GET', `/api/weakness-profile/points${qs}`);
 }
 
-/** 复习建议（最该优先补的未解决薄弱点） */
-export async function getWeaknessSuggestions(limit = 5) {
-  return request('GET', `/api/weakness-profile/suggestions?limit=${limit}`);
+/** 复习建议（最该优先补的未解决薄弱点）。v8.4: 支持按岗位过滤 */
+export async function getWeaknessSuggestions(limit = 5, positionId = null) {
+  let qs = `?limit=${limit}`;
+  if (positionId) qs += `&position_id=${encodeURIComponent(positionId)}`;
+  return request('GET', `/api/weakness-profile/suggestions${qs}`);
 }
 
 /** 标记已解决 / 恢复未解决 */
@@ -260,6 +247,14 @@ export async function toggleMarketInterest(jobId) {
   return request('POST', `/api/market/jobs/${jobId}/interest`);
 }
 
+/**
+ * [v8.2] 把市场岗位导入岗位库，之后面试页可直接选用这份 JD。
+ * 幂等：重复导入不产生第二条，返回 { position, created }，created=false 表示此前已导入。
+ */
+export async function addMarketJobToPosition(jobId) {
+  return request('POST', `/api/market/jobs/${jobId}/to-position`);
+}
+
 /** 岗位列表（过滤 + 分页） */
 export async function getMarketJobs(filters = {}, page = 0, limit = 50) {
   const params = new URLSearchParams();
@@ -271,11 +266,40 @@ export async function getMarketJobs(filters = {}, page = 0, limit = 50) {
   return request('GET', `/api/market/jobs?${params.toString()}`);
 }
 
+/** v7.0: 岗位库列表（供长期记忆页岗位选择器使用） */
+export async function listPositions(limit = 100) {
+  return request('GET', `/api/positions?limit=${limit}`);
+}
+
 /** 市场统计概览 */
 export async function getMarketStats(keyword = '') {
   const params = new URLSearchParams();
   if (keyword) params.append('keyword', keyword);
   return request('GET', `/api/market/stats?${params.toString()}`);
+}
+
+/**
+ * [v8.2] 全部分析图表的聚合数据（一次性取回，避免每张卡片各发一次请求）。
+ * 空库返回 total=0 + 各维度空骨架，调用方据此渲染空态。
+ */
+export async function getMarketCharts(keyword = '') {
+  const params = new URLSearchParams();
+  if (keyword) params.append('keyword', keyword);
+  return request('GET', `/api/market/charts?${params.toString()}`);
+}
+
+/**
+ * [v8.2] 对指定图表 section 生成 AI 解读（服务端 TTL 缓存 5 分钟）。
+ *
+ * 后端对「无数据 / 无 Key / LLM 异常」一律返回 { error } 而非 5xx，
+ * 因此这里不做异常转换，由调用方在卡片内降级展示。
+ */
+export async function getMarketInsight({ section, keyword = '', fresh = false }) {
+  const form = new URLSearchParams();
+  form.append('section', section);
+  if (keyword) form.append('keyword', keyword);
+  form.append('fresh', String(fresh));
+  return request('POST', '/api/market/insight', form, true);
 }
 
 /**
@@ -322,6 +346,7 @@ export async function callCareerPlan({ resumeText, targetRole, jdText = '', time
  * 创建 WebSocket 面试连接（含自动重连）
  * @param {string} sessionId
  * @param {object} handlers - { onMessage, onOpen, onClose, onError, onReconnect, onReconnectFailed }
+ *   （v8.3: 已移除 onUnauthorized，服务端不再返回 4001）
  * @returns {{ send, close }}
  */
 export function createInterviewWS(sessionId, handlers) {
@@ -338,17 +363,9 @@ export function createInterviewWS(sessionId, handlers) {
   const _maxDelay = 30000;  // 30s
 
   function _connect() {
-    // v7.0: token 走 query 参数 —— 浏览器 WebSocket API 不支持自定义请求头。
-    // 每次重连都重新读取，保证"登录后重连"能带上最新 token（登录发生在会话创建之后也无害）。
-    const token = (() => {
-      try {
-        return localStorage.getItem('aims_token') || '';
-      } catch {
-        return '';
-      }
-    })();
-    const url = token ? `${baseUrl}?token=${encodeURIComponent(token)}` : baseUrl;
-    ws = new WebSocket(url);
+    // v8.3: 连接不再带 token query 参数（此前是因 WS API 不支持自定义请求头
+    // 而做的兜底，随认证一并下线，见 CHARTER DC-10）。
+    ws = new WebSocket(baseUrl);
 
     ws.onopen = () => {
       console.log('[WS] 已连接');
@@ -394,15 +411,8 @@ export function createInterviewWS(sessionId, handlers) {
         _intentionalClose = true;
         console.error('[WS] 会话已失效，停止重连');
       }
-      // v7.0: 4001 = 未授权（token 无效 / 会话不属于当前用户）。
-      // 这是"重试必然再次被拒"的错误，继续指数退避重连只会刷屏日志并耗尽重试次数，
-      // 因此与 session_not_found 同等处理：停止重连，交回界面层提示用户。
-      if (!_sessionExpired && e.code === 4001) {
-        _sessionExpired = true;
-        _intentionalClose = true;
-        console.error('[WS] 连接未授权（4001），停止重连');
-        if (handlers.onUnauthorized) handlers.onUnauthorized();
-      }
+      // v8.3: 原先还有 4001（未授权）分支——那是 WS 握手鉴权的产物，
+      // 认证下线后服务端不再发此码，分支连同 handlers.onUnauthorized 一并删除。
       if (_sessionExpired || _intentionalClose) {
         if (handlers.onClose) handlers.onClose();
         return;

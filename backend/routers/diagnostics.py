@@ -49,10 +49,10 @@ async def get_feedback(session_id: str):
 
 
 @router.get("/api/weakness-profile")
-async def global_weakness_profile():
-    """获取全局薄弱点聚合（各维度历史平均分）"""
+async def global_weakness_profile(position_id: str | None = None):
+    """获取薄弱点聚合（各维度历史平均分）。v8.4: 支持按岗位过滤。"""
     try:
-        profile = await get_global_weakness_profile()
+        profile = await get_global_weakness_profile(position_id=position_id)
         return {"status": "ok", "profile": profile}
     except Exception as e:
         logger.error(f"获取全局薄弱点失败: {e}")
@@ -61,15 +61,17 @@ async def global_weakness_profile():
 
 @router.get("/api/weakness-profile/points")
 async def weakness_points(include_resolved: bool = False,
-                          limit: int = Query(200, ge=1, le=1000)):
-    """薄弱点明细（记忆图谱数据源）。
+                          limit: int = Query(200, ge=1, le=1000),
+                          position_id: str | None = None):
+    """薄弱点明细（记忆图谱数据源）。v8.4: 支持按岗位过滤。
 
     include_resolved 默认 False：主视图只呈现未解决的短板；
     limit 兜住上限，避免历史数据多了之后一次性拉爆前端 DOM。
     """
     try:
         points = await list_weakness_points(include_resolved=include_resolved,
-                                            limit=limit)
+                                            limit=limit,
+                                            position_id=position_id)
         return {"status": "ok", "count": len(points), "points": points}
     except Exception as e:
         logger.error(f"获取薄弱点明细失败: {e}")
@@ -77,15 +79,18 @@ async def weakness_points(include_resolved: bool = False,
 
 
 @router.get("/api/weakness-profile/suggestions")
-async def weakness_suggestions(limit: int = Query(5, ge=1, le=20)):
-    """复习建议：最该优先补的未解决薄弱点（与面试回注入同一排序口径）。
+async def weakness_suggestions(limit: int = Query(5, ge=1, le=20),
+                               position_id: str | None = None):
+    """复习建议：最该优先补的未解决薄弱点（与面试回注入同一排序口径）。v8.4: 支持按岗位过滤。
 
     v6.5: 与回注入同口径——优先 EMA 薄弱度降序，新表为空时回退 v6.3 的均分升序。
     """
     try:
-        suggestions = await weakness_memory.active_memory_points(limit=limit)
+        suggestions = await weakness_memory.active_memory_points(limit=limit,
+                                                                 position_id=position_id)
         if not suggestions:
-            suggestions = await list_unresolved_weaknesses(limit=limit)
+            suggestions = await list_unresolved_weaknesses(limit=limit,
+                                                            position_id=position_id)
         return {"status": "ok", "count": len(suggestions), "suggestions": suggestions}
     except Exception as e:
         logger.error(f"获取复习建议失败: {e}")

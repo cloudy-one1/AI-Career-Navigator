@@ -3,15 +3,20 @@
 // 还原 job-crawler 采集页 + 岗位列表页设计（纸墨印章风格）。
 // v5.0：主题（米色 / 深色）与语义色统一由全局 themeToggle.js 控制，
 //       本模块不再维护自己的主题状态；本地 --mkt-* Token 已指向全局 Token。
-// 视图：实时采集 / 岗位库 / 独立岗位详情（可跳转 51job 原文）
+// 视图：实时采集 / 岗位列表 / 数据分析 / 独立岗位详情（可跳转 51job 原文）
+//       注意：本模块的「岗位列表」是**市场采集到的公共缓存**（可再采集），
+//       与侧栏「岗位库」（用户私有资产）是两个物理分离的库，不可混称。
 // 分析：单选 Gap 分析（/api/gap-analysis）、多选跨岗位对比（/api/cross-job-compare）
+// [v8.2] 新增「数据分析」视图：图表卡片 + 每张卡自带 AI 解读（/api/market/insight）
 // ===================================================
 
 import { $, el, toast } from './utils.js';
+import { cityCoord } from './cityCoords.js';
 import {
   startMarketCrawl, getCrawlStatus, getCityMap, getMarketJob,
   getMarketJobs, getMarketStats, runGapAnalysis, crossJobCompare,
-  toggleMarketInterest,
+  toggleMarketInterest, getMarketCharts, getMarketInsight,
+  addMarketJobToPosition, uploadResumeToLibrary, getResume,
 } from './api.js';
 
 const PAGE_SIZE = 20;
@@ -31,20 +36,44 @@ const state = {
   crawlTaskId: null,
   crawling: false,
   lastKeyword: '',     // 最近一次采集的关键词（用于结果摘要）
+  // ── [v8.2] 数据分析视图 ──
+  charts: null,        // /api/market/charts 的聚合数据
+  chartInstances: {},  // section → Chart 实例（主题切换/重绘时销毁）
+  insights: {},        // section → 解读文本（前端缓存，避免切视图重复请求）
 };
 
-/** 初始化市场数据 Tab（幂等：已渲染则跳过） */
+/**
+ * 初始化市场数据 Tab。
+ * 首次：构建 DOM 并拉取数据。之后每次切回本 Tab 时（panel.dataset.ready 已置位），
+ * 不再重建 DOM（保留筛选/滚动/子视图状态），但**强制从服务端刷新列表与统计**——
+ * 「加入岗位库」等操作已持久化入库，切回时必须以服务端为准，否则会看到旧的内存态、
+ * 表现为「刚加入的岗位切个界面又变回未加入」。
+ */
 export function initMarketData() {
   const panel = $('#market-data-panel');
-  if (!panel || panel.dataset.ready) return;
+  if (!panel) return;
+  if (panel.dataset.ready) {
+    refreshJobsAndStats();
+    return;
+  }
   panel.dataset.ready = '1';
 
   panel.append(
     buildTopbar(),
     buildCollectView(),
     buildJobsView(),
+    buildChartsView(),
     buildDetailView(),
   );
+
+  // [v8.2] 主题切换后图表配色需重绘（Chart.js 的 canvas 不响应 CSS 变量变化）
+  window.addEventListener('theme:changed', () => {
+    if (state.view === 'charts' && state.charts) drawAllCharts();
+  });
+
+  // 数据分析视图：滚动时更新右侧索引导航高亮
+  window.addEventListener('scroll', updateTocActive, { passive: true });
+  window.addEventListener('resize', updateTocActive, { passive: true });
 
   // 城市映射 + 岗位列表/统计 并行加载
   getCityMap().then(map => {
@@ -68,7 +97,8 @@ function buildTopbar() {
     ),
     el('nav', { className: 'mkt-topnav' },
       el('button', { className: 'mkt-topnav-btn active', id: 'mkt-nav-collect', textContent: '实时采集', onClick: () => switchView('collect') }),
-      el('button', { className: 'mkt-topnav-btn', id: 'mkt-nav-jobs', textContent: '岗位库', onClick: () => switchView('jobs') }),
+      el('button', { className: 'mkt-topnav-btn', id: 'mkt-nav-jobs', textContent: '岗位列表', onClick: () => switchView('jobs') }),
+      el('button', { className: 'mkt-topnav-btn', id: 'mkt-nav-charts', textContent: '数据分析', onClick: () => switchView('charts') }),
     ),
   );
 }
@@ -77,16 +107,22 @@ function buildTopbar() {
 
 function switchView(view) {
   state.view = view;
-  ['collect', 'jobs', 'detail'].forEach(v => {
+  ['collect', 'jobs', 'charts', 'detail'].forEach(v => {
     $(`#mkt-${v}-view`)?.classList.toggle('active', v === view);
   });
-  // 顶栏高亮
-  ['collect', 'jobs'].forEach(v => {
-    $(`#mkt-nav-${v}`)?.classList.toggle('active', v === view || (view === 'detail' && v === 'jobs'));
+  // 顶栏高亮（详情视图归属岗位列表分支）
+  ['collect', 'jobs', 'charts'].forEach(v => {
+    const active = v === view || (view === 'detail' && v === 'jobs');
+    $(`#mkt-nav-${v}`)?.classList.toggle('active', active);
   });
   if (view === 'jobs') {
     state.page = 0;
     refreshJobsAndStats();
+  }
+  if (view === 'charts') {
+    loadCharts();
+    // 切到数据分析视图后，立即计算一次索引高亮
+    setTimeout(updateTocActive, 0);
   }
 }
 
@@ -419,7 +455,7 @@ function hideError() {
   box.classList.remove('visible');
 }
 
-/* ─────────────────── 岗位库视图 ─────────────────── */
+/* ─────────────────── 岗位列表视图 ─────────────────── */
 
 function buildJobsView() {
   const statsRow = el('div', { className: 'mkt-stats-row', id: 'mkt-stats-row' },
@@ -432,7 +468,7 @@ function buildJobsView() {
       el('div', { className: 'mkt-stat-value', id: 'mkt-stat-salary', textContent: '—' }),
     ),
     el('div', { className: 'mkt-stat-card' },
-      el('div', { className: 'mkt-stat-label', textContent: '热门技能 TOP5' }),
+      el('div', { className: 'mkt-stat-label', textContent: '热门关键词' }),
       el('div', { className: 'mkt-skills', id: 'mkt-stat-skills' }),
     ),
     el('div', { className: 'mkt-stat-card' },
@@ -441,22 +477,23 @@ function buildJobsView() {
     ),
   );
 
-  // 筛选表单（对齐 data.html：岗位名称 + 城市 + 🔍搜索）
+  // 筛选表单：主搜索行（高频）+ 高级筛选行（低频，紧凑排列）
   const filters = el('form', { className: 'mkt-filters', onSubmit: e => e.preventDefault() },
-    el('div', { style: 'display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end;' },
-      el('div', { className: 'form-group', style: 'flex:1; min-width:200px; margin-bottom:0;' },
+    // ── 主搜索：岗位名称 + 城市 + 搜索按钮 ──
+    el('div', { className: 'mkt-filter-row' },
+      el('div', { className: 'mkt-filter-group mkt-filter-grow' },
         el('label', { textContent: '岗位名称' }),
         el('input', { type: 'text', className: 'form-control', id: 'mkt-f-keyword', placeholder: '如: python开发工程师', onChange: () => { state.filters.keyword = $('#mkt-f-keyword').value.trim(); reloadList(0); } }),
       ),
-      el('div', { className: 'form-group', style: 'flex:1; min-width:180px; margin-bottom:0;' },
+      el('div', { className: 'mkt-filter-group mkt-filter-mid' },
         el('label', { textContent: '城市' }),
         el('input', { type: 'text', className: 'form-control', id: 'mkt-f-city', placeholder: '如: 北京,上海', onChange: () => { state.filters.city = $('#mkt-f-city').value.trim(); reloadList(0); } }),
       ),
-      el('button', { className: 'btn btn-info', type: 'button', style: 'padding:12px 32px;', textContent: '🔍 搜索', onClick: () => reloadList(0) }),
+      el('button', { className: 'btn btn-primary', type: 'button', textContent: '🔍 搜索', onClick: () => reloadList(0) }),
     ),
-    // 增强：学历 / 薪资区间（本项目扩展，job-crawler 无）
-    el('div', { style: 'display:flex; gap:12px; flex-wrap:wrap; align-items:flex-end; margin-top:12px;' },
-      el('div', { className: 'form-group', style: 'flex:1; min-width:140px; margin-bottom:0;' },
+    // ── 高级筛选：学历 + 薪资区间 + 重置 ──
+    el('div', { className: 'mkt-filter-row mkt-filter-advanced' },
+      el('div', { className: 'mkt-filter-group mkt-filter-sm' },
         el('label', { textContent: '学历' }),
         el('select', { className: 'form-control', id: 'mkt-f-edu', onChange: () => { state.filters.education = $('#mkt-f-edu').value; reloadList(0); } },
           el('option', { value: '', textContent: '不限' }),
@@ -466,15 +503,16 @@ function buildJobsView() {
           el('option', { value: '博士', textContent: '博士' }),
         ),
       ),
-      el('div', { className: 'form-group', style: 'flex:1; min-width:140px; margin-bottom:0;' },
-        el('label', { textContent: '最低薪资(K)' }),
-        el('input', { id: 'mkt-f-smin', className: 'form-control', type: 'number', min: '0', placeholder: '≥ 0', onChange: () => { state.filters.salaryMin = $('#mkt-f-smin').value; reloadList(0); } }),
+      // 薪资区间：最低 ~ 最高 合并为一个视觉组
+      el('div', { className: 'mkt-filter-group mkt-filter-salary' },
+        el('label', { textContent: '月薪 (K)' }),
+        el('div', { className: 'mkt-salary-range' },
+          el('input', { id: 'mkt-f-smin', className: 'form-control mkt-salary-input', type: 'number', min: '0', placeholder: '最低', onChange: () => { state.filters.salaryMin = $('#mkt-f-smin').value; reloadList(0); } }),
+          el('span', { className: 'mkt-salary-sep', textContent: '~' }),
+          el('input', { id: 'mkt-f-smax', className: 'form-control mkt-salary-input', type: 'number', min: '0', placeholder: '最高', onChange: () => { state.filters.salaryMax = $('#mkt-f-smax').value; reloadList(0); } }),
+        ),
       ),
-      el('div', { className: 'form-group', style: 'flex:1; min-width:140px; margin-bottom:0;' },
-        el('label', { textContent: '最高薪资(K)' }),
-        el('input', { id: 'mkt-f-smax', className: 'form-control', type: 'number', min: '0', placeholder: '≤ …', onChange: () => { state.filters.salaryMax = $('#mkt-f-smax').value; reloadList(0); } }),
-      ),
-      el('button', { className: 'btn btn-default', type: 'button', textContent: '重置筛选', onClick: resetFilters }),
+      el('button', { className: 'btn btn-default', type: 'button', textContent: '重置', onClick: resetFilters }),
     ),
   );
 
@@ -490,7 +528,7 @@ function buildJobsView() {
           el('th', { textContent: '最低薪资(千元)' }),
           el('th', { textContent: '最高薪资(千元)' }),
           el('th', { textContent: '发布时间' }),
-          el('th', { textContent: '感兴趣' }),
+          el('th', { textContent: '加入岗位库' }),
         ),
       ),
       el('tbody', { id: 'mkt-tbody' },
@@ -537,24 +575,36 @@ async function refreshJobsAndStats() {
   if (state.view === 'jobs') reloadList(state.page);
 }
 
+/**
+ * 统计卡刷新。
+ *
+ * 字段名严格对齐后端 `store.get_stats()` 契约：
+ *   total(int) / avg_salary{avg_k,min_k,max_k} / cities[{city,cnt}] / top_skills[{skill,count}]
+ * 注意：不要沿用 `market_reference` 的那套扁平命名（total_samples/avg_salary_k/top_cities），
+ * 那是 Gap 分析结果的字段，与 /api/market/stats 不同源——此前误用导致 4 张卡恒为「—」。
+ */
 async function loadStats() {
   try {
     const s = await getMarketStats(state.filters.keyword || undefined);
-    $('#mkt-stat-total').textContent = s.total_samples ?? '—';
-    const avg = s.avg_salary_k;
+    $('#mkt-stat-total').textContent = s.total ?? '—';
+    const avg = s.avg_salary?.avg_k;
     $('#mkt-stat-salary').innerHTML = avg != null
       ? `${Number(avg).toFixed(1)}<small> K/月</small>` : '<small>—</small>';
-    $('#mkt-total-badge').textContent = s.total_samples ?? '—';
+
     const skills = $('#mkt-stat-skills');
     skills.innerHTML = '';
-    (s.top_skills || []).slice(0, 5).forEach(t => skills.appendChild(el('span', { className: 'mkt-skill-tag', textContent: t })));
-    if (!(s.top_skills || []).length) skills.textContent = '—';
+    const skillList = s.top_skills || [];
+    skillList.slice(0, 5).forEach(t => skills.appendChild(el('span', { className: 'mkt-skill-tag', textContent: t.skill })));
+    if (!skillList.length) skills.textContent = '—';
+
     const cities = $('#mkt-stat-cities');
     cities.innerHTML = '';
-    (s.top_cities || []).slice(0, 5).forEach(c => cities.appendChild(el('span', { className: 'mkt-skill-tag', textContent: c })));
-    if (!(s.top_cities || []).length) cities.textContent = '—';
+    const cityList = s.cities || [];
+    cityList.slice(0, 5).forEach(c => cities.appendChild(el('span', { className: 'mkt-skill-tag', textContent: c.city })));
+    if (!cityList.length) cities.textContent = '—';
   } catch (e) {
-    // 统计失败不阻塞列表
+    // 统计失败不阻塞列表；但不再静默吞掉，否则这类契约错位会再次无声退化
+    console.warn('[market] 统计加载失败:', e);
   }
 }
 
@@ -596,7 +646,7 @@ function renderTable() {
     },
       // 增强：行首多选框（跨岗位对比），阻止冒泡避免误触跳转
       el('td', { className: 'pick-col', onClick: e => e.stopPropagation() },
-        el('input', { type: 'checkbox', checked: selected, onChange: e => toggleSelect(job, e.target.checked) }),
+        el('input', { type: 'checkbox', className: 'mkt-checkbox', checked: selected, onChange: e => toggleSelect(job, e.target.checked) }),
       ),
       el('td', {},
         el('a', { className: 'job-link', textContent: job.title || '—', onClick: e => { e.stopPropagation(); openDetail(job.id); } }),
@@ -609,9 +659,10 @@ function renderTable() {
       el('td', { onClick: e => e.stopPropagation() },
         el('button', {
           type: 'button',
-          className: `interest-btn${interested ? ' interested' : ''}`,
-          onClick: e => toggleInterest(job.id, e.currentTarget),
-        }, el('span', { className: 'interest-label', textContent: interested ? '已收藏' : '感兴趣' })),
+          className: `mkt-add-btn${job.in_library ? ' added' : ''}`,
+          disabled: !!job.in_library,
+          onClick: e => addToPositionLibrary(job, e.currentTarget),
+        }, job.in_library ? '✓ 已在岗位库' : '＋ 加入'),
       ),
     );
     tbody.appendChild(tr);
@@ -663,6 +714,33 @@ async function toggleInterest(id, btn) {
   }
 }
 
+/**
+ * [v8.2] 把当前市场岗位导入岗位库，之后在面试页可直接选用这份 JD。
+ *
+ * 为什么是"导入"而非让岗位库直接读取市场收藏：两个库物理分离（市场是
+ * 可再采集的公共缓存，岗位库是用户私有资产），跨库无法 JOIN；且岗位库
+ * 要求 JD 文本始终可用，不能依赖市场库那条记录还在。导入是幂等的——
+ * 同一岗位重复点击不会产生第二条，后端会返回 created=false。
+ */
+async function addToPositionLibrary(job, btn) {
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '导入中…';
+  try {
+    const res = await addMarketJobToPosition(job.id);
+    btn.textContent = '✓ 已在岗位库';
+    btn.classList.add('added');
+    // 同步内存态，避免翻页后状态回退
+    if (job) job.in_library = true;
+    toast(res.created ? '已加入岗位库，面试时可直接选用' : '该岗位此前已在岗位库中',
+          res.created ? 'success' : 'info');
+  } catch (e) {
+    btn.disabled = false;
+    btn.textContent = original;
+    toast(e.message || '加入岗位库失败', 'error');
+  }
+}
+
 /* ─────────────────── 多选 / 跨岗位对比 ─────────────────── */
 
 function toggleSelect(job, checked) {
@@ -701,17 +779,50 @@ async function doCrossCompare() {
   if (ids.length > 5) { toast('最多对比 5 个岗位', 'warning'); return; }
 
   const box = $('#mkt-compare-result');
+  if (!box) { console.error('[market] #mkt-compare-result not found'); toast('对比区域加载异常，请刷新页面', 'error'); return; }
   box.innerHTML = '';
   box.appendChild(el('div', { className: 'mkt-card mkt-card-pad' },
     el('div', { className: 'mkt-card-title', textContent: `跨岗位对比（${ids.length} 个岗位）` }),
     el('label', { className: 'mkt-info-label', textContent: '简历内容', style: 'margin-bottom:4px;display:block;' }),
-    el('textarea', { id: 'mkt-compare-resume', className: 'mkt-resume-ta', placeholder: '粘贴简历内容，用于与所选岗位逐一对比…' }),
+    el('div', { style: 'display:flex; gap:8px; align-items:center; margin-bottom:10px;' },
+      el('textarea', { id: 'mkt-compare-resume', className: 'mkt-resume-ta', placeholder: '粘贴简历内容，用于与所选岗位逐一对比…', style: 'flex:1;' }),
+    ),
     el('div', { className: 'mkt-analyze-actions' },
       el('button', { className: 'mkt-btn mkt-btn-ghost mkt-btn-sm', textContent: '📋 复用面试 Tab 简历', onClick: () => copyResumeTo('#mkt-compare-resume') }),
+      el('button', { className: 'mkt-btn mkt-btn-ghost mkt-btn-sm', textContent: '📁 上传简历文件', onClick: () => $('#mkt-compare-upload')?.click() }),
+      el('input', { type: 'file', id: 'mkt-compare-upload', accept: '.pdf,.docx,.txt', style: 'display:none;', onChange: e => handleCompareResumeUpload(e.target) }),
       el('button', { className: 'mkt-btn mkt-btn-primary mkt-btn-sm', textContent: '开始对比', onClick: () => runCompare(ids) }),
       el('button', { className: 'mkt-btn mkt-btn-ghost mkt-btn-sm', textContent: '取消', onClick: () => { box.innerHTML = ''; } }),
     ),
   ));
+  // 滚动到对比区域，确保用户能看到表单
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+/** 跨岗位对比：上传本地简历文件并解析填充到 textarea */
+async function handleCompareResumeUpload(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  input.value = '';   // 允许重复选同一文件
+  const SOFT_LIMIT = 10 * 1024 * 1024;
+  if (file.size > SOFT_LIMIT) {
+    toast(`文件较大（${(file.size / 1024 / 1024).toFixed(1)}MB），上传可能失败`, 'warning');
+  }
+  toast('正在解析简历…', 'info');
+  try {
+    const result = await uploadResumeToLibrary(file);
+    const id = result?.resume?.id;
+    if (!id) throw new Error('入库响应缺少 id');
+    // 入库响应剔除了 raw_text（回执不回传全文），需再拉详情取全文
+    const detail = await getResume(id);
+    const text = detail?.resume?.raw_text || '';
+    if (!text.trim()) throw new Error('未能从文件中提取到简历文本');
+    const ta = $('#mkt-compare-resume');
+    if (ta) ta.value = text;
+    toast(`简历已解析（${text.length} 字）`, 'success');
+  } catch (err) {
+    toast(err.message || '简历上传失败', 'error');
+  }
 }
 
 async function runCompare(ids) {
@@ -798,8 +909,6 @@ function renderDetail(body, job, jdText) {
   body.innerHTML = '';
   const no = job.id;
 
-  const fav = isInterested(job);
-
   // 主卡片（对齐 job_detail.html：左侧青绿描边）
   const card = el('div', { className: 'card', style: 'border-left: 4px solid var(--teal);' },
     // 标题行：职位 / 公司·地区 + 操作按钮组
@@ -817,9 +926,12 @@ function renderDetail(body, job, jdText) {
       el('div', { className: 'mkt-detail-actions', style: 'display:flex; gap:8px; flex-wrap:wrap; align-items:center;' },
         el('button', { className: 'btn btn-default', style: 'font-size:14px;', textContent: '← 返回列表', onClick: () => switchView('jobs') }),
         el('button', {
-          className: `interest-btn${fav ? ' interested' : ''}`,
-          onClick: e => toggleInterest(job.id, e.currentTarget),
-        }, el('span', { className: 'interest-label', textContent: fav ? '已收藏' : '感兴趣' })),
+          className: `btn btn-primary${job.in_library ? ' added' : ''}`,
+          style: 'font-size:14px;',
+          disabled: !!job.in_library,
+          textContent: job.in_library ? '✓ 已在岗位库' : '＋ 加入岗位库',
+          onClick: e => addToPositionLibrary(job, e.currentTarget),
+        }),
         job.url ? el('a', {
           className: 'btn btn-info btn-detail', href: job.url, target: '_blank',
           rel: 'noopener noreferrer', style: 'text-decoration:none; font-size:14px;',
@@ -989,4 +1101,457 @@ function renderGapResult(box, gap) {
   }
 
   box.append(summary, dims, sug, marketRef);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   [v8.2] 数据分析视图：图表卡片 + 每张卡自带 AI 解读
+   ═══════════════════════════════════════════════════════════════ */
+
+/**
+ * 图表卡片注册表。
+ *
+ * 新增一张卡片 = 在此加一项即可：解读按钮、三态交互、缓存角标、失败降级
+ * 全部自动继承，不必改其它任何代码。
+ * `section` 必须与后端 insight.SECTIONS 的 key 一一对应。
+ *
+ * kind: text（无图，仅摘要+解读）| bar | hbar | doughnut | dual（柱+线双轴）| geo（中国地图）
+ */
+const CHART_CARDS = [
+  { section: 'overview', title: '市场总览', hint: '全部样本的整体画像', kind: 'text' },
+  { section: 'salary', title: '薪资分布', hint: '月薪分档（千元/月）', kind: 'bar' },
+  { section: 'city', title: '城市分布', hint: '岗位数量 Top10', kind: 'hbar' },
+  { section: 'skill', title: '热门词汇', hint: '岗位标签词频 Top20', kind: 'hbar' },
+  { section: 'education', title: '学历分布', hint: '最低学历要求占比', kind: 'doughnut' },
+  { section: 'experience', title: '经验分布', hint: '年资要求分布', kind: 'bar' },
+  { section: 'cross_exp', title: '薪资 × 经验', hint: '柱＝岗位数　线＝均薪(K)', kind: 'dual' },
+  { section: 'cross_edu', title: '薪资 × 学历', hint: '柱＝岗位数　线＝均薪(K)', kind: 'dual' },
+];
+
+/** 纸墨印章配色：印章红 / 青绿 / 黄铜 / 靛蓝…（与 report.js 保持同源） */
+const CHART_COLORS = ['#C44F3A', '#3A7A6A', '#A08945', '#4A6B8A',
+  '#8A5A7A', '#7A8A4A', '#A06A4A', '#5A7A8A'];
+
+/** 读取当前主题墨色的 rgb 分量，让图表文字/网格随深浅主题自适应 */
+function inkRgb() {
+  return getComputedStyle(document.documentElement)
+    .getPropertyValue('--ink-rgb').trim() || '26,26,26';
+}
+
+function buildChartsView() {
+  const grid = el('div', { className: 'mkt-chart-grid', id: 'mkt-chart-grid' },
+    ...CHART_CARDS.map(buildChartCard));
+
+  const toc = el('nav', { className: 'mkt-chart-toc', id: 'mkt-chart-toc', 'aria-label': '图表索引' },
+    el('div', { className: 'mkt-chart-toc-title', textContent: '快速定位' }),
+    ...CHART_CARDS.map(({ section, title }) => el('a', {
+      className: 'mkt-chart-toc-item',
+      href: `#mkt-card-${section}`,
+      textContent: title,
+      onClick: e => { e.preventDefault(); scrollToCard(section); },
+    })));
+
+  return el('div', { className: 'mkt-view mkt-charts-wrap', id: 'mkt-charts-view' },
+    el('p', { className: 'eyebrow', textContent: '数据分析' }),
+    el('h2', { style: 'margin-bottom:6px;', textContent: '市场数据画像' }),
+    el('p', { className: 'mkt-charts-sub', id: 'mkt-charts-sub', textContent: '加载中…' }),
+    el('div', { className: 'mkt-charts-body' }, grid, toc),
+  );
+}
+
+/** 平滑滚动到指定卡片，并高亮对应索引项 */
+function scrollToCard(section) {
+  const card = $(`#mkt-card-${section}`);
+  if (!card) return;
+  const headerOffset = 76;
+  const top = card.getBoundingClientRect().top + window.scrollY - headerOffset;
+  window.scrollTo({ top, behavior: 'smooth' });
+}
+
+/** 根据当前视口中心的卡片，高亮右侧索引 */
+function updateTocActive() {
+  const toc = $('#mkt-chart-toc');
+  if (!toc || state.view !== 'charts') return;
+  const items = toc.querySelectorAll('.mkt-chart-toc-item');
+  const cards = CHART_CARDS.map(({ section }) => $(`#mkt-card-${section}`)).filter(Boolean);
+  if (!cards.length) return;
+
+  const center = window.innerHeight / 2;
+  let activeSection = cards[0].dataset.section;
+  let minDist = Infinity;
+
+  cards.forEach(card => {
+    const rect = card.getBoundingClientRect();
+    const dist = Math.abs(rect.top + rect.height / 2 - center);
+    if (dist < minDist) {
+      minDist = dist;
+      activeSection = card.dataset.section;
+    }
+  });
+
+  items.forEach(item => {
+    item.classList.toggle('active', item.getAttribute('href') === `#mkt-card-${activeSection}`);
+  });
+}
+
+/**
+ * 通用分析卡片 = 图表 + AI 解读。
+ *
+ * 固定三段结构：卡头（标题/副标题）→ 图表区 → 解读区（按钮 + 结果）。
+ * 按钮三态：✨ AI 解读 → 解读中…（禁用）→ 🔄 重新解读。
+ * 解读失败只在卡片内降级展示，绝不影响图表本身。
+ */
+function buildChartCard({ section, title, hint, kind }) {
+  const canvasId = `mkt-chart-${section}`;
+  const insightId = `mkt-insight-${section}`;
+
+  const body = el('div', { className: 'mkt-insight-body', id: insightId, style: 'display:none;' });
+  const btn = el('button', {
+    className: 'mkt-ai-btn', type: 'button', id: `mkt-ai-${section}`,
+    textContent: '✨ AI 解读',
+    onClick: () => runInsight(section, btn, body),
+  });
+
+  const chartArea = kind === 'text'
+    ? el('div', { className: 'mkt-chart-text', id: canvasId, textContent: '—' })
+    : el('div', { className: 'chart-container' },
+      el('div', { className: 'chart-wrapper' },
+        el('canvas', { id: canvasId })));
+
+  return el('div', { className: 'card mkt-chart-card', 'data-section': section, id: `mkt-card-${section}` },
+    el('div', { className: 'mkt-chart-head' },
+      el('div', { className: 'mkt-chart-title', textContent: title }),
+      el('div', { className: 'mkt-chart-hint', textContent: hint }),
+    ),
+    chartArea,
+    el('div', { className: 'mkt-insight' }, btn, body),
+  );
+}
+
+/** 拉取图表数据；样本量变化则作废前端已缓存的解读结论 */
+async function loadCharts() {
+  const sub = $('#mkt-charts-sub');
+  try {
+    const data = await getMarketCharts(state.filters.keyword || '');
+    const prevTotal = state.charts ? state.charts.total : undefined;
+    state.charts = data;
+
+    if (prevTotal !== undefined && prevTotal !== data.total) {
+      // 数据变过了：旧解读是对着旧样本说的，必须作废
+      state.insights = {};
+      resetInsightCards();
+    }
+
+    if (sub) {
+      sub.textContent = data.total
+        ? `共 ${data.total} 条岗位样本${data.keyword ? `（关键词：${data.keyword}）` : ''}`
+          + `　·　点击任意卡片上的「AI 解读」可获得针对该维度的分析`
+        : '暂无数据，请先采集或导入岗位';
+    }
+    drawAllCharts();
+  } catch (e) {
+    if (sub) sub.textContent = `图表数据加载失败：${e.message}`;
+  }
+}
+
+function resetInsightCards() {
+  CHART_CARDS.forEach(({ section }) => {
+    const btn = $(`#mkt-ai-${section}`);
+    const body = $(`#mkt-insight-${section}`);
+    if (btn) btn.textContent = '✨ AI 解读';
+    if (body) { body.style.display = 'none'; body.innerHTML = ''; }
+  });
+}
+
+function drawAllCharts() {
+  if (!state.charts) return;
+  CHART_CARDS.forEach(({ section, kind }) => {
+    if (kind === 'text') renderOverviewText(section);
+    else drawChart(section, kind);
+  });
+}
+
+/** overview 卡无图，用文字摘要承载（样本量 + 各维度第一名的速览） */
+function renderOverviewText(section) {
+  const host = $(`#mkt-chart-${section}`);
+  if (!host) return;
+  const d = state.charts;
+  host.innerHTML = '';
+
+  if (!d.total) { host.textContent = '暂无数据'; return; }
+
+  const topOf = (arr, key) => (arr || []).filter(x => x.count > 0 || x.cnt > 0)[0]?.[key] || '—';
+  const rows = [
+    ['样本总量', `${d.total} 条`],
+    ['最多岗位城市', topOf(d.city, 'city')],
+    ['主力薪资档', topOf(d.salary, 'label')],
+    ['主流学历', topOf(d.education, 'label')],
+    ['主流年资', topOf(d.experience, 'label')],
+    ['最高频词汇', topOf(d.skill, 'skill')],
+  ];
+  rows.forEach(([k, v]) => host.appendChild(
+    el('div', { className: 'mkt-chart-text-row' },
+      el('span', { className: 'k', textContent: k }),
+      el('span', { className: 'v', textContent: v })),
+  ));
+}
+
+/**
+ * 把后端各维度异构结构统一成 {labels, values}。
+ * geo 卡降级为柱状图时复用 city 数据，因此这里做一次到 city 的映射。
+ */
+function pickSeries(section) {
+  const key = section === 'geo' ? 'city' : section;
+  const raw = (state.charts || {})[key] || [];
+  if (section === 'city') return { labels: raw.map(x => x.city), values: raw.map(x => x.cnt) };
+  if (section === 'skill') return { labels: raw.map(x => x.skill), values: raw.map(x => x.count) };
+  return { labels: raw.map(x => x.label), values: raw.map(x => x.count) };
+}
+
+function drawChart(section, kind) {
+  const canvas = $(`#mkt-chart-${section}`);
+  if (!canvas || typeof window.Chart === 'undefined') return;
+
+  // 重绘前必须销毁旧实例，否则 Chart.js 会报 "Canvas is already in use"
+  if (state.chartInstances[section]) {
+    state.chartInstances[section].destroy();
+    delete state.chartInstances[section];
+  }
+
+  const rgb = inkRgb();
+  const gridColor = `rgba(${rgb}, 0.12)`;
+  const tickColor = `rgba(${rgb}, 0.65)`;
+  const base = {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: { legend: { display: false } },
+  };
+
+  let config;
+
+  if (kind === 'dual') {
+    const raw = state.charts[section] || {};
+    config = {
+      data: {
+        labels: raw.labels || [],
+        datasets: [
+          {
+            type: 'bar', label: '岗位数', yAxisID: 'y',
+            data: raw.counts || [], backgroundColor: `${CHART_COLORS[1]}CC`, borderRadius: 3,
+          },
+          {
+            type: 'line', label: '均薪(K)', yAxisID: 'y1',
+            data: raw.avg_salaries || [], borderColor: CHART_COLORS[0],
+            backgroundColor: CHART_COLORS[0], tension: 0.3, pointRadius: 3,
+          },
+        ],
+      },
+      options: {
+        ...base,
+        plugins: { legend: { display: true, labels: { color: tickColor, boxWidth: 12, font: { size: 11 } } } },
+        scales: {
+          x: { ticks: { color: tickColor }, grid: { display: false } },
+          y: { position: 'left', ticks: { color: tickColor }, grid: { color: gridColor } },
+          y1: { position: 'right', ticks: { color: tickColor }, grid: { display: false } },
+        },
+      },
+    };
+  } else if (kind === 'doughnut') {
+    const { labels, values } = pickSeries(section);
+    config = {
+      type: 'doughnut',
+      data: {
+        labels,
+        datasets: [{
+          data: values,
+          backgroundColor: CHART_COLORS.map(c => `${c}D9`),
+          borderColor: 'transparent',
+        }],
+      },
+      options: {
+        ...base,
+        cutout: '58%',
+        plugins: {
+          legend: {
+            display: true, position: 'right',
+            labels: { color: tickColor, boxWidth: 12, font: { size: 11 } },
+          },
+        },
+      },
+    };
+  } else {
+    const { labels, values } = pickSeries(section);
+    config = {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          data: values, backgroundColor: `${CHART_COLORS[0]}D9`, borderRadius: 3,
+        }],
+      },
+      options: {
+        ...base,
+        indexAxis: kind === 'hbar' ? 'y' : 'x',
+        scales: {
+          x: { ticks: { color: tickColor }, grid: { display: kind === 'hbar' ? 'default' : false, color: gridColor } },
+          y: { ticks: { color: tickColor }, grid: { display: kind === 'hbar' ? false : 'default', color: gridColor } },
+        },
+      },
+    };
+  }
+
+  state.chartInstances[section] = new window.Chart(canvas.getContext('2d'), config);
+}
+
+/* ─────────────────── 岗位地理分布（中国地图）─────────────────── */
+
+let _geoLoaded = null;   // 懒加载缓存：{ geo }
+
+/**
+ * 懒加载地图插件与中国 GeoJSON。
+ *
+ * 两样资产都不小（插件 ~100KB、GeoJSON 0.55MB），打进主包会拖慢首屏，
+ * 因此只在真正需要渲染地图时才拉取；用 Promise 缓存避免重复下载。
+ */
+async function loadGeoModules() {
+  if (_geoLoaded) return _geoLoaded;
+  const [mod, geoMod] = await Promise.all([
+    import('chartjs-chart-geo'),
+    import('../assets/china-geo.json'),
+  ]);
+  // ESM 构建无副作用，控制器与比例尺必须手动注册
+  window.Chart.register(
+    mod.BubbleMapController, mod.GeoFeature, mod.SizeScale, mod.ProjectionScale,
+  );
+  _geoLoaded = { geo: geoMod.default || geoMod };
+  return _geoLoaded;
+}
+
+/**
+ * 岗位地理分布：省级底图 + 城市气泡（气泡大小＝岗位数量）。
+ *
+ * 依赖插件与 GeoJSON 两份外部资产，任一失败都降级为横向柱状图——
+ * 卡片不能因为地图不可用就整块空白：信息量的损失远大于样式的损失。
+ */
+async function drawGeoMap(section) {
+  const canvas = $(`#mkt-chart-${section}`);
+  if (!canvas || typeof window.Chart === 'undefined') return;
+
+  if (state.chartInstances[section]) {
+    state.chartInstances[section].destroy();
+    delete state.chartInstances[section];
+  }
+
+  const cities = state.charts.city || [];
+  const points = [];
+  const labels = [];
+  cities.forEach(c => {
+    const coord = cityCoord(c.city);
+    if (!coord) return;                     // 坐标表未收录的城市不打点
+    points.push({ longitude: coord[0], latitude: coord[1], value: c.cnt });
+    labels.push(c.city);
+  });
+
+  if (!points.length) {
+    renderGeoFallback(section, '无可用城市坐标');
+    return;
+  }
+
+  const rgb = inkRgb();
+  try {
+    const { geo } = await loadGeoModules();
+    state.chartInstances[section] = new window.Chart(canvas.getContext('2d'), {
+      type: 'bubbleMap',
+      data: {
+        labels,
+        datasets: [{
+          label: '岗位数',
+          outline: geo.features,
+          showOutline: true,
+          outlineBorderColor: `rgba(${rgb}, 0.35)`,
+          outlineBackgroundColor: `rgba(${rgb}, 0.06)`,
+          data: points,
+          backgroundColor: 'rgba(196,79,58,0.55)',    // 印章红半透明
+          borderColor: 'rgba(150,50,35,0.9)',
+          borderWidth: 1,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        scales: {
+          projection: { projection: 'mercator' },
+          size: { range: [4, 26] },
+        },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: item => `${labels[item.dataIndex]}：${points[item.dataIndex].value} 个岗位`,
+            },
+          },
+        },
+      },
+    });
+  } catch (e) {
+    renderGeoFallback(section, e.message || '地图资源加载失败');
+  }
+}
+
+/** 地图不可用时降级为横向柱状图（城市 Top10），保住卡片的信息量 */
+function renderGeoFallback(section, reason) {
+  drawChart(section, 'hbar');
+  const hint = $(`.mkt-chart-card[data-section="${section}"] .mkt-chart-hint`);
+  if (hint) hint.textContent = `气泡大小＝岗位数量　·　⚠️ 地图不可用，已降级为柱状图（${reason}）`;
+}
+
+/**
+ * 触发单张卡片的 AI 解读。
+ * 前端按 section 缓存文本，避免切换视图后重复消耗配额（后端另有 5 分钟 TTL）。
+ */
+async function runInsight(section, btn, body) {
+  const fresh = Boolean(state.insights[section]);   // 已有解读 → 这次是"重新解读"
+  btn.disabled = true;
+  btn.textContent = '解读中…';
+  body.style.display = '';
+  body.innerHTML = '';
+  body.appendChild(el('span', { className: 'mkt-loading' },
+    el('span', { className: 'mkt-spinner' }), 'AI 正在分析…'));
+
+  try {
+    const res = await getMarketInsight({
+      section, keyword: state.filters.keyword || '', fresh,
+    });
+    if (res && res.error) {
+      state.insights[section] = null;
+      renderInsightError(body, res.error);
+      btn.textContent = '✨ 重试解读';
+    } else {
+      state.insights[section] = res;
+      renderInsight(body, res);
+      btn.textContent = '🔄 重新解读';
+    }
+  } catch (e) {
+    state.insights[section] = null;
+    renderInsightError(body, e.message || '解读失败');
+    btn.textContent = '✨ 重试解读';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderInsight(body, res) {
+  body.innerHTML = '';
+  const meta = [];
+  if (res.cached) meta.push('服务端缓存');
+  if (res.model) meta.push(res.model);
+  if (meta.length) {
+    body.appendChild(el('div', { className: 'mkt-insight-meta', textContent: meta.join(' · ') }));
+  }
+  // 后端已约束不输出 Markdown，这里用 textContent 渲染（保留换行 + 防 XSS）
+  body.appendChild(el('div', { className: 'mkt-insight-text', textContent: res.text || '' }));
+}
+
+function renderInsightError(body, message) {
+  body.innerHTML = '';
+  body.appendChild(el('div', { className: 'mkt-insight-error', textContent: `⚠️ ${message}` }));
 }

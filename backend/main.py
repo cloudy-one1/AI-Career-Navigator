@@ -1,14 +1,15 @@
 """
 FastAPI 应用装配（v7.2.2 起为纯装配层）。
 
-v7.2.2 路由拆分：66 条 HTTP 路由 + WS 主循环按域迁移到 backend/routers/*
-（system/auth/voice/sessions/assets/reports/question_bank/diagnostics/
-market/analytics/interview_ws），本文件只保留：
+v7.2.2 路由拆分：HTTP 路由 + WS 主循环按域迁移到 backend/routers/*
+（system/voice/sessions/assets/reports/question_bank/diagnostics/
+market/analytics/interview_ws/profile），本文件只保留：
   - 中间件（CORS / 安全响应头 / 请求体大小限制）与限流异常处理器；
   - startup（建库 / 市场库 / 记忆修剪）；
   - include_router（保持与拆分前相同的域注册顺序）；
   - 静态文件挂载。
-全局服务单例收敛在 routers/state.py，认证依赖与归属断言在 routers/deps.py。
+全局服务单例收敛在 routers/state.py。
+本系统为单用户本地工具，无认证层（v8.3 下线，见 CHARTER DC-10）。
 """
 
 import logging
@@ -18,7 +19,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 
@@ -29,7 +30,7 @@ from .market import store as market_store
 from . import weakness_memory
 from .routers import state
 from .routers import (
-    system, auth, voice, sessions, assets, reports,
+    system, voice, sessions, assets, reports,
     question_bank, diagnostics, market, analytics, interview_ws, profile,
 )
 
@@ -86,12 +87,12 @@ async def lifespan(app: FastAPI):
     await market_store.init_market_db()  # v3.0: 市场岗位库（幂等）
     # v6.5: 清理 30 天未再加重的历史薄弱点（启动即跑一次，失败不影响启动）
     await weakness_memory.prune_expired()
-    logger.info(f"AI 求职陪跑平台 v{APP_VERSION} 启动完成，当前后端: {config.AI_PROVIDER}")
+    logger.info(f"AI 求职领航 v{APP_VERSION} 启动完成，当前后端: {config.AI_PROVIDER}")
     yield
 
 
 # ─── FastAPI 应用 ───
-app = FastAPI(title="AI 求职陪跑平台", version=APP_VERSION, lifespan=lifespan)
+app = FastAPI(title="AI 求职领航", version=APP_VERSION, lifespan=lifespan)
 
 # CORS 中间件（最先注册）
 app.add_middleware(
@@ -118,7 +119,6 @@ app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
 
 # ─── 路由注册（保持与拆分前 main.py 一致的域顺序）───
 app.include_router(system.router)          # 健康检查 + AI 后端管理 + 预热
-app.include_router(auth.router)            # v7.0 认证
 app.include_router(voice.router)           # v4.2 MiMo 云端语音
 app.include_router(sessions.router)        # 会话创建/查询/上传/模式切换/公司风格
 app.include_router(assets.router)          # v7.0 简历库/岗位库
@@ -131,17 +131,32 @@ app.include_router(profile.router)         # v8.0 求职档案（能力档案首
 app.include_router(interview_ws.router)    # WebSocket 面试主循环
 
 
+# ===== 独立产品主页 =====
+# v8.2: 根路径返回独立的 landing.html；其余静态资源与 SPA 入口仍由 StaticFiles 托管。
+_frontend_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "frontend")
+
+@app.get("/")
+async def landing_page():
+    dist_dir = os.path.join(_frontend_dir, "dist")
+    base_dir = dist_dir if os.path.isdir(dist_dir) else _frontend_dir
+    landing_path = os.path.join(base_dir, "landing.html")
+    if os.path.exists(landing_path):
+        return FileResponse(landing_path)
+    # 开发态或构建异常时回退到 SPA 入口
+    return FileResponse(os.path.join(base_dir, "index.html"))
+
+
 # ===== 静态文件 =====
 # v4.0: 优先托管 Vite 构建产物 frontend/dist；未构建时回退到 frontend 源码目录，
 # 保证 python run.py 在未执行 npm run build 时仍可直接使用。
 def _mount_frontend_static():
-    dist_dir = os.path.join("frontend", "dist")
+    dist_dir = os.path.join(_frontend_dir, "dist")
     if os.path.isdir(dist_dir):
         app.mount("/", StaticFiles(directory=dist_dir, html=True), name="frontend")
         logger.info("静态资源托管：%s（Vite 构建产物）", dist_dir)
     else:
-        app.mount("/", StaticFiles(directory="frontend", html=True), name="frontend")
-        logger.info("静态资源托管：frontend（未发现 dist，回退源码目录）")
+        app.mount("/", StaticFiles(directory=_frontend_dir, html=True), name="frontend")
+        logger.info("静态资源托管：%s（未发现 dist，回退源码目录）", _frontend_dir)
 
 
 try:

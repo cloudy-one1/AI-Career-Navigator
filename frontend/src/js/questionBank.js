@@ -2,7 +2,7 @@
 // questionBank.js v2.2 — 题库管理
 // ===================================================
 
-import { $, $$, el, toast, fmtDate, emptyState } from './utils.js';
+import { $, el, toast, emptyState } from './utils.js';
 import {
   getQuestionBank,
   createQuestion,
@@ -299,7 +299,7 @@ function showImportForm() {
 // 内联真实示例题，Blob 触发下载 —— 把"我该往题库里放什么"这个疑问在页面上直接消解掉。
 function downloadTemplate() {
   const md = [
-    '# 题库模板（AI 求职陪跑）',
+    '# 题库模板（AI 求职领航）',
     '',
     '按下面的字段说明整理题目后，在「题库管理 → 新建题目」中录入；',
     '也可以把本文件交给任意 AI，让它按你的 JD 批量生成同格式题目。',

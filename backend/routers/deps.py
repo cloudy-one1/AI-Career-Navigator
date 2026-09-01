@@ -1,43 +1,22 @@
-"""路由依赖与归属断言（认证/归属在 L4 的组合点）。
+"""路由层共用：上传白名单 + 「资源不存在」断言。
 
-auth.py（L2）本身不感知 HTTP——FastAPI 依赖注入、401/404 语义都在这一层组装。
+v8.3 说明：本文件此前还承载认证依赖与归属断言（get_current_user /
+require_user / assert_session_owner / assert_owner）。认证整体下线后
+（CHARTER DC-10），只剩与身份无关的两样东西，故收缩到这一个文件里。
 """
-from fastapi import Depends, HTTPException, Request
-
-from .. import auth
-from ..config import config
+from fastapi import HTTPException
 
 # 允许上传的简历扩展名（三处上传端点共用，避免一边改了另一边漏）
 ALLOWED_UPLOAD_EXT = (".pdf", ".docx", ".txt")
 
 
-async def get_current_user(http_request: Request) -> "auth.UserContext":
-    """解析当前用户。AUTH_ENABLED=false 时恒返回匿名（行为等同 v6.x）。"""
-    return await auth.get_current_user(http_request.headers.get("authorization"))
+def ensure_found(row, what: str = "资源") -> dict:
+    """资源不存在一律 404。
 
-
-async def require_user(user: "auth.UserContext" = Depends(get_current_user)) -> "auth.UserContext":
-    """要求登录。认证关闭时不拦截（保持开关语义一致）。"""
-    if config.AUTH_ENABLED and user.is_anonymous:
-        raise HTTPException(status_code=401, detail="需要登录后操作")
-    return user
-
-
-async def assert_session_owner(session_id: str, user: "auth.UserContext") -> None:
-    """会话归属断言。
-
-    **一律返回 404 而非 403**：403 会暴露"这个 session_id 存在，只是你没权限"，
-    攻击者可据此枚举有效会话 id。404 让"不存在"与"无权访问"无法区分。
+    为什么统一 404 而不是 404/403 分列：403 会暴露"这个 id 存在，只是你看不到"，
+    可被用来枚举有效 id。单用户本地工具下这个顾虑已不存在，但 404 仍是
+    "查无此物"最直白的语义，保留原样。
     """
-    if not config.AUTH_ENABLED:
-        return
-    if not await auth.can_access_session(user, session_id):
-        raise HTTPException(status_code=404, detail="会话不存在或无权访问")
-
-
-def assert_owner(row, user: "auth.UserContext") -> None:
-    """库资源归属断言：他人的资源一律 404（不泄露存在性），老数据 owner=NULL 时同样拒绝。"""
     if not row:
-        raise HTTPException(404, "资源不存在或无权访问")
-    if config.AUTH_ENABLED and not user.is_anonymous and row.get("owner_id") != user.id:
-        raise HTTPException(404, "资源不存在或无权访问")
+        raise HTTPException(404, f"{what}不存在")
+    return row

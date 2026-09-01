@@ -167,7 +167,7 @@ def test_gaps_empty_when_all_dimensions_on_target():
 @pytest.mark.asyncio
 async def test_empty_profile_degrades_to_guidance():
     """空档案：不报错，而是给出第一步引导（NBA 规则一）。"""
-    profile = await profile_service.get_profile(owner_id=None)
+    profile = await profile_service.get_profile()
     assert profile["identity"]["has_resume"] is False
     assert profile["target"]["has_target"] is False
     assert profile["level"]["has_history"] is False
@@ -181,7 +181,7 @@ async def test_empty_profile_degrades_to_guidance():
 async def test_segment_failure_only_degrades_that_segment():
     """某段聚合崩溃：只降级该段，其余照常返回，整接口不抛（档案是首屏）。"""
     with patch.object(profile_service, "_load_level", side_effect=RuntimeError("boom")):
-        profile = await profile_service.get_profile(owner_id=None)
+        profile = await profile_service.get_profile()
     assert profile["degraded"] == ["level"]
     assert profile["level"]["has_history"] is False
     assert profile["identity"]["has_resume"] is False      # 其余段不受牵连
@@ -193,29 +193,19 @@ async def test_cache_hit_skips_reaggregation():
     """60s TTL 内重复请求不再打库；显式失效后重新聚合。"""
     with patch.object(profile_service, "list_resumes",
                       new=AsyncMock(return_value=[])) as mock_list:
-        await profile_service.get_profile(owner_id="u1")
-        await profile_service.get_profile(owner_id="u1")
+        await profile_service.get_profile()
+        await profile_service.get_profile()
         assert mock_list.await_count == 1
 
-        profile_service.invalidate_profile_cache("u1")
-        await profile_service.get_profile(owner_id="u1")
-        assert mock_list.await_count == 2
-
-
-@pytest.mark.asyncio
-async def test_cache_is_isolated_per_owner():
-    """不同用户的档案互不串味（缓存键必须含 owner_id）。"""
-    with patch.object(profile_service, "list_resumes",
-                      new=AsyncMock(return_value=[])) as mock_list:
-        await profile_service.get_profile(owner_id="u1")
-        await profile_service.get_profile(owner_id="u2")
+        profile_service.invalidate_profile_cache()
+        await profile_service.get_profile()
         assert mock_list.await_count == 2
 
 
 @pytest.mark.asyncio
 async def test_build_weakness_context_empty_when_no_data():
     """无薄弱点时返回空串——调用方据此跳过注入，保持规划器既有行为不变。"""
-    ctx = await profile_service.build_weakness_context(owner_id=None)
+    ctx = await profile_service.build_weakness_context()
     assert ctx == ""
 
 
@@ -238,7 +228,7 @@ def test_history_is_chronological_and_carries_overall():
 @pytest.mark.asyncio
 async def test_empty_profile_has_empty_history():
     """空档案的 history 必须是空数组而非缺失——前端要做 length 判断。"""
-    profile = await profile_service.get_profile(owner_id=None)
+    profile = await profile_service.get_profile()
     assert profile["level"]["history"] == []
 
 
@@ -246,7 +236,7 @@ async def test_empty_profile_has_empty_history():
 async def test_level_degrades_with_history_key():
     """level 段整体失败时，降级结构也要带 history 键，避免前端 undefined.length 崩溃。"""
     with patch.object(profile_service, "_load_level", side_effect=RuntimeError("boom")):
-        profile = await profile_service.get_profile(owner_id=None)
+        profile = await profile_service.get_profile()
     assert profile["degraded"] == ["level"]
     assert profile["level"]["history"] == []
 
@@ -292,6 +282,40 @@ def test_journey_career_path_requires_mark():
     assert journey["current_key"] is None      # 全部完成时不再有"下一步"
 
 
+def test_journey_abandoned_session_does_not_count():
+    """开场即退出不该点亮任何一步。
+
+    退出同样会建会话、并在退出时落一份部分报告，于是 session_count 与
+    report_count 都 > 0。若用这两个总量口径判完成，一次未完成的尝试会
+    同时点亮「面试演练」和「能力诊断」，进度条虚高。故只认走完的场次。
+    """
+    journey = profile_service.derive_journey(
+        {"has_resume": True}, {"has_target": True},
+        {"session_count": 1, "report_count": 1,
+         "completed_session_count": 0, "completed_report_count": 0})
+    assert _states(journey) == ["done", "done", "current", "todo", "todo"]
+    assert journey["completed"] == 2
+    assert journey["current_key"] == "practice"
+
+
+def test_journey_counts_only_finished_sessions():
+    """走完一场即同时点亮演练与诊断——报告只由完成的会话产出。"""
+    journey = profile_service.derive_journey(
+        {"has_resume": True}, {"has_target": True},
+        {"session_count": 4, "report_count": 4,
+         "completed_session_count": 1, "completed_report_count": 1})
+    assert _states(journey) == ["done", "done", "done", "done", "current"]
+    assert journey["completed"] == 4
+
+
+def test_journey_falls_back_to_totals_for_legacy_profile():
+    """老档案没有 completed_* 字段时退化用总量口径，避免全部塌成 todo。"""
+    journey = profile_service.derive_journey(
+        {"has_resume": True}, {"has_target": True}, {"session_count": 2, "report_count": 1})
+    assert _states(journey) == ["done", "done", "done", "done", "current"]
+    assert journey["completed"] == 4
+
+
 # ===== 技能缺口（简历 vs 市场）=====
 
 def test_skill_gap_splits_matched_and_missing():
@@ -325,18 +349,23 @@ def test_skill_gap_empty_when_either_side_missing():
 @pytest.mark.asyncio
 async def test_skill_gap_context_empty_when_no_data():
     """无市场数据时返回空串——调用方据此跳过注入，保持规划器既有行为。"""
-    ctx = await profile_service.build_skill_gap_context(owner_id=None)
+    ctx = await profile_service.build_skill_gap_context()
     assert ctx == ""
 
 
 @pytest.mark.asyncio
-async def test_journey_marks_roundtrip_and_anonymous_never_writes():
-    """打点幂等；未登录一律不落库（否则所有匿名用户的数据会混在一起）。"""
-    await db_mod.mark_journey_step("user-a", "career_path")
-    await db_mod.mark_journey_step("user-a", "career_path")     # 重复写入不得报错
-    await db_mod.mark_journey_step(None, "career_path")          # 匿名写入必须被忽略
+async def test_journey_marks_roundtrip():
+    """打点幂等：同一步重复写入只更新时间，不报错、不产生第二行。
 
-    marks = await db_mod.list_journey_marks("user-a")
+    v8.3: 此前还有"匿名不落库"的分支——那是 owner 维度带来的伪问题
+    （未登录时第⑤步永远打不上点），认证下线后该分支连同参数一起消失。
+    """
+    await db_mod.mark_journey_step("career_path")
+    await db_mod.mark_journey_step("career_path")     # 重复写入不得报错
+
+    marks = await db_mod.list_journey_marks()
     assert list(marks.keys()) == ["career_path"]
-    assert await db_mod.list_journey_marks(None) == {}
-    assert await db_mod.list_journey_marks("user-b") == {}
+
+    # 空 step_key 是无意义的写入，必须被忽略（防止将来出现空主键行）
+    await db_mod.mark_journey_step("")
+    assert list((await db_mod.list_journey_marks()).keys()) == ["career_path"]

@@ -51,40 +51,6 @@ class RoundConfig(BaseModel):
     advance_threshold: float = 3.0  # 该轮平均分达此值才能推进
 
 
-# ========== v7.0: 认证与资源归属（CHARTER DC-06）==========
-
-class UserRole(str, Enum):
-    """v7.5 起仅求职者角色（招聘者端与报告分享已删除，见 CHARTER DC-08）。"""
-    JOBSEEKER = "jobseeker"
-
-
-class RegisterRequest(BaseModel):
-    username: str = Field(..., description="用户名，3-32 位字母数字下划线连字符")
-    password: str = Field(..., description="密码，至少 8 位")
-    role: UserRole = UserRole.JOBSEEKER
-    display_name: Optional[str] = Field(default=None, description="展示名，可空")
-
-
-class LoginRequest(BaseModel):
-    username: str
-    password: str
-
-
-class UserInfo(BaseModel):
-    id: Optional[str] = Field(default=None, description="匿名身份为 None")
-    username: str = ""
-    role: str = "anonymous"
-    display_name: str = ""
-    is_anonymous: bool = True
-
-
-class TokenResponse(BaseModel):
-    access_token: str
-    token_type: str = "bearer"
-    expires_in_hours: int = Field(default=72, description="token 有效期（小时）")
-    user: UserInfo
-
-
 # ========== 请求模型 ==========
 
 class GenerateQuestionsRequest(BaseModel):
@@ -482,6 +448,8 @@ class ProfileResponse(BaseModel):
     next_action: Optional[NextAction] = None
     updated_at: str = ""
     degraded: list[str] = Field(default_factory=list, description="降级的段名（供前端诚实提示）")
+    # v8.4: 当前目标岗位 ID（供前端长期记忆页做岗位筛选的默认值）
+    target_position_id: str = ""
 
 
 # ===== v6.3 长期记忆闭环 =====

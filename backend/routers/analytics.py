@@ -2,7 +2,7 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from ..config import config
 from ..schemas import (
@@ -10,13 +10,11 @@ from ..schemas import (
     CrossJobCompareRequest, CrossJobCompareResponse, JobCompareItem,
     CareerPlanRequest, CareerPlanResponse,
 )
-from .. import auth
 from .. import gap_analyzer
 from .. import career_planner
 from .. import profile_service
 from ..db import get_resume, get_session, mark_journey_step
 from . import state
-from .deps import get_current_user
 
 
 logger = logging.getLogger(__name__)
@@ -168,8 +166,7 @@ async def cross_job_compare(req: CrossJobCompareRequest, request: Request = None
 
 @router.post("/api/career-plan", response_model=CareerPlanResponse)
 @state.limiter.limit(config.RATE_LIMIT_CAREER)
-async def career_plan(req: CareerPlanRequest, request: Request = None,
-                       user: "auth.UserContext" = Depends(get_current_user)):
+async def career_plan(req: CareerPlanRequest, request: Request = None):
     """
     职业规划（v3.2）：简历 + 目标岗位 + 目标年限 → 时间轴多阶段路径。
     以 Gap 分析六维快照为现状基线，调用 LLM 做多步路径推理。
@@ -190,15 +187,14 @@ async def career_plan(req: CareerPlanRequest, request: Request = None,
                 logger.warning(f"按 resume_id 回填简历失败，按请求中的文本继续: {e}")
 
         # v8.0 薄弱点 + v8.1 技能缺口：两段上下文都取不到就退回 v7.x 既有行为
-        owner_id = None if user.is_anonymous else user.id
         if not req.weakness_context:
             try:
-                req.weakness_context = await profile_service.build_weakness_context(owner_id)
+                req.weakness_context = await profile_service.build_weakness_context()
             except Exception as e:
                 logger.warning(f"职业规划薄弱点上下文注入失败，按无上下文继续: {e}")
         if not req.skill_gap_context:
             try:
-                req.skill_gap_context = await profile_service.build_skill_gap_context(owner_id)
+                req.skill_gap_context = await profile_service.build_skill_gap_context()
             except Exception as e:
                 logger.warning(f"职业规划技能缺口上下文注入失败，按无上下文继续: {e}")
         result = await career_planner.plan_career(
@@ -208,12 +204,11 @@ async def career_plan(req: CareerPlanRequest, request: Request = None,
         # v8.1: 规划生成成功 → 五步主线的第⑤步「发展路径」完成。
         # 这是唯一无法从档案推导的一步（档案里没有"是否规划过"的痕迹），
         # 故在此打点；打点失败不影响返回（进度只是少一个勾）。
-        if not user.is_anonymous:
-            try:
-                await mark_journey_step(user.id, "career_path")
-                profile_service.invalidate_profile_cache(user.id)
-            except Exception as e:
-                logger.warning(f"旅程步骤打点失败，不影响规划返回: {e}")
+        try:
+            await mark_journey_step("career_path")
+            profile_service.invalidate_profile_cache()
+        except Exception as e:
+            logger.warning(f"旅程步骤打点失败，不影响规划返回: {e}")
         return result
     except Exception as e:
         logger.error(f"职业规划失败: {type(e).__name__}: {e}")

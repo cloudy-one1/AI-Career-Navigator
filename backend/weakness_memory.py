@@ -13,7 +13,9 @@
 2. **岗位权重**：对方没有权重概念。我们把 JD 维度权重作为薄弱度**放大系数**——
    岗位越看重的维度，同样的失分越要命（`weight/0.2` 夹在 0.5~2.0 倍）。
    这是本项目相对原设计的真正增量，也复用了 v2.6 已有的动态权重。
-3. **主键不同**：对方是 (user_id, tag) 复合主键，我们无用户体系，按 dimension 单键。
+3. **主键不同**：对方是 (user_id, tag) 复合主键。
+   v8.4 前按 dimension 单键（无用户体系）；v8.4 起改为 (dimension, position_id)
+   复合主键，支持按岗位隔离薄弱点数据（position_id 可为 NULL 表示全局/未知岗位）。
 
 中性区"完全不动"是刻意保留的原版语义：**连 last_seen 都不续期**，
 即"30 天没有再暴露严重短板，就认为这个短板已经改善，自然淘汰"——
@@ -167,8 +169,9 @@ def _to_db_state(dimension: str, st: dict) -> dict:
 # ===== IO 编排（L2 调 L1，供 L4 使用） =====
 
 async def record_observation(dimension: str, score: float,
-                             weight: float = DEFAULT_WEIGHT) -> dict | None:
-    """记录一次维度得分观测，演进该维度的长期薄弱点状态。
+                             weight: float = DEFAULT_WEIGHT,
+                             position_id: str | None = None) -> dict | None:
+    """记录一次维度得分观测，演进该维度的长期薄弱点状态。v8.4: 支持按岗位隔离。
 
     失败一律降级（记日志返回 None），绝不阻断面试结束流程。
     """
@@ -176,21 +179,22 @@ async def record_observation(dimension: str, score: float,
     if not dim:
         return None
     try:
-        state = await get_weakness_memory(dim)
+        state = await get_weakness_memory(dim, position_id=position_id)
         new_state = update_weakness(state, score, weight)
         if new_state.get("removed"):
-            await delete_weakness_memory(dim)
-            logger.info(f"[薄弱记忆] {dim} 已连续达标，移除长期薄弱点")
+            await delete_weakness_memory(dim, position_id=position_id)
+            logger.info(f"[薄弱记忆] {dim}@{position_id or '全局'} 已连续达标，移除长期薄弱点")
             return new_state
-        await upsert_weakness_memory(dim, _to_db_state(dim, new_state))
+        await upsert_weakness_memory(dim, _to_db_state(dim, new_state), position_id=position_id)
         return new_state
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"[薄弱记忆] {dim} 记录失败，已降级: {e}")
+        logger.warning(f"[薄弱记忆] {dim}@{position_id or '全局'} 记录失败，已降级: {e}")
         return None
 
 
-async def active_memory_points(limit: int = 10) -> list[dict]:
-    """按"加权薄弱度"排序的活跃（未过期）长期薄弱点，供首轮出题回注入。
+async def active_memory_points(limit: int = 10,
+                               position_id: str | None = None) -> list[dict]:
+    """按"加权薄弱度"排序的活跃（未过期）长期薄弱点，供首轮出题回注入。v8.4: 支持按岗位过滤。
 
     与 v6.3 的 list_unresolved_weaknesses 的差别：
       - 排序口径从"最近一次均分升序"改为"EMA 薄弱度降序 + 权重放大"；
@@ -198,7 +202,7 @@ async def active_memory_points(limit: int = 10) -> list[dict]:
       - 补充 occurrence_count / weakness_score，让出题 prompt 能说清"为什么是它"。
     """
     try:
-        rows = await list_active_weakness_memory(limit=limit)
+        rows = await list_active_weakness_memory(limit=limit, position_id=position_id)
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[薄弱记忆] 读取失败，降级为空: {e}")
         return []

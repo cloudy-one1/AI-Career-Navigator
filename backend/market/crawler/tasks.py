@@ -1,5 +1,5 @@
 """
-[AI求职陪跑] 采集后台任务管理器。
+[AI 求职领航] 采集后台任务管理器。
 
 设计要点:
 - ``scrape_jobs`` 是同步阻塞的 Playwright 逻辑，全部在后台线程中执行，
@@ -156,6 +156,12 @@ def _run_crawl(task_id: str) -> None:
             for j in jobs
         ]
         inserted = asyncio.run(store.upsert_jobs(standard))
+
+        # 数据已变化，此前的 AI 解读结论全部作废。
+        # 延迟导入：不把 llm_client 拉进采集链路，保证无 Key 环境仍能正常采集。
+        if inserted:
+            from .. import insight  # noqa: PLC0415
+            insight.invalidate()
 
         _update(
             task_id,

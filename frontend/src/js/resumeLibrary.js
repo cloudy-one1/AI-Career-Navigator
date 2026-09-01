@@ -2,7 +2,7 @@
 // resumeLibrary.js — v7.0 简历库
 //
 // 存在的意义：同一份简历想练第二场，不必重新上传、重新解析（解析要调 LLM）。
-// 不登录也能用（后端 AUTH_ENABLED=false 时 owner 为匿名），因此不能假设一定有归属。
+// v8.3: 认证已下线，简历库为本机唯一使用者的资产，无归属维度。
 // ===================================================
 
 import { $, el, toast, fmtDate, emptyState, confirm as confirmDialog } from './utils.js';
@@ -52,7 +52,7 @@ async function loadResumes() {
   container.replaceChildren(el('div', { className: 'empty-state' },
     el('div', { className: 'empty-text', textContent: '加载中…' })));
 
-  let rows = [];
+  let rows;
   try {
     const data = await request('GET', '/api/resumes');
     rows = data.resumes || [];
@@ -78,14 +78,19 @@ async function loadResumes() {
 }
 
 function resumeCard(r) {
-  const parsed = r.parsed_json ? '已解析' : '未解析';
-  return el('div', { className: 'card card-hover library-card' },
+  const parsed = !!r.parsed_json;
+  const cls = ['card', 'card-hover', 'library-card', parsed ? 'resume-parsed' : 'resume-unparsed'];
+
+  return el('div', { className: cls.join(' ') },
     el('div', { className: 'library-card-head' },
       el('div', { className: 'library-card-title', textContent: r.title || '未命名简历' }),
-      el('span', { className: `lib-badge${r.parsed_json ? ' ok' : ''}`, textContent: parsed }),
+      el('span', {
+        className: `lib-badge${parsed ? ' ok' : ' warning'}`,
+        textContent: parsed ? '✓ 已解析' : '○ 未解析',
+      }),
     ),
     el('div', { className: 'library-card-meta' },
-      r.filename ? el('span', { textContent: r.filename }) : null,
+      r.filename ? el('span', { textContent: `📎 ${r.filename}` }) : null,
       el('span', { textContent: `${r.char_count || 0} 字` }),
       el('span', { textContent: fmtDate(r.updated_at) }),
     ),

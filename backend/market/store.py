@@ -13,6 +13,7 @@ from typing import Optional
 import aiosqlite
 
 from ..config import config
+from .cleaner import extract_city
 
 logger = logging.getLogger(__name__)
 
@@ -225,10 +226,16 @@ async def get_stats(keyword: Optional[str] = None) -> dict:
                     "avg_salary": None, "top_skills": [],
                     "keywords": await _keyword_counts(db)}
 
-        async with db.execute(
-            f"""SELECT city, COUNT(*) AS cnt FROM job_postings {where}
-                GROUP BY city ORDER BY cnt DESC LIMIT 10""", params) as cur:
-            cities = [dict(r) for r in await cur.fetchall()]
+        # 城市分布：city 列存的是完整地址（如 '上海-徐汇区'），必须先归一化再聚合。
+        # 否则同一城市按行政区被拆成多行，统计碎片化、地图散点大面积匹配失败。
+        # 归一化在读取侧完成，不动存量数据（原始数据保真、可回滚）。
+        city_counter: Counter = Counter()
+        async with db.execute(f"SELECT city FROM job_postings {where}", params) as cur:
+            for (city_raw,) in await cur.fetchall():
+                city_name = extract_city(city_raw)
+                if city_name:
+                    city_counter[city_name] += 1
+        cities = [{"city": c, "cnt": n} for c, n in city_counter.most_common(10)]
 
         salary_where = (where + " AND" if keyword else "WHERE") + \
                        " salary_min IS NOT NULL AND salary_max IS NOT NULL"

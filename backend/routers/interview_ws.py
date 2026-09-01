@@ -1,17 +1,19 @@
 """WebSocket 面试主循环（原 main.py 单体的最大职责块，v7.2.2 拆出）。
 
-协议不变：{type, data} 消息嵌套；握手阶段校验身份（4001）；
+协议不变：{type, data} 消息嵌套；
 会话不存在（4000/session_not_found）；正常完成 1000 关闭。
+
+v8.3: 握手阶段不再校验身份（4001 unauthorized 随认证一起下线）。
 """
 import json
 import logging
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from .. import auth
 from ..config import config
 from ..db import (
     save_report, update_session_status, save_weakness_profile, update_session_flow,
+    get_session,
 )
 from ..interview_engine.flow import FlowState
 from ..interview_engine.session import is_end_signal
@@ -60,23 +62,12 @@ async def _mark_flow(session_id: str, session, state_: "FlowState") -> None:
 
 
 @router.websocket("/ws/interview/{session_id}")
-async def ws_interview(websocket: WebSocket, session_id: str,
-                       token: str = Query(default="")):
-    """v7.0: 握手阶段校验连接者身份。
+async def ws_interview(websocket: WebSocket, session_id: str):
+    """面试主循环握手。
 
-    为什么 token 走 query 参数：浏览器的 WebSocket API 不支持自定义请求头，
-    Sec-WebSocket-Protocol 子协议又要求服务端回显，这里用它反而更绕。
-
-    为什么在 accept() 之前校验：`close()` 必须在握手未完成时调用才能带上
-    自定义关闭码；一旦 accept 过再 close，浏览器只收得到 1000（正常关闭），
-    前端就无法区分"会话不存在"与"没有权限"。
+    会话存在性在 accept() 之后以 4000/session_not_found 关闭（原本还要在
+    accept() 之前做 4001 身份校验，v8.3 随认证下线一并移除）。
     """
-    user = await auth.resolve_ws_user(token)
-    if not await auth.can_access_session(user, session_id):
-        logger.warning(f"[ws] 拒绝未授权连接 session={session_id} user={user.id}")
-        await websocket.close(code=4001, reason="unauthorized")
-        return
-
     await websocket.accept()
     async with state.session_lock:
         session = state.active_sessions.get(session_id)
@@ -476,6 +467,10 @@ async def ws_interview(websocket: WebSocket, session_id: str,
 
         # v2.7: 保存薄弱点画像
         try:
+            # v8.4: 从会话获取 position_id，实现按岗位隔离薄弱点数据
+            session_row = await get_session(session_id)
+            sid_position_id = (session_row or {}).get("position_id") if session_row else None
+
             # v3.3: 对齐 build_report 实际 schema（dimension_averages + scoring.weights）。
             # 旧代码读取的 dimension_details / detailed_qa 字段在报告中不存在，
             # 导致薄弱点画像恒为空。
@@ -486,13 +481,15 @@ async def ws_interview(websocket: WebSocket, session_id: str,
                     if diag.get("weakest_dimension") == dim_key:
                         rps.extend(diag.get("risk_points", []) or [])
                 await save_weakness_profile(session_id, dim_key, avg,
-                                            weights_map.get(dim_key, 0.2), rps)
+                                            weights_map.get(dim_key, 0.2), rps,
+                                            position_id=sid_position_id)
 
             # v6.5: 长期薄弱点记忆（EMA 衰减 + 30 天过期 + 中性区不动）。
             # 与上面的快照写入是两件事：快照是历史流水，这里演进的是"当前状态"。
             for dim_key, avg in (report.get("dimension_averages") or {}).items():
                 await weakness_memory.record_observation(
-                    dim_key, avg, weights_map.get(dim_key, 0.2)
+                    dim_key, avg, weights_map.get(dim_key, 0.2),
+                    position_id=sid_position_id
                 )
         except Exception as e:
             logger.error(f"保存薄弱点画像失败: {e}")

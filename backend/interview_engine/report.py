@@ -40,6 +40,33 @@ def _norm_thinking(value) -> float:
     return round(sec, 1)
 
 
+def _build_follow_up_map(session) -> dict:
+    """从 answer_history 还原每道主问题下的追问（问题文本 + 回答文本）。
+
+    键为 (round, question_idx)，与 all_diagnoses 条目一一对应（两者都在
+    record_answer 中按题目顺序追加）。v8.x 之前只存追问回答、不存问题文本，
+    导致报告看不到"面试官追问了什么"；这里把 follow_up_questions 与
+    follow_ups 配对还原成子条目。
+    """
+    fu_map: dict = {}
+    history = getattr(session, "answer_history", None) or []
+    for h in history:
+        key = (h.get("round"), h.get("question_idx"))
+        answers = h.get("follow_ups") or []
+        questions = h.get("follow_up_questions") or []
+        if not answers:
+            continue
+        items = []
+        for i, ans in enumerate(answers):
+            items.append({
+                "question": (questions[i] if i < len(questions) else ""),
+                "answer": ans,
+            })
+        if items:
+            fu_map[key] = items
+    return fu_map
+
+
 def _fallback_impact(score: float, thinking_seconds: float) -> str:
     """模型未产出 real_interview_impact 时的确定性兜底文案。
 
@@ -66,6 +93,9 @@ def build_report(session) -> dict:
                      rounds, all_diagnoses, dim_weights
     """
     weights = getattr(session, "dim_weights", None) or dict(DEFAULT_WEIGHTS)
+
+    # v8.x: 还原每道主问题下的追问（问题 + 回答），供逐题拆解与参考答案沉淀展示
+    fu_map = _build_follow_up_map(session)
 
     all_scores = []
     dimension_trends = {k: {"scores": [], "rounds": []} for k in DIM_KEYS}
@@ -100,11 +130,18 @@ def build_report(session) -> dict:
     for r_idx in sorted(round_summaries.keys()):
         s = round_summaries[r_idx]
         r_data = session.rounds[r_idx] if r_idx < len(session.rounds) else {}
+        # v8.x: questions_count 改为该轮实际作答的主问题数（含补强题），
+        # 不再用轮次配置里的"规划题数"作分母——规划数是上限而非实际出题量，
+        # 此前导致"题已答 X/12"严重低估实际答题量。追问不计入主问题分母，
+        # 单独用 follow_up_count 披露。
+        fu_in_round = sum(len(items) for (r, _), items in fu_map.items() if r == r_idx)
         rounds.append({
             "round_index": r_idx,
             "round_name": r_data.get("name", f"第{r_idx + 1}轮"),
-            "questions_count": r_data.get("question_count", 0),
+            "planned_questions": r_data.get("question_count", 0),
+            "questions_count": s["count"],
             "answers_count": s["count"],
+            "follow_up_count": fu_in_round,
             "avg_score": round(sum(s["scores"]) / len(s["scores"]), 2) if s["scores"] else 0,
         })
 
@@ -153,6 +190,8 @@ def build_report(session) -> dict:
             "real_interview_impact": (
                 d.get("real_interview_impact", "") or _fallback_impact(float(score_d or 0), thinking_d)
             ),
+            # v8.x: 本题下的追问（问题 + 回答），还原真实面试的追问环节
+            "follow_ups": fu_map.get((d.get("round", 0), d.get("question_idx", 0)), []),
         })
 
     # v6.2: qaBreakdown —— 逐题拆解（借鉴 GrillMind）。
@@ -200,6 +239,8 @@ def build_report(session) -> dict:
             "skipped_follow_up": d.get("skipped_follow_up", ""),
             # v6.3: 规则化加减分项（可解释：每条都带命中的原文证据）
             "score_adjustments": d.get("score_adjustments", []) or [],
+            # v8.x: 本题下的追问（问题 + 回答），还原真实面试的追问环节
+            "follow_ups": fu_map.get((d.get("round", 0), d.get("question_idx", 0)), []),
         })
 
     # v6.3: 借助引导的统计 —— 全场有多少题是在提示下完成的。
@@ -217,8 +258,10 @@ def build_report(session) -> dict:
     # 被跳过的追问数与题单本身就是复盘信号：占比过高说明候选人在
     # 压力性追问面前系统性退缩（真实面试里这比"答偏"更伤印象）。
     fu_skipped_items = [q for q in qa_breakdown if q.get("follow_up_skipped")]
+    fu_answered = sum(len(q.get("follow_ups", []) or []) for q in qa_breakdown)
     follow_up_stats = {
         "total": len(qa_breakdown),
+        "answered_count": fu_answered,
         "skipped_count": len(fu_skipped_items),
         "skipped_ratio": (round(len(fu_skipped_items) / len(qa_breakdown), 2)
                           if qa_breakdown else 0),
@@ -459,6 +502,16 @@ def generate_review_markdown(report: dict) -> str:
         if rewritten:
             lines.append(f"### Q: {q}")
             lines.append(f"{rewritten}")
+            follow_ups = qa.get("follow_ups") or []
+            if follow_ups:
+                lines.append("\n**面试官追问与你的补充回答：**")
+                for fi, fu in enumerate(follow_ups, start=1):
+                    fu_q = fu.get("question", "")
+                    fu_a = fu.get("answer", "")
+                    if fu_q:
+                        lines.append(f"- 追问{fi}：{fu_q}")
+                    if fu_a:
+                        lines.append(f"  - 你的回答：{fu_a}")
             lines.append("")
 
     # 5. 下次面试 TODO

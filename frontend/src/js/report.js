@@ -3,8 +3,7 @@
 // ===================================================
 
 import { $, el, toast, DIM_NAMES, escHtml, countUp, skeletonBlock, burstParticles, scoreClass } from './utils.js';
-import { getReport, exportReview, getGapAnalysis, crossJobCompare } from './api.js';
-import { getToken } from './auth.js';
+import { getReport, exportReview, getGapAnalysis } from './api.js';
 
 let chartInstance = null;
 
@@ -26,9 +25,6 @@ export function initReport() {
 
   panel.appendChild(el('div', { id: 'report-content' }));
 
-  // v3.1: 跨岗位对比卡片
-  panel.appendChild(_buildCompareCard());
-
   // v4.0: 支持从「历史」Tab 跳转并自动加载
   const pending = window._pendingReportSession;
   if (pending) {
@@ -36,6 +32,12 @@ export function initReport() {
     const input = $('#report-session-id');
     if (input) input.value = pending;
     loadReport();
+  }
+
+  // v8.x: 面试刚结束自动加载本场报告（由 interview.js 的 finishInterview 置位）
+  if (window._pendingLatestReport) {
+    window._pendingLatestReport = false;
+    loadLatestReport();
   }
 }
 
@@ -113,15 +115,13 @@ function renderReport(report) {
         },
       }) : '',
       // v6.1: HTML 导出（借鉴 offerMaster 的 MD→HTML 渲染，浏览器打印即得 PDF）
-      // v7.3: 顶层导航带不了 Authorization 头，登录态以 query token 兜底（与 WS 同权衡）
+      // v8.3: 导出端点不再需要登录态，query token 兜底随之删除
       sessionId ? el('button', {
         className: 'btn btn-secondary btn-sm',
         style: 'margin-top:8px;width:fit-content;',
         textContent: '🖨 打印 / 存为 PDF',
         onClick: () => {
-          const t = getToken();
-          const q = t ? `?token=${encodeURIComponent(t)}` : '';
-          window.open(`${location.origin}/api/reports/${sessionId}/export.html${q}`, '_blank');
+          window.open(`${location.origin}/api/reports/${sessionId}/export.html`, '_blank');
         },
       }) : '',
     ),
@@ -157,8 +157,13 @@ function renderReport(report) {
   }
 
   // v4.0: 关键指标条
+  // v8.x: questions_count 已改为主问题实际出题数（不再用轮次规划上限作分母），
+  // 另单独披露追问数，避免"题已答 X/12"低估实际答题量。
   const totalQ = (report.rounds || []).reduce((a, r) => a + (r.questions_count || 0), 0);
   const totalA = (report.rounds || []).reduce((a, r) => a + (r.answers_count || 0), 0);
+  const fuAnswered = (report.follow_up_stats || {}).answered_count
+                  || (report.rounds || []).reduce((a, r) => a + (r.follow_up_count || 0), 0);
+  const fuSkipped = (report.follow_up_stats || {}).skipped_count || 0;
   content.appendChild(el('div', { className: 'report-metrics' },
     el('div', { className: 'metric-item' },
       el('div', { className: 'metric-value', textContent: String(report.rounds?.length || 0) }),
@@ -166,7 +171,11 @@ function renderReport(report) {
     ),
     el('div', { className: 'metric-item' },
       el('div', { className: 'metric-value', textContent: `${totalA}/${totalQ}` }),
-      el('div', { className: 'metric-label', textContent: '题已答' }),
+      el('div', { className: 'metric-label', textContent: '主问题' }),
+    ),
+    el('div', { className: 'metric-item' },
+      el('div', { className: 'metric-value', textContent: String(fuAnswered + fuSkipped) }),
+      el('div', { className: 'metric-label', textContent: `追问(${fuSkipped ? '含跳过' + fuSkipped : '全答'})` }),
     ),
     el('div', { className: 'metric-item' },
       el('div', { className: 'metric-value', textContent: String(report.strengths?.length || 0) }),
@@ -216,7 +225,8 @@ function renderReport(report) {
           el('div', { className: 'timeline-dot' }),
           el('div', { className: 'timeline-body' },
             el('div', { className: 'timeline-name', textContent: r.round_name }),
-            el('div', { className: 'timeline-meta', textContent: `${r.answers_count}/${r.questions_count} 题已答` }),
+            el('div', { className: 'timeline-meta', textContent:
+            `${r.answers_count} 主问题` + (r.follow_up_count ? ` · ${r.follow_up_count} 追问` : '') }),
           ),
           el('div', { className: 'timeline-score', textContent: (r.avg_score || 0).toFixed(1) }),
         )),
@@ -279,9 +289,14 @@ function renderReport(report) {
   // v6.2: 逐题拆解 —— 真实面试影响 + 思考时长（借鉴 GrillMind 的 qaBreakdown）
   if (report.qa_breakdown?.length) {
     const st = report.thinking_stats || {};
+    const fuStat = report.follow_up_stats || {};
+    const fuTotal = (fuStat.answered_count || 0) + (fuStat.skipped_count || 0);
     let statLine = st.tracked_count
       ? `⏱ 平均思考 ${st.avg_seconds}s（最长 ${st.max_seconds}s / 最短 ${st.min_seconds}s），共 ${st.answered_count} 题`
       : `共 ${st.answered_count || 0} 题（未采集到思考时长）`;
+    if (fuTotal) {
+      statLine += ` · 💬 追问 ${fuTotal} 次` + (fuStat.skipped_count ? `（跳过 ${fuStat.skipped_count}）` : '');
+    }
     // v7.0.2: 追问回避统计（测评问题 #1 —— 跳过追问不再零痕迹）
     const fuStats = report.follow_up_stats || {};
     if (fuStats.skipped_count) {
@@ -356,6 +371,32 @@ function renderQaItem(qa) {
       style: 'margin-top:6px;font-size:.8rem;color:var(--indigo-800);line-height:1.6;',
       textContent: `⚠️ ${qa.risk_points.join('；')}`,
     }));
+  }
+  // v8.x: 本题下的追问（面试官追问 + 候选人补充回答），还原真实面试的追问环节
+  const followUps = qa.follow_ups || [];
+  if (followUps.length) {
+    const fuNodes = followUps.map((fu, i) => {
+      const parts = [];
+      if (fu.question) {
+        parts.push(el('div', {
+          style: 'font-weight:600;font-size:.8rem;color:var(--ink-soft);margin-top:6px;',
+          textContent: `↳ 追问${i + 1}：${fu.question}`,
+        }));
+      }
+      if (fu.answer) {
+        parts.push(el('div', {
+          style: 'font-size:.82rem;line-height:1.6;padding:4px 0 4px 14px;color:var(--text-secondary);',
+          textContent: `你的补充：${fu.answer}`,
+        }));
+      }
+      return parts;
+    }).flat();
+    children.push(el('div', {
+      style: 'margin-top:6px;padding:6px 10px;background:var(--slate-50,#f8fafc);border-radius:8px;border-left:3px solid var(--indigo-600,#4f46e5);',
+    }, el('div', {
+      style: 'font-size:.74rem;font-weight:600;color:var(--indigo-700,#4338ca);',
+      textContent: `💬 追问环节（${followUps.length}）`,
+    }), ...fuNodes));
   }
   return el('div', { style: 'border-top:1px solid var(--border,#eee);padding:10px 0;' }, ...children);
 }
@@ -559,165 +600,4 @@ function drawRadarChart(report) {
       },
     },
   });
-}
-
-// ===== v3.1: 跨岗位对比 =====
-
-function _buildCompareCard() {
-	const container = el('div', { id: 'compare-card', className: 'card', style: 'margin-top:16px;' });
-
-	container.appendChild(el('div', { className: 'card-title', textContent: '🔄 跨岗位对比' }));
-	container.appendChild(el('p', { style: 'font-size:.85rem;color:var(--text-secondary);margin-bottom:12px;',
-		textContent: '一份简历 vs 多个岗位并行评估，告诉你更适合投哪个方向。' }));
-
-	// 简历文本
-	container.appendChild(el('label', { className: 'form-label', textContent: '简历文本', for: 'compare-resume' }));
-	container.appendChild(el('textarea', { id: 'compare-resume', className: 'form-input', rows: 4,
-		placeholder: '粘贴简历内容...' }));
-
-	// JD 列表容器
-	container.appendChild(el('label', { className: 'form-label', textContent: '岗位描述（至少2个）', style: 'margin-top:12px;' }));
-	const jdContainer = el('div', { id: 'compare-jd-list' });
-	_addCompareJD(jdContainer, '岗位A');
-	_addCompareJD(jdContainer, '岗位B');
-	container.appendChild(jdContainer);
-
-	// 添加岗位按钮
-	container.appendChild(el('button', { className: 'btn btn-secondary', style: 'margin-top:8px;font-size:.8rem;',
-		textContent: '+ 添加岗位', onClick: () => _addCompareJD(jdContainer) }));
-
-	// 对比按钮
-	container.appendChild(el('button', {
-		className: 'btn btn-primary', textContent: '开始对比分析', style: 'margin-top:12px;width:100%;',
-		onClick: _handleCrossCompare,
-	}));
-
-	// 结果容器
-	container.appendChild(el('div', { id: 'compare-result' }));
-	container.appendChild(el('div', { id: 'compare-loading', style: 'display:none;text-align:center;padding:20px;color:var(--text-muted);',
-		textContent: '⏳ 正在分析各岗位匹配度...' }));
-
-	return container;
-}
-
-function _addCompareJD(container, defaultTitle = '') {
-	const idx = (container.children.length || 0);
-	const row = el('div', { className: 'compare-jd-row', style: 'margin-top:8px;border:1px solid var(--border);border-radius:8px;padding:10px;background:var(--paper);' });
-
-	const titleInput = el('input', {
-		className: 'form-input', placeholder: `岗位${idx+1}名称`, value: defaultTitle,
-		style: 'margin-bottom:6px;',
-	});
-
-	const textInput = el('textarea', {
-		className: 'form-input', rows: 2,
-		placeholder: '粘贴岗位描述（JD）...',
-	});
-
-	const removeBtn = el('button', {
-		className: 'btn btn-sm', textContent: '✕ 删除',
-		style: 'margin-top:4px;font-size:.75rem;color:var(--danger);',
-		onClick: () => row.remove(),
-	});
-
-	row.appendChild(titleInput);
-	row.appendChild(textInput);
-	row.appendChild(removeBtn);
-	container.appendChild(row);
-
-	// 至少保留2个
-	updateCompareRemoveButtons(container);
-}
-
-function updateCompareRemoveButtons(container) {
-	const rows = container.querySelectorAll('.compare-jd-row');
-	rows.forEach(r => {
-		const btn = r.querySelector('button');
-		if (btn) btn.style.display = rows.length <= 2 ? 'none' : '';
-	});
-}
-
-// 监听动态删除
-document.addEventListener('click', () => {
-	const jdList = $('#compare-jd-list');
-	if (jdList) updateCompareRemoveButtons(jdList);
-});
-
-async function _handleCrossCompare() {
-	const resumeEl = $('#compare-resume');
-	const jdListEl = $('#compare-jd-list');
-	const resultEl = $('#compare-result');
-	const loadingEl = $('#compare-loading');
-
-	const resumeText = resumeEl?.value?.trim();
-	if (!resumeText || resumeText.length < 10) {
-		toast('请先粘贴简历内容（至少10字）');
-		return;
-	}
-
-	const jdRows = jdListEl?.querySelectorAll('.compare-jd-row') || [];
-	const jdList = [];
-	jdRows.forEach(row => {
-		const inputs = row.querySelectorAll('input, textarea');
-		const title = inputs[0]?.value?.trim();
-		const text = inputs[1]?.value?.trim();
-		if (title && text) jdList.push({ title, text });
-	});
-
-	if (jdList.length < 2) {
-		toast('至少需要2个有内容的岗位');
-		return;
-	}
-
-	resultEl.innerHTML = '';
-	if (loadingEl) loadingEl.style.display = '';
-
-	try {
-		const result = await crossJobCompare(resumeText, jdList);
-		_renderCompareResults(resultEl, result);
-	} catch (e) {
-		resultEl.innerHTML = `<div class="form-error" style="margin-top:12px;">${escHtml(e.message)}</div>`;
-	} finally {
-		if (loadingEl) loadingEl.style.display = 'none';
-	}
-}
-
-function _renderCompareResults(container, result) {
-	if (!result.results || result.results.length === 0) {
-		container.innerHTML = '<p style="color:var(--text-muted);margin-top:12px;">无对比结果</p>';
-		return;
-	}
-
-	const fragments = [];
-
-	// 推荐语
-	fragments.push(el('div', {
-		style: 'margin-top:16px;padding:14px;background:linear-gradient(135deg,var(--accent-light),var(--emerald-50));border-radius:10px;border:1px solid var(--indigo-100);',
-	}, el('div', { style: 'font-weight:700;color:var(--primary-dark);margin-bottom:6px;', textContent: '🏆 综合推荐' }),
-	   el('div', { style: 'font-size:.9rem;color:var(--text);line-height:1.6;', textContent: result.recommendation })));
-
-	// 排名柱状图
-	fragments.push(el('div', { style: 'margin-top:16px;font-weight:600;font-size:.9rem;', textContent: '📊 匹配度排名' }));
-	result.results.forEach((item, idx) => {
-		const barColor = idx === 0 ? 'var(--success)' : idx === result.results.length - 1 ? 'var(--danger)' : 'var(--primary)';
-		const pct = (item.overall_score / 5) * 100;
-		fragments.push(el('div', { style: 'margin-top:10px;' },
-			el('div', { style: 'display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;' },
-				el('span', { style: 'font-weight:600;font-size:.85rem;', textContent: `${idx+1}. ${item.title}` }),
-				el('span', { style: `font-weight:700;color:${barColor};font-size:.85rem;`, textContent: `${item.overall_score}/5` }),
-			),
-			el('div', { style: 'height:8px;background:var(--line);border-radius:4px;overflow:hidden;' },
-				el('div', { style: `height:100%;width:${pct}%;background:${barColor};border-radius:4px;` }),
-			),
-			// 风险等级
-			el('div', { style: 'font-size:.75rem;color:var(--text-muted);margin-top:4px;', textContent: `风险: ${item.risk_level}` }),
-			// 强项
-			item.key_strengths?.length ? el('div', { style: 'font-size:.75rem;color:var(--emerald-600);margin-top:2px;', textContent: `✅ ${item.key_strengths.join(' · ')}` }) : '',
-			// 短板
-			item.key_gaps?.length ? el('div', { style: 'font-size:.75rem;color:var(--indigo-800);margin-top:2px;', textContent: `⚠ ${item.key_gaps.join(' · ')}` }) : '',
-		));
-	});
-
-	container.innerHTML = '';
-	fragments.forEach(f => container.appendChild(f));
 }

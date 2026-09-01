@@ -1,5 +1,5 @@
 """
-[AI求职陪跑] 51job 实时采集模块(可参数化版本)。
+[AI 求职领航] 51job 实时采集模块(可参数化版本)。
 
 从 job-crawler (https://github.com/cloudy-one1/job-crawler) 的
 data/python_job_scraper.py 复制并改造:

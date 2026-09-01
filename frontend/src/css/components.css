@@ -303,6 +303,18 @@ input[type="file"]::file-selector-button:hover {
 }
 .btn-sm { padding: 6px 12px; font-size: .8rem; }
 .btn-block { width: 100%; }
+/* v8.3.x: 圆角胶囊按钮（上传本机文件等并列入口用，999px 全圆角 + 幽灵描边） */
+.btn-pill {
+  border-radius: var(--radius-full);
+  border: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-secondary);
+}
+.btn-pill:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: rgba(var(--primary-rgb), .06);
+}
 
 /* Interview Panel */
 .interview-stage {
@@ -986,6 +998,62 @@ input[type="file"]::file-selector-button:hover {
   margin-top: 8px;
 }
 
+/* ===== v8.x: 职业规划模式选择器 ===== */
+.career-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-top: 8px;
+}
+.career-mode-card {
+  cursor: pointer;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px 12px;
+  text-align: center;
+  transition: transform .2s ease, box-shadow .2s ease, border-color .2s ease;
+  background: var(--card);
+}
+.career-mode-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--primary-light);
+}
+.career-mode-card.active {
+  border-color: var(--primary);
+  background: rgba(var(--primary-rgb), .06);
+}
+.career-mode-icon {
+  font-size: 1.6rem;
+  line-height: 1;
+  margin-bottom: 8px;
+}
+.career-mode-title {
+  font-size: .9rem;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+.career-mode-desc {
+  font-size: .75rem;
+  color: var(--text-secondary);
+  line-height: 1.4;
+}
+.career-life-card {
+  text-align: center;
+  padding: 32px 24px;
+}
+.career-life-emoji {
+  font-size: 3rem;
+  line-height: 1;
+  margin-bottom: 12px;
+}
+@media (max-width: 640px) {
+  .career-mode-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* ===== v3.2: 职业规划（时间轴路径） ===== */
 .loading-spinner {
   width: 18px; height: 18px;
@@ -1202,4 +1270,238 @@ input[type="file"]::file-selector-button:hover {
 @keyframes modalPopIn {
   from { opacity: 0; transform: translateY(12px) scale(0.98); }
   to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* ===== v8.4: 库卡片体系（岗位库 / 简历库）=====
+   设计意图：
+   - 市场数据来源：青绿底纹 + 左色条，代表「外部采集」
+   - 自建/手工：琥珀底纹 + 左色条，代表「个人创建」
+   - 已解析简历：青绿 ok 徽章；未解析：琥珀待处理
+   - 分组标题：清晰分隔两类来源
+   ============================================================ */
+
+/* 库网格 */
+.library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 16px;
+}
+
+/* 库副标题 */
+.library-subtitle {
+  font-size: .82rem;
+  color: var(--text-secondary);
+  margin-top: 2px;
+}
+
+/* ── 分组标题（市场数据 / 自建）── */
+.library-section-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 4px;
+  margin-top: 8px;
+}
+.library-section-header:first-child { margin-top: 0; }
+.library-section-icon {
+  font-size: 1.2rem;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.library-section-title {
+  font-size: .9rem;
+  font-weight: 600;
+  color: var(--text);
+}
+.library-section-count {
+  font-size: .78rem;
+  color: var(--text-muted);
+  background: var(--bg);
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+}
+
+/* ── 卡片主体 ── */
+.library-card {
+  position: relative;
+  overflow: hidden;
+  padding: 0; /* 内容自行控制内边距 */
+  border-left: 4px solid transparent;
+}
+.library-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: .45;
+  pointer-events: none;
+  border-radius: inherit;
+  transition: opacity var(--dur-fast) ease;
+}
+.library-card:hover::before { opacity: .7; }
+
+/* 市场数据卡片：青绿系 */
+.library-card.source-market {
+  border-left-color: var(--teal);
+}
+.library-card.source-market::before {
+  background:
+    linear-gradient(135deg, var(--teal-soft) 0%, transparent 60%),
+    repeating-linear-gradient(-45deg, transparent, transparent 10px, rgba(58,122,106,.03) 10px, rgba(58,122,106,.03) 20px);
+}
+
+/* 自建卡片：琥珀系 */
+.library-card.source-custom {
+  border-left-color: var(--amber-500);
+}
+.library-card.source-custom::before {
+  background:
+    linear-gradient(135deg, var(--amber-50) 0%, transparent 60%),
+    repeating-linear-gradient(45deg, transparent, transparent 10px, rgba(160,137,69,.03) 10px, rgba(160,137,69,.03) 20px);
+}
+
+/* 简历卡片：已解析 vs 未解析 */
+.library-card.resume-parsed {
+  border-left-color: var(--teal);
+}
+.library-card.resume-parsed::before {
+  background:
+    linear-gradient(135deg, var(--teal-soft) 0%, transparent 60%);
+}
+.library-card.resume-unparsed {
+  border-left-color: var(--amber-500);
+}
+.library-card.resume-unparsed::before {
+  background:
+    linear-gradient(135deg, var(--amber-50) 0%, transparent 60%);
+}
+
+/* ── 卡片内部结构 ── */
+.library-card-head {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 16px 16px 0;
+}
+.library-card-title {
+  font-size: .95rem;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1.4;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.library-card-badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.library-card-body {
+  position: relative;
+  z-index: 1;
+  padding: 10px 16px;
+}
+.library-card-meta {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 8px 16px 12px;
+  font-size: .78rem;
+  color: var(--text-muted);
+}
+.library-card-meta span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.library-card-actions {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  gap: 8px;
+  padding: 0 16px 14px;
+}
+
+/* ── 徽章体系 ── */
+.lib-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: var(--radius-full);
+  font-size: .72rem;
+  font-weight: 600;
+  white-space: nowrap;
+  background: var(--slate-100);
+  color: var(--text-secondary);
+  border: 1px solid var(--border);
+}
+.lib-badge.market {
+  background: var(--teal-soft);
+  color: var(--emerald-700, var(--teal));
+  border-color: rgba(58,122,106,.2);
+}
+.lib-badge.ok {
+  background: var(--green-50);
+  color: var(--emerald-700, var(--success));
+  border-color: rgba(58,122,106,.2);
+}
+.lib-badge.warning {
+  background: var(--amber-50);
+  color: var(--amber-600, var(--warning));
+  border-color: rgba(160,137,69,.2);
+}
+
+/* ── 展开详情区 ── */
+.library-detail {
+  position: relative;
+  z-index: 1;
+  margin: 0 16px 14px;
+}
+.library-detail.hidden { display: none; }
+.library-detail-text {
+  padding: 12px;
+  background: var(--bg);
+  border-radius: 8px;
+  font-size: .82rem;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  max-height: 200px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 岗位卡片额外信息行（公司/地点） */
+.library-card-company {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px 0;
+  font-size: .82rem;
+  color: var(--text-secondary);
+}
+.library-card-company span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 响应式 */
+@media (max-width: 640px) {
+  .library-grid {
+    grid-template-columns: 1fr;
+  }
 }

@@ -189,11 +189,10 @@ class FakeSession:
 
 @pytest.fixture()
 def ws_client(tmp_path, monkeypatch):
-    """真实 app + 临时文件 DB + 关闭认证 + 预置 sessions 行（reports 表有外键）。
+    """真实 app + 临时文件 DB + 预置 sessions 行（reports 表有外键）。
 
     形态与 test_api.py 的 client fixture 一致：sync 测试 + TestClient。
     """
-    monkeypatch.setattr(config, "AUTH_ENABLED", False)
     monkeypatch.setattr(config, "DB_PATH", str(tmp_path / "ws_test.db"))
     monkeypatch.setattr(config, "MARKET_DB_PATH", str(tmp_path / "ws_market.db"))
 
@@ -423,10 +422,13 @@ class TestHandshake:
                 ws.receive_json()
             assert ei.value.code == 4000
 
-    def test_unauthorized_rejected_with_4001_before_accept(self, ws_client, monkeypatch):
-        """认证开启 + 匿名连接：accept 之前以 4001 关闭（浏览器才拿得到自定义码）。"""
-        monkeypatch.setattr(config, "AUTH_ENABLED", True)
-        with pytest.raises(WebSocketDisconnect) as ei:
-            with ws_client.websocket_connect(f"/ws/interview/{SESSION_ID}?token=") as ws:
-                ws.receive_json()
-        assert ei.value.code == 4001
+    def test_handshake_needs_no_token(self, ws_client, fake_session):
+        """v8.3: 握手不再要求任何凭据——连接不带 token 也能正常进入面试循环。
+
+        此前 token 是必填 query 参数，缺它的连接会在 accept 之前被 4001 拒绝；
+        现在 URL 上什么都不带也应当照常收到首帧。
+        """
+        state.active_sessions[SESSION_ID] = fake_session
+        with ws_client.websocket_connect(f"/ws/interview/{SESSION_ID}") as ws:
+            msg = _recv_with_timeout(ws)
+            assert msg["type"] == "interviewer_info"

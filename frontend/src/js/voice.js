@@ -593,13 +593,92 @@ export function stopRecording() {
 }
 
 /**
+ * 把浏览器录音（webm/opus、mp4 等）在前端转码为 16k 单声道 WAV。
+ *
+ * 为什么必须转码：MiMo-ASR 服务端硬性只允许 audio/wav、audio/mpeg、audio/mp3
+ * （实测 webm/opus、audio/mp4 都会被 400 拒收 "mime type must be one of..."），
+ * 而浏览器 MediaRecorder 默认产出 webm/opus（较新 Chrome 甚至会产出 audio/mp4），
+ * 直接上传必然失败 —— 表现为"语音识别连不上/失败"。
+ * 浏览器原生可解码任意录音格式，再用 Web Audio 重采样到 16k 单声道、手动编码 WAV，
+ * 即能保证 MiMo 必收，且零第三方依赖。
+ *
+ * 转码失败（极罕见，如音频已损坏）时回退原始 blob，至少保留一次尝试机会。
+ * @param {Blob} blob
+ * @returns {Promise<Blob>}
+ */
+async function blobToWav(blob) {
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    const OfflineCtx = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    if (!AC || !OfflineCtx || typeof blob.arrayBuffer !== 'function') return blob;
+
+    const arrayBuffer = await blob.arrayBuffer();
+    const decodeCtx = new AC();
+    const audioBuffer = await decodeCtx.decodeAudioData(arrayBuffer);
+    if (typeof decodeCtx.close === 'function') { try { decodeCtx.close(); } catch (_) {} }
+
+    const targetRate = 16000;
+    const frames = Math.max(1, Math.ceil(audioBuffer.duration * targetRate));
+    const offline = new OfflineCtx(1, frames, targetRate);
+    const src = offline.createBufferSource();
+    src.buffer = audioBuffer;
+    src.connect(offline.destination);
+    src.start(0);
+    const rendered = await offline.startRendering();
+    return encodeWav(rendered);
+  } catch (e) {
+    console.warn('[Voice] 录音转码 WAV 失败，沿用原始格式:', e);
+    return blob;
+  }
+}
+
+/** AudioBuffer -> 16-bit PCM WAV Blob（单/多声道均兼容，MiMo 接受 wav） */
+function encodeWav(audioBuffer) {
+  const numCh = audioBuffer.numberOfChannels;
+  const sampleRate = audioBuffer.sampleRate;
+  const frames = audioBuffer.length;
+  const blockAlign = numCh * 2;            // 16-bit
+  const dataSize = frames * blockAlign;
+  const buffer = new ArrayBuffer(44 + dataSize);
+  const view = new DataView(buffer);
+  let off = 0;
+  const writeStr = (s) => { for (let i = 0; i < s.length; i++) view.setUint8(off++, s.charCodeAt(i)); };
+  writeStr('RIFF');
+  view.setUint32(off, 36 + dataSize, true); off += 4;
+  writeStr('WAVE');
+  writeStr('fmt ');
+  view.setUint32(off, 16, true); off += 4;   // fmt chunk size
+  view.setUint16(off, 1, true); off += 2;    // PCM
+  view.setUint16(off, numCh, true); off += 2;
+  view.setUint32(off, sampleRate, true); off += 4;
+  view.setUint32(off, sampleRate * blockAlign, true); off += 4;
+  view.setUint16(off, blockAlign, true); off += 2;
+  view.setUint16(off, 16, true); off += 2;   // bits per sample
+  writeStr('data');
+  view.setUint32(off, dataSize, true); off += 4;
+
+  const channels = [];
+  for (let c = 0; c < numCh; c++) channels.push(audioBuffer.getChannelData(c));
+  for (let i = 0; i < frames; i++) {
+    for (let c = 0; c < numCh; c++) {
+      const s = Math.max(-1, Math.min(1, channels[c][i]));
+      view.setInt16(off, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+      off += 2;
+    }
+  }
+  return new Blob([buffer], { type: 'audio/wav' });
+}
+
+/**
  * 上传录音 -> MiMo-ASR -> 转写文本
+ * 上传前统一转码为 WAV（见 blobToWav），规避 MiMo 拒收 webm/mp4 的格式问题。
  * @returns {Promise<{ok:boolean, text:string, message:string}>}
  */
 export async function transcribeRecording(blob) {
   if (!blob) return { ok: false, text: '', message: '无录音数据' };
   try {
-    const data = await requestVoiceASR(blob);
+    const wav = await blobToWav(blob);
+    const data = await requestVoiceASR(wav);
     return { ok: !!data.ok, text: data.text || '', message: data.message || '' };
   } catch (e) {
     return { ok: false, text: '', message: e.message || '语音识别失败' };

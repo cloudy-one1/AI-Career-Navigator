@@ -28,10 +28,10 @@ v8.1 术语纪律：对外的四段状态名为 当前简历 / 目标岗位 / �
 4. **NBA 用规则表而非 LLM**：确定性、零延迟、可单测、可解释（能告诉用户
    "为什么是这一步"）。LLM 只用在它擅长的规划生成上。
 
-已知局限（P0 阶段，需登记进 CHARTER.md）：
-- weakness_memory 以 dimension 为主键、**全局无 owner 维度**（v6.3 早于 v7.0
-  认证），故「待提升项」本阶段沿用其全局性；P2 再按 _ensure_owner_columns
-  的 PRAGMA+ALTER 范式补 owner_id。
+已知局限：
+- v8.4 前：weakness_memory 以 dimension 为主键、全局无归属维度（v6.3 的设计），
+  故「待提升项」是全局的。v8.4 已改为 (dimension, position_id) 复合主键，
+  前端长期记忆页可通过岗位选择器按岗位筛选。
 
 分层：L3（只依赖 L1 的 db 与 L2 的 weakness_memory / market.store；
 已在 .importlinter 的 L3 层登记）。
@@ -67,22 +67,18 @@ TARGET_DIM_SCORE = 4.0        # 五维目标线（1-5 制）：低于此值记�
 ACTIVE_WEAKNESS_MIN = 30.0    # 长期薄弱度（0-100）超过此值才算"活跃短板"
 MAX_GAPS = 5                  # 差距清单最多展示条数（首屏信息密度取舍）
 
-# 缓存：owner_id → (写入时刻 monotonic, 档案 dict)
-_cache: dict[str, tuple[float, dict]] = {}
+# 缓存：单槽位 (写入时刻 monotonic, 档案 dict)
+# v8.3: 此前按 owner_id 分键（多用户各一份），认证下线后只有一个使用者，
+# dict 退化为单槽位——保留 dict 只会让人误以为还有别的键。
+_cache: tuple[float, dict] | None = None
 
 
 # ===== 通用小工具 =====
 
-def _cache_key(owner_id: str | None) -> str:
-    return owner_id or "__anon__"
-
-
-def invalidate_profile_cache(owner_id: str | None = None) -> None:
-    """档案变更后清缓存。owner_id 为空则全清（如退出登录）。"""
-    if owner_id is None:
-        _cache.clear()
-        return
-    _cache.pop(_cache_key(owner_id), None)
+def invalidate_profile_cache() -> None:
+    """档案变更后清缓存（简历/岗位上传、出报告、生成规划后调用）。"""
+    global _cache
+    _cache = None
 
 
 def _load_json(raw, default):
@@ -130,10 +126,10 @@ def _normalize_skills(raw, limit: int = 8) -> list[str]:
 
 # ===== 段一：我是谁 =====
 
-async def _load_identity(owner_id: str | None) -> dict:
+async def _load_identity() -> dict:
     """简历画像。list_resumes 不含 parsed_json（列清单刻意排除了大字段），
     故先取列表拿最新一份，再按 id 单独取解析结果。"""
-    resumes = await list_resumes(owner_id=owner_id, limit=1)
+    resumes = await list_resumes(limit=1)
     if not resumes:
         return {"has_resume": False, "skills": [], "highlights": []}
 
@@ -184,9 +180,9 @@ async def _match_keyword(position_title: str) -> str | None:
     return max(hits, key=len) if hits else None
 
 
-async def _load_target(owner_id: str | None) -> dict:
+async def _load_target() -> dict:
     """目标岗位 + 市场基准（两个库，服务层拼接）。"""
-    positions = await list_positions(owner_id=owner_id, limit=1)
+    positions = await list_positions(limit=1)
     if not positions:
         return {"has_target": False, "market": {}}
 
@@ -251,33 +247,47 @@ def _report_weights(report: dict) -> dict:
     return {k: float(weights.get(k, 0.20)) for k in DIM_KEYS}
 
 
-async def _load_level(owner_id: str | None) -> dict:
+async def _load_level() -> dict:
     """五维能力 + 环比变化 + 成长曲线。
 
     取数策略：会话数仍走 list_sessions（要总量与最近时间），报告序列走
     list_recent_reports **一次 JOIN**——成长曲线要的是 N 场历史，逐份
     get_report 会退化成 N 次 IO。
     """
-    sessions = await list_sessions(limit=SESSION_SCAN_LIMIT, owner_id=owner_id)
+    sessions = await list_sessions(limit=SESSION_SCAN_LIMIT)
     if not sessions:
         return {
             "has_history": False, "session_count": 0, "report_count": 0,
+            "completed_session_count": 0, "completed_report_count": 0,
             "overall": None, "dimensions": [], "delta": {}, "history": [],
             "last_session_at": "",
         }
 
+    # 真正「走完」的会话：status == completed。
+    # 开场后中途退出记 interrupted，而退出时同样会落一份部分报告——
+    # 若不区分，"面试演练"与"能力诊断"两步会被一次未完成的尝试同时点亮，
+    # 进度条因此虚高。故另计两个「完成」口径，仅供旅程判定使用。
+    completed_ids = {
+        s.get("id") for s in sessions
+        if str(s.get("status") or "").lower() == "completed"
+    }
+
     # 报告按时间倒序（最新在前）
     reports: list[dict] = []
     stamps: list[str] = []
-    for row in await list_recent_reports(owner_id=owner_id, limit=MAX_HISTORY_POINTS):
+    completed_report_count = 0
+    for row in await list_recent_reports(limit=MAX_HISTORY_POINTS):
         rep = _load_json(row.get("report_json"), None)
         if isinstance(rep, dict) and rep:
             reports.append(rep)
             stamps.append(row.get("created_at") or "")
+            if row.get("session_id") in completed_ids:
+                completed_report_count += 1
 
     if not reports:
         return {
             "has_history": False, "session_count": len(sessions), "report_count": 0,
+            "completed_session_count": len(completed_ids), "completed_report_count": 0,
             "overall": None, "dimensions": [], "delta": {}, "history": [],
             "last_session_at": sessions[0].get("updated_at", ""),
         }
@@ -321,6 +331,8 @@ async def _load_level(owner_id: str | None) -> dict:
         "has_history": True,
         "session_count": len(sessions),
         "report_count": len(reports),
+        "completed_session_count": len(completed_ids),
+        "completed_report_count": completed_report_count,
         "overall": round(sum(overall_vals) / len(overall_vals), 2) if overall_vals else None,
         "dimensions": dimensions,
         "delta": {d["key"]: d["delta"] for d in dimensions if d["delta"] is not None},
@@ -421,7 +433,7 @@ def compute_skill_gap(resume_skills: list[str], market_skills: list[str],
     }
 
 
-async def build_skill_gap_context(owner_id: str | None = None, limit: int = 4) -> str:
+async def build_skill_gap_context(limit: int = 4) -> str:
     """给职业规划用的技能缺口上下文（纯文本块）。
 
     与 build_weakness_context 的分工：那边说"你面试表达上弱在哪"，
@@ -430,7 +442,7 @@ async def build_skill_gap_context(owner_id: str | None = None, limit: int = 4) -
     无数据时返回空串，调用方据此跳过注入。
     """
     try:
-        profile = await get_profile(owner_id=owner_id)
+        profile = await get_profile()
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[档案] 规划上下文：技能缺口读取失败，跳过注入: {e}")
         return ""
@@ -465,12 +477,17 @@ def derive_journey(identity: dict, target: dict, level: dict,
                    marks: dict | None = None) -> dict:
     """推导五步主线的完成度（纯函数，不碰 IO —— 便于单测覆盖判定口径）。
 
-    判定口径：
+    判定口径（核心原则：**走完才算数**，而非"建了记录就算"）：
         职业定位 = 已选定目标岗位
         简历准备 = 已上传简历
-        面试演练 = 已开过至少一场（session_count > 0）
-        能力诊断 = 已产出至少一份报告（report_count > 0）
+        面试演练 = 已**走完**至少一场（completed_session_count > 0）
+        能力诊断 = 已产出至少一份**走完的会话**的报告（completed_report_count > 0）
         发展路径 = 已生成过规划（**唯一无法推导的一步**，靠 journey_marks 打点）
+
+    为什么不用 session_count / report_count：
+        开场即退出同样会建会话、并在退出时落一份部分报告。用这两个总量口径，
+        一次未完成的尝试会同时点亮「演练」与「诊断」两步，进度条明显虚高。
+        故后两步只认 status == completed 的会话及其报告。
 
     状态：done（已完成）/ current（第一个未完成的步骤）/ todo（未开始）。
     current 至多一个——它同时是"下一步该走到哪"的视觉答案。
@@ -479,8 +496,11 @@ def derive_journey(identity: dict, target: dict, level: dict,
     checks = {
         "positioning": bool((target or {}).get("has_target")),
         "resume": bool((identity or {}).get("has_resume")),
-        "practice": int((level or {}).get("session_count") or 0) > 0,
-        "diagnosis": int((level or {}).get("report_count") or 0) > 0,
+        # 老档案缺 completed_* 字段时退化为总量口径，避免无数据可依时全部塌成 todo
+        "practice": int((level or {}).get("completed_session_count",
+                                          (level or {}).get("session_count") or 0) or 0) > 0,
+        "diagnosis": int((level or {}).get("completed_report_count",
+                                           (level or {}).get("report_count") or 0) or 0) > 0,
         "career_path": JOURNEY_STEP_KEY_NEEDS_MARK in marks,
     }
 
@@ -582,21 +602,19 @@ def next_best_action(profile: dict) -> dict | None:
 
 # ===== 聚合入口 =====
 
-async def get_profile(owner_id: str | None = None, use_cache: bool = True) -> dict:
+async def get_profile(use_cache: bool = True) -> dict:
     """聚合四组状态 + NBA。任一段失败只降级该段，整接口不 500。"""
-    key = _cache_key(owner_id)
-    if use_cache:
-        hit = _cache.get(key)
-        if hit and (time.monotonic() - hit[0]) < CACHE_TTL_SECONDS:
-            return hit[1]
+    global _cache
+    if use_cache and _cache and (time.monotonic() - _cache[0]) < CACHE_TTL_SECONDS:
+        return _cache[1]
 
     degraded: list[str] = []
 
     # 三段并行聚合；整段崩溃也必须只降级自身（return_exceptions 是降级纪律的一部分）
     results = await asyncio.gather(
-        _load_identity(owner_id),
-        _load_target(owner_id),
-        _load_level(owner_id),
+        _load_identity(),
+        _load_target(),
+        _load_level(),
         return_exceptions=True,
     )
     seg_names = ("identity", "target", "level")
@@ -604,6 +622,7 @@ async def get_profile(owner_id: str | None = None, use_cache: bool = True) -> di
         {"has_resume": False, "skills": [], "highlights": []},
         {"has_target": False, "market": {}},
         {"has_history": False, "session_count": 0, "report_count": 0,
+         "completed_session_count": 0, "completed_report_count": 0,
          "overall": None, "dimensions": [], "delta": {}, "history": [],
          "last_session_at": ""},
     )
@@ -627,7 +646,7 @@ async def get_profile(owner_id: str | None = None, use_cache: bool = True) -> di
     # v8.1: 五步主线完成度。打点读取失败只让 career_path 回落到未完成，
     # 其余四步仍由档案推导——不把整段降级（它本来就是推导出来的）。
     try:
-        marks = await list_journey_marks(owner_id)
+        marks = await list_journey_marks()
     except Exception as e:  # noqa: BLE001
         logger.warning(f"[档案] 旅程打点读取失败，发展路径步骤降级为未完成: {e}")
         marks = {}
@@ -642,6 +661,8 @@ async def get_profile(owner_id: str | None = None, use_cache: bool = True) -> di
         target["skill_gap"] = skill_gap
 
     gaps = _build_gaps(level, memory_points)
+    # v8.4: 提取目标岗位 ID，供前端长期记忆页做岗位筛选的默认值
+    tid = (target or {}).get("position_id", "")
     profile = {
         "identity": identity,
         "target": target,
@@ -651,14 +672,15 @@ async def get_profile(owner_id: str | None = None, use_cache: bool = True) -> di
         "next_action": None,
         "updated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "degraded": degraded,
+        "target_position_id": tid,
     }
     profile["next_action"] = next_best_action(profile)
 
-    _cache[key] = (time.monotonic(), profile)
+    _cache = (time.monotonic(), profile)
     return profile
 
 
-async def build_weakness_context(owner_id: str | None = None, limit: int = 3) -> str:
+async def build_weakness_context(limit: int = 3) -> str:
     """给职业规划用的薄弱点上下文（纯文本块）。
 
     这是 P0 闭环的关键拼图：让规划器第一次知道"用户练过什么、弱在哪里"。

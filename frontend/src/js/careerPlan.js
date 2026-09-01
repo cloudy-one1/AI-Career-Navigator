@@ -1,12 +1,14 @@
 // ===================================================
 // careerPlan.js — 职业规划 Tab（时间轴多阶段路径）
 // v3.2: 以 Gap 六维快照为基线，渲染 LLM 推理出的多阶段发展路径
+// v8.x: 三模式入口——岗位库规划 / 手动填写 / 人生彩蛋
 // ===================================================
 
 import { $, el, toast } from './utils.js';
-import { callCareerPlan } from './api.js';
+import { callCareerPlan, request, uploadResume } from './api.js';
 
 let chartInstance = null;
+let currentMode = 'library'; // 'library' | 'manual' | 'life'
 
 /** 初始化职业规划 Tab（幂等：已渲染则跳过） */
 export function initCareerPlan() {
@@ -14,25 +16,181 @@ export function initCareerPlan() {
   if (!panel || panel.dataset.ready) return;
   panel.dataset.ready = '1';
 
-  const formCard = el('div', { className: 'card' },
+  panel.appendChild(renderHeader());
+
+  const modeArea = el('div', { id: 'career-mode-area' });
+  panel.appendChild(modeArea);
+
+  const resultBox = el('div', { id: 'career-result' });
+  panel.appendChild(resultBox);
+
+  switchMode('library');
+}
+
+/** 顶部说明 + 模式切换卡片 */
+function renderHeader() {
+  return el('div', { className: 'card' },
     el('div', { className: 'card-title', textContent: '🧭 职业路径规划' }),
     el('div', { style: 'font-size:.85rem;color:var(--text-secondary);margin-bottom:16px;line-height:1.7;' },
       '基于你的简历与目标岗位，先刻画「你现在的位置」（六维匹配快照），再推理出一条可执行的多阶段发展路径（时间轴 + 每阶段需补技能 + 里程碑 + 岗位跃迁）。',
     ),
+    el('div', { className: 'career-mode-grid' },
+      modeCard('library', '💼', '岗位库规划', '从岗位库选择目标岗位，一键生成发展路径'),
+      modeCard('manual', '✍️', '手动填写规划', '自定义目标岗位与 JD，灵活制定路径'),
+      modeCard('life', '🌌', '人生规划', '不止职场，探索更广阔的人生可能性'),
+    ),
+  );
+}
+
+function modeCard(key, icon, title, desc) {
+  const card = el('div', {
+    className: `career-mode-card ${key === currentMode ? 'active' : ''}`,
+    dataset: { mode: key },
+    onClick: () => switchMode(key),
+  },
+    el('div', { className: 'career-mode-icon', textContent: icon }),
+    el('div', { className: 'career-mode-title', textContent: title }),
+    el('div', { className: 'career-mode-desc', textContent: desc }),
+  );
+  return card;
+}
+
+/** 切换模式 */
+function switchMode(mode) {
+  currentMode = mode;
+
+  // 更新卡片激活态
+  $$('.career-mode-card').forEach(c => {
+    c.classList.toggle('active', c.dataset.mode === mode);
+  });
+
+  const area = $('#career-mode-area');
+  area.innerHTML = '';
+
+  if (mode === 'library') {
+    area.appendChild(renderLibraryMode());
+    loadPositionPicker();
+  } else if (mode === 'manual') {
+    area.appendChild(renderManualMode());
+  } else if (mode === 'life') {
+    area.appendChild(renderLifeMode());
+  }
+}
+
+// ===================================================
+// 模式 1：岗位库规划
+// ===================================================
+
+function renderLibraryMode() {
+  return el('div', { className: 'card' },
+    el('div', { className: 'form-group' },
+      el('label', { className: 'form-label', textContent: '目标岗位（从岗位库选择）' }),
+      el('select', { id: 'career-lib-position', className: 'form-input' },
+        el('option', { value: '', textContent: '请选择岗位…' }),
+      ),
+    ),
     el('div', { className: 'form-group' },
       el('label', { className: 'form-label', textContent: '简历内容' }),
-      el('textarea', {
-        id: 'career-resume-text',
-        className: 'form-textarea',
-        placeholder: '粘贴简历内容（与面试 Tab 共用），至少 10 字...',
-      }),
-      el('button', {
-        id: 'career-use-interview-resume',
-        className: 'btn btn-sm btn-secondary',
-        style: 'margin-top:8px;',
-        textContent: '📋 复用面试 Tab 的简历',
-        onClick: copyResumeFromInterview,
-      }),
+      el('div', { style: 'display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;' },
+        el('textarea', {
+          id: 'career-resume-text',
+          className: 'form-textarea',
+          placeholder: '粘贴简历内容（与面试 Tab 共用），至少 10 字…',
+          style: 'flex:1;min-width:200px;',
+        }),
+      ),
+      el('div', { style: 'display:flex;gap:8px;margin-top:8px;' },
+        el('label', { className: 'btn btn-sm btn-secondary', style: 'cursor:pointer;display:inline-flex;align-items:center;gap:4px;' },
+          '📄 上传简历',
+          el('input', {
+            type: 'file', accept: '.pdf,.docx,.txt', style: 'display:none;',
+            onChange: e => handleResumeUpload(e.target),
+          }),
+        ),
+        el('button', {
+          id: 'career-use-interview-resume',
+          className: 'btn btn-sm btn-secondary',
+          textContent: '📋 复用面试 Tab 的简历',
+          onClick: copyResumeFromInterview,
+        }),
+      ),
+    ),
+    el('div', { style: 'display:flex;gap:12px;flex-wrap:wrap;' },
+      el('div', { className: 'form-group', style: 'flex:1;min-width:160px;' },
+        el('label', { className: 'form-label', textContent: '目标年限（年）' }),
+        el('select', { id: 'career-timeframe', className: 'form-input' },
+          ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(y =>
+            el('option', { value: String(y), textContent: `${y} 年`, ...(y === 3 ? { selected: '' } : {}) })
+          ),
+        ),
+      ),
+    ),
+    el('button', { id: 'career-plan-btn', className: 'btn btn-primary', textContent: '🚀 生成职业路径', onClick: submitLibraryPlan }),
+  );
+}
+
+async function loadPositionPicker() {
+  const sel = $('#career-lib-position');
+  if (!sel) return;
+  try {
+    const data = await request('GET', '/api/positions');
+    const rows = data.positions || [];
+    sel.replaceChildren(
+      el('option', { value: '', textContent: '请选择岗位…' }),
+      ...rows.map(p => el('option', { value: JSON.stringify({ id: p.id, title: p.title, jd: p.jd_text || '' }), textContent: p.title || '未命名岗位' })),
+    );
+  } catch (e) {
+    sel.replaceChildren(el('option', { value: '', textContent: '岗位库加载失败' }));
+  }
+}
+
+async function submitLibraryPlan() {
+  const sel = $('#career-lib-position');
+  const positionStr = sel?.value;
+  if (!positionStr) { toast('请先从岗位库选择一个岗位', 'warning'); return; }
+
+  let position;
+  try { position = JSON.parse(positionStr); } catch { toast('岗位数据异常', 'error'); return; }
+
+  const resumeText = $('#career-resume-text').value.trim();
+  const timeframeYears = parseInt($('#career-timeframe').value, 10) || 3;
+
+  if (!resumeText) { toast('请输入简历内容', 'warning'); return; }
+
+  await doSubmit({ resumeText, targetRole: position.title, jdText: position.jd, timeframeYears });
+}
+
+// ===================================================
+// 模式 2：手动填写规划
+// ===================================================
+
+function renderManualMode() {
+  return el('div', { className: 'card' },
+    el('div', { className: 'form-group' },
+      el('label', { className: 'form-label', textContent: '简历内容' }),
+      el('div', { style: 'display:flex;gap:8px;align-items:flex-start;flex-wrap:wrap;' },
+        el('textarea', {
+          id: 'career-resume-text',
+          className: 'form-textarea',
+          placeholder: '粘贴简历内容（与面试 Tab 共用），至少 10 字…',
+          style: 'flex:1;min-width:200px;',
+        }),
+      ),
+      el('div', { style: 'display:flex;gap:8px;margin-top:8px;' },
+        el('label', { className: 'btn btn-sm btn-secondary', style: 'cursor:pointer;display:inline-flex;align-items:center;gap:4px;' },
+          '📄 上传简历',
+          el('input', {
+            type: 'file', accept: '.pdf,.docx,.txt', style: 'display:none;',
+            onChange: e => handleResumeUpload(e.target),
+          }),
+        ),
+        el('button', {
+          id: 'career-use-interview-resume',
+          className: 'btn btn-sm btn-secondary',
+          textContent: '📋 复用面试 Tab 的简历',
+          onClick: copyResumeFromInterview,
+        }),
+      ),
     ),
     el('div', { className: 'form-group' },
       el('label', { className: 'form-label', textContent: '目标岗位 / 角色' }),
@@ -45,7 +203,7 @@ export function initCareerPlan() {
     el('div', { style: 'display:flex;gap:12px;flex-wrap:wrap;' },
       el('div', { className: 'form-group', style: 'flex:1;min-width:160px;' },
         el('label', { className: 'form-label', textContent: '目标年限（年）' }),
-        el('select', { id: 'career-timeframe', className: 'form-input', },
+        el('select', { id: 'career-timeframe', className: 'form-input' },
           ...[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map(y =>
             el('option', { value: String(y), textContent: `${y} 年`, ...(y === 3 ? { selected: '' } : {}) })
           ),
@@ -57,34 +215,15 @@ export function initCareerPlan() {
           id: 'career-jd-text',
           className: 'form-textarea',
           style: 'min-height:56px;',
-          placeholder: '粘贴目标岗位 JD 描述（可选）...',
+          placeholder: '粘贴目标岗位 JD 描述（可选）…',
         }),
       ),
     ),
-    el('button', { id: 'career-plan-btn', className: 'btn btn-primary', textContent: '🚀 生成职业路径' }),
+    el('button', { id: 'career-plan-btn', className: 'btn btn-primary', textContent: '🚀 生成职业路径', onClick: submitManualPlan }),
   );
-
-  const resultBox = el('div', { id: 'career-result' });
-
-  panel.append(formCard, resultBox);
-
-  $('#career-plan-btn').addEventListener('click', submitPlan);
 }
 
-/** 复用面试 Tab 的简历文本框内容 */
-function copyResumeFromInterview() {
-  const resumeText = $('#resume-text');
-  const target = $('#career-resume-text');
-  if (!resumeText || !resumeText.value.trim()) {
-    toast('面试 Tab 的简历为空，请先粘贴简历', 'warning');
-    return;
-  }
-  target.value = resumeText.value.trim();
-  toast('已复用面试简历', 'success');
-}
-
-/** 提交规划请求 */
-async function submitPlan() {
+async function submitManualPlan() {
   const resumeText = $('#career-resume-text').value.trim();
   const targetRole = $('#career-target-role').value.trim();
   const jdText = $('#career-jd-text').value.trim();
@@ -93,16 +232,53 @@ async function submitPlan() {
   if (!resumeText) { toast('请输入简历内容', 'warning'); return; }
   if (!targetRole) { toast('请输入目标岗位 / 角色', 'warning'); return; }
 
+  await doSubmit({ resumeText, targetRole, jdText, timeframeYears });
+}
+
+// ===================================================
+// 模式 3：人生规划彩蛋
+// ===================================================
+
+function renderLifeMode() {
+  return el('div', { className: 'card career-life-card' },
+    el('div', { className: 'career-life-emoji', textContent: '🌌' }),
+    el('div', { className: 'card-title', style: 'text-align:center;margin-bottom:8px;', textContent: '人生不止职场' }),
+    el('div', { style: 'font-size:.9rem;color:var(--text-secondary);text-align:center;line-height:1.7;max-width:520px;margin:0 auto 18px;' },
+      '职业规划只是人生的一小部分。如果你想知道「我想过怎样的一生」「如何找到真正的热爱」「除了升职加薪还有什么活法」——豆包的人生规划智能体，或许能给你一些灵感。',
+    ),
+    el('div', { style: 'text-align:center;' },
+      el('a', {
+        href: 'https://www.doubao.com/',
+        target: '_blank',
+        rel: 'noopener noreferrer',
+        className: 'btn btn-primary',
+        style: 'display:inline-flex;align-items:center;gap:6px;',
+      },
+        el('span', { textContent: '✨ 去豆包探索人生更多可能' }),
+        el('span', { textContent: '→' }),
+      ),
+    ),
+    el('div', { style: 'margin-top:14px;font-size:.75rem;color:var(--text-muted);text-align:center;' },
+      '彩蛋：跳转外部平台，与AI 求职领航无关，纯友情推荐。',
+    ),
+  );
+}
+
+// ===================================================
+// 通用提交与渲染
+// ===================================================
+
+async function doSubmit({ resumeText, targetRole, jdText = '', timeframeYears = 3 }) {
   const btn = $('#career-plan-btn');
   btn.disabled = true;
-  btn.textContent = '⏳ 正在推理职业路径...';
+  btn.textContent = '⏳ 正在推理职业路径…';
 
   const resultBox = $('#career-result');
   resultBox.innerHTML = '';
   resultBox.appendChild(el('div', { className: 'card' },
     el('div', { style: 'display:flex;align-items:center;gap:10px;color:var(--text-secondary);font-size:.9rem;' },
       el('span', { className: 'loading-spinner' }),
-      el('span', { textContent: '正在分析现状并推理多阶段发展路径（约 10-30 秒）...' }),
+      el('span', { textContent: '正在分析现状并推理多阶段发展路径（约 10-30 秒）…' }),
     ),
   ));
 
@@ -119,6 +295,36 @@ async function submitPlan() {
   } finally {
     btn.disabled = false;
     btn.textContent = '🚀 生成职业路径';
+  }
+}
+
+/** 复用面试 Tab 的简历文本框内容 */
+function copyResumeFromInterview() {
+  const resumeText = $('#resume-text');
+  const target = $('#career-resume-text');
+  if (!resumeText || !resumeText.value.trim()) {
+    toast('面试 Tab 的简历为空，请先粘贴简历', 'warning');
+    return;
+  }
+  target.value = resumeText.value.trim();
+  toast('已复用面试简历', 'success');
+}
+
+/** 上传简历文件并解析回填到 textarea */
+async function handleResumeUpload(input) {
+  const file = input.files && input.files[0];
+  if (!file) return;
+  input.value = ''; // 允许重复选同一个文件
+  toast('正在解析简历…', 'info');
+  try {
+    const data = await uploadResume(file);
+    const textarea = $('#career-resume-text');
+    if (textarea && data.text) {
+      textarea.value = data.text;
+      toast(`已解析 ${file.name}（${data.length} 字）`, 'success');
+    }
+  } catch (err) {
+    toast(err.message || '简历解析失败', 'error');
   }
 }
 
@@ -320,3 +526,6 @@ function renderSummary(plan) {
     ) : '',
   );
 }
+
+// v8.x: 兼容 utils 中未导出 $$ 的情况，本地兜底
+function $$(sel) { return Array.from(document.querySelectorAll(sel)); }

@@ -51,6 +51,7 @@ htmlcov/
 
 # === CodeBuddy AI 辅助 ===
 .codebuddy/
+.playwright-cli/
 
 # === 其它 AI 辅助工具（临时扫描脚本与产物） ===
 .agnes/

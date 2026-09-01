@@ -7,6 +7,7 @@ from backend.market.cleaner import (
     parse_salary,
     parse_experience,
     parse_education,
+    extract_city,
     extract_skills,
 )
 
@@ -103,6 +104,37 @@ class TestParseEducation:
         """中专/中技 不是'大专'的子串，落回默认"""
         result = parse_education("中专")
         assert result == "不限"  # 中专 ≠ 大专，不在匹配列表中
+
+
+# ============================================================
+# extract_city()
+# ============================================================
+
+class TestExtractCity:
+    """城市名归一化：统计聚合与地图定位的共同前置"""
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("上海", "上海"),
+        ("上海-徐汇区", "上海"),           # 51job 主形态：jobAreaString 的 '·' 已被替换为 '-'
+        ("北京·朝阳区", "北京"),            # 存量旧数据未替换分隔符的兜底
+        ("深圳-南山区-科技园", "深圳"),     # 多级地址只取首段
+        ("广州市", "广州"),                 # 行政后缀
+        ("呼和浩特市", "呼和浩特"),
+        ("", ""),
+    ])
+    def test_extract_city(self, raw, expected):
+        assert extract_city(raw) == expected
+
+    def test_none_input(self):
+        assert extract_city(None) == ""
+
+    def test_two_char_place_not_trimmed(self):
+        """'市辖区' 这类地名不以'市'结尾，不应被误伤"""
+        assert extract_city("市辖区") == "市辖区"
+
+    def test_same_city_districts_collapse(self):
+        """同一城市的不同行政区必须收敛为同一 key——否则统计会碎片化、地图散点会 miss"""
+        assert extract_city("上海-徐汇区") == extract_city("上海-浦东新区")
 
 
 # ============================================================

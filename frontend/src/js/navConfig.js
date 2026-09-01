@@ -6,6 +6,8 @@
 // app.js 不再逐项维护图标与标签。
 // ===================================================
 
+import { el } from './utils.js';
+
 function svg(paths) {
   return `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
 }
@@ -14,6 +16,7 @@ function svg(paths) {
 const CHECK_PATHS = '<polyline points="20 6 9 17 4 12"/>';
 
 const ICONS = {
+  // ── 子项图标 ──
   position: svg('<rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 21V5a2 2 0 0 0-2-2h-4a2 2 0 0 0-2 2v16"/>'),
   market: svg('<path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/>'),
   resume: svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/>'),
@@ -23,8 +26,15 @@ const ICONS = {
   report: svg('<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>'),
   memory: svg('<circle cx="12" cy="12" r="3"/><circle cx="4.5" cy="7" r="2"/><circle cx="19.5" cy="7" r="2"/><circle cx="4.5" cy="17" r="2"/><circle cx="19.5" cy="17" r="2"/><line x1="6.3" y1="8.2" x2="9.6" y2="10.6"/><line x1="17.7" y1="8.2" x2="14.4" y2="10.6"/><line x1="6.3" y1="15.8" x2="9.6" y2="13.4"/><line x1="17.7" y1="15.8" x2="14.4" y2="13.4"/>'),
   career: svg('<polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/>'),
-  account: svg('<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>'),
   overview: svg('<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>'),
+  home: svg('<path d="M3 9.5 12 3l9 6.5"/><path d="M5 9.5V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V9.5"/><path d="M9.5 21v-6h5v6"/>'),
+
+  // ── 步骤级图标（侧栏时间线 + 进度条节点，一眼区分五步）──
+  stepPositioning: svg('<circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/>'),           // 靶心：锁定目标
+  stepResume:    svg('<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/>'),  // 文档：准备材料
+  stepPractice:  svg('<path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>'),   // 对话：实战演练
+  stepDiagnosis: svg('<path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/>'),                                                       // 仪表盘：诊断分析
+  stepCareer:    svg('<polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/>'),                          // 地图：发展路径
 };
 
 /**
@@ -36,48 +46,67 @@ const ICONS = {
  * （history.js / marketData.js 的 .nav-item[data-tab=...].click()）都依赖它。
  */
 export const JOURNEY_STEPS = [
-  { num: '壹', title: '职业定位', children: [
-    { tab: 'position-library', label: '岗位库', shortLabel: '岗位', icon: ICONS.position },
+  { num: '壹', title: '职业定位', stepIcon: ICONS.stepPositioning, children: [
+    // 市场数据在前：先看清目标岗位的真实市场基准，再回岗位库存 JD 练，
+    // 与「市场数据 → 加入岗位库 → 开练」的实际动线一致。
     { tab: 'market-data', label: '市场数据', shortLabel: '市场', icon: ICONS.market },
+    { tab: 'position-library', label: '岗位库', shortLabel: '岗位', icon: ICONS.position },
   ] },
-  { num: '贰', title: '简历准备', children: [
+  { num: '贰', title: '简历准备', stepIcon: ICONS.stepResume, children: [
     { tab: 'resume-library', label: '简历库', shortLabel: '简历', icon: ICONS.resume },
   ] },
-  { num: '叁', title: '面试演练', children: [
+  { num: '叁', title: '面试演练', stepIcon: ICONS.stepPractice, children: [
     { tab: 'interview', label: '模拟面试', shortLabel: '面试', icon: ICONS.interview },
     { tab: 'question-bank', label: '题库', shortLabel: '题库', icon: ICONS.questionBank },
     { tab: 'history', label: '历史记录', shortLabel: '历史', icon: ICONS.history },
   ] },
-  { num: '肆', title: '能力诊断', children: [
+  { num: '肆', title: '能力诊断', stepIcon: ICONS.stepDiagnosis, children: [
     { tab: 'report', label: '综合报告', shortLabel: '报告', icon: ICONS.report },
     { tab: 'memory', label: '长期记忆', shortLabel: '记忆', icon: ICONS.memory },
   ] },
-  { num: '伍', title: '发展路径', children: [
+  { num: '伍', title: '发展路径', stepIcon: ICONS.stepCareer, children: [
     { tab: 'career-plan', label: '职业规划', shortLabel: '规划', icon: ICONS.career },
   ] },
 ];
 
-/** 能力档案（v8.0 引入、v8.1 定名）：默认首屏。它不属于五步主线中的任何一步——
+/** 能力档案（v8.0 引入、v8.1 定名）。它不属于五步主线中的任何一步——
  *  主线是"做的事"，能力档案是"看全局的地方"，因此独立置于时间线之上。 */
 export const OVERVIEW_ITEM = { tab: 'home', label: '能力档案', shortLabel: '档案', icon: ICONS.overview };
 
-/** 账户：旅程之外的独立入口（侧栏底部 / 底部导航末位） */
-export const ACCOUNT_ITEM = { tab: 'account', label: '账户', shortLabel: '账户', icon: ICONS.account };
-
-/** 旅程平铺（底部导航用：能力档案 + 五步主线顺序 + 账户） */
+/** 旅程平铺（底部导航用：能力档案 + 五步主线顺序）
+ *  v8.2: 独立的「首页」入口随 landing.html 下线，不再出现在 SPA 导航中。
+ *  v8.3: 末尾的「账户」入口随认证一并下线（CHARTER DC-10）。 */
 export const FLAT_ITEMS = [
   OVERVIEW_ITEM,
   ...JOURNEY_STEPS.flatMap((s) => s.children),
-  ACCOUNT_ITEM,
 ];
 
 /** tab → 所在旅程步骤下标 */
 const TAB_STEP = new Map();
 JOURNEY_STEPS.forEach((s, i) => s.children.forEach((c) => TAB_STEP.set(c.tab, i)));
 
-/** 当前 tab 属于第几步旅程；不在旅程内（如账户）返回 -1 */
+/** 当前 tab 属于第几步旅程；不在旅程内（如账户、首页）返回 -1 */
 export function stepIndexOf(tab) {
   return TAB_STEP.get(tab) ?? -1;
+}
+
+/** 后端 journey 的步骤 key（backend/profile_service.py 的 JOURNEY_KEYS） */
+export const JOURNEY_KEYS = ['positioning', 'resume', 'practice', 'diagnosis', 'career_path'];
+
+/**
+ * journey.current_key → 落点 tab。
+ *
+ * 后端 JOURNEY_KEYS 的顺序与前端 JOURNEY_STEPS **严格对应**（见 profile_service.py
+ * 的注释），故可按下标取该步的首个入口作为落点。集中在这里做映射，避免两侧各
+ * 维护一份映射表，任一侧调整都会静默错位。
+ *
+ * @param {string|null} key positioning|resume|practice|diagnosis|career_path
+ * @returns {string} 落点 tab；无法映射时回退 'home'（能力档案总能给出下一步建议）
+ */
+export function stepKeyToTab(key) {
+  const idx = key ? JOURNEY_KEYS.indexOf(key) : -1;
+  if (idx < 0) return 'home';
+  return JOURNEY_STEPS[idx]?.children?.[0]?.tab || 'home';
 }
 
 // ── 壳层渲染 ───────────────────────────────────────
@@ -91,11 +120,12 @@ function navButton(item) {
   return b;
 }
 
-/** 渲染桌面/平板侧边栏：五步旅程时间线 + 账户 */
+/** 渲染桌面/平板侧边栏：能力档案 + 五步旅程时间线 */
 export function renderSidebar(container) {
   container.innerHTML = '';
 
-  // 能力档案：置于旅程时间线之上（全局视图先于具体步骤）
+  // v8.2: 产品主页已独立为 landing.html，SPA 内侧边栏不再保留「首页」入口。
+  // 能力档案置于旅程时间线之上（全局视图先于具体步骤）
   const overview = navButton(OVERVIEW_ITEM);
   overview.classList.add('nav-overview');
   container.appendChild(overview);
@@ -106,11 +136,7 @@ export function renderSidebar(container) {
     stepEl.dataset.step = String(idx);
     stepEl.innerHTML =
       `<div class="journey-head">` +
-      `<span class="journey-num" aria-hidden="true">` +
-      `<span class="journey-num-text">${step.num}</span>` +
-      `<svg class="journey-num-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"` +
-      ` stroke-width="3" stroke-linecap="round" stroke-linejoin="round">${CHECK_PATHS}</svg>` +
-      `</span>` +
+      `<span class="journey-step-icon" aria-hidden="true">${step.stepIcon}</span>` +
       `<span class="journey-title">${step.title}</span>` +
       `</div>`;
     step.children.forEach((item) => {
@@ -120,12 +146,9 @@ export function renderSidebar(container) {
     });
     container.appendChild(stepEl);
   });
-  const account = navButton(ACCOUNT_ITEM);
-  account.classList.add('nav-account');
-  container.appendChild(account);
 }
 
-/** 渲染移动端底部导航：旅程平铺 + 账户 */
+/** 渲染移动端底部导航：旅程平铺 */
 export function renderBottomNav(container) {
   container.innerHTML = '';
   FLAT_ITEMS.forEach((item) => {
@@ -150,11 +173,12 @@ export function renderJourneyProgress(container) {
     const s = document.createElement('span');
     s.className = 'jp-step';
     s.dataset.step = String(idx);
+    // 节点内只放步骤图标，**不换成勾选**：五个已完成的节点若都显示勾，
+    // 就退化成五个一模一样的折线——正是"全是箭头、分不清是哪一步"的观感来源。
+    // 完成态改由青绿实心底 + 白色图标表达（见 .jp-step.is-done .jp-dot）。
     s.innerHTML =
       `<i class="jp-dot" aria-hidden="true">` +
-      `<span class="journey-num-text">${step.num}</span>` +
-      `<svg class="journey-num-check" viewBox="0 0 24 24" fill="none" stroke="currentColor"` +
-      ` stroke-width="3" stroke-linecap="round" stroke-linejoin="round">${CHECK_PATHS}</svg>` +
+      `<span class="jp-step-icon">${step.stepIcon}</span>` +
       `</i>` +
       `<span class="jp-label">${step.title}</span>`;
     container.appendChild(s);
@@ -162,7 +186,7 @@ export function renderJourneyProgress(container) {
 }
 
 /** 高亮当前 tab 所在旅程步骤（侧栏时间线 + 进度条）。
- *  不在旅程内（如账户）则全部摘除高亮并隐藏进度条。 */
+ *  不在旅程内（首页、能力档案）则全部摘除高亮并隐藏进度条。 */
 export function updateJourneyActive(tab) {
   const stepIdx = stepIndexOf(tab);
   document.querySelectorAll('.journey-step').forEach((el) => {

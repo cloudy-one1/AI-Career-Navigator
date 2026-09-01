@@ -14,6 +14,12 @@ export function el(tag, attrs = {}, ...children) {
     else if (k === 'textContent') e.textContent = v;
     else if (k === 'innerHTML') e.innerHTML = v;
     else if (k.startsWith('on')) e.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (['disabled', 'checked', 'selected', 'readonly', 'required', 'multiple', 'autofocus'].includes(k)) {
+      // 布尔属性：false 时必须移除属性，否则 setAttribute('disabled', 'false') 仍会禁用元素
+      e[k] = !!v;
+      if (v) e.setAttribute(k, '');
+      else e.removeAttribute(k);
+    }
     else e.setAttribute(k, v);
   }
   children.forEach(c => {

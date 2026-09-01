@@ -1,6 +1,56 @@
 # 变更日志（CHANGELOG）
 
 > 记录 v2 → v8.1 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+>
+> **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的"AI 求职陪跑"为历史名称，保留不删。**
+
+---
+
+## v8.2.0 市场数据分析 + AI 解读 + 产品落地页（2026-08-31）
+
+> 补齐「数据分析」视图的数据底座与可解释性，并新增产品落地页（landing）。
+
+- **后端（L2）**：新增 `backend/market/analytics.py`——为「数据分析」视图一次性取回、可直接渲染的图表数据聚合（城市/学历/薪资等维度分布），与 `store.get_stats()` 刻意分离（给 LLM 的摘要 vs 给人看的图表关注点不同）；新增 `backend/market/insight.py`——市场图表 AI 解读，section 注册表驱动、5 分钟 TTL 缓存 + 显式失效、按需调用、失败可降级（无 Key / 异常一律返回 `{"error": ...}`，不阻塞图表渲染）；`routers/market.py` 接入 analytics / insight 两能力。
+- **前端**：新增落地页 `frontend/landing.html` + `src/css/pages/landing.css` + `src/js/cityCoords.js`（城市坐标，支撑市场数据地理可视化）。
+- **测试**：新增 `tests/test_market_analytics.py` / `test_market_insight.py` / `test_market_to_position.py`。
+
+---
+
+## v8.3.0 砍掉登录认证，回归单用户本地工具（2026-08-31）
+
+> 起因是用户的直接指令："砍掉登录认证这个功能"。诊断下来的根因是 v7.0 引入的认证层在本场景是**过度工程**——本系统是单用户本地工具，数据全存本机 `interview.db`，既无第二用户也无外部访问。DC-06 自己承认"默认部署下认证从不生效"，归属（owner_id）更是伪维度：单用户下"按 owner 过滤"恒等于"不过滤"。决策记录见 CHARTER **DC-10**。
+
+### 后端（认证层整体下线）
+- **删除认证模块**：`backend/auth.py`（bcrypt 哈希 / JWT 签发 / 密码策略 / 用户上下文）与 `backend/routers/auth.py`（注册 / 登录 / me 三接口）整个移除；`main.py` 不再注册 `auth.router`；`.importlinter` 的 L2 名单与 `requirements.txt` 的 `bcrypt`/`PyJWT` 一并移除。
+- **`config` 去认证开关**：`AUTH_ENABLED` / `AUTH_SECRET` / `AUTH_ROLES` / `validate_role` / `UserRole` 全部移除——这些是为"多用户/多角色"预设的旋钮，单用户下全是死代码。
+- **数据层去归属**：`db.users` 表删除；`resumes` / `positions` / `sessions` 的 `owner_id` 列经 `init_db` 幂等迁移 `DROP COLUMN` 删除；`journey_marks` 的 `(owner_id, step_key)` 主键重建为 `step_key` 主键（多 owner 的打点按最晚时间归并）。`save_resume` / `save_position` / `list_resumes` / `list_positions` / `list_sessions` / `list_recent_reports` / `mark_journey_step` / `list_journey_marks` 全部去掉 `owner_id` 形参。
+- **路由去鉴权**：`sessions` / `reports` / `market` / `profile` / `analytics` 各路由移除"登录态必填 / 资源归属断言"；WebSocket 握手只校验会话是否存在（不存在 `close(4000)`），不再校验 token、不再发 `4001`。
+- **`profile_service` 去 owner 维度**：`get_profile` / `build_weakness_context` / `build_skill_gap_context` 去掉 `owner_id` 形参；60s TTL 缓存从"按用户分键的 dict"简化为单槽位（原本按 user 分键在单用户下纯属累赘）。
+- **修掉的连带 bug**：`market._annotate_in_library` 原本按 `owner_id` 分支查 `positions`——认证下线后该列消失，此路径会直接 `no such column` 500；现已合并为单条 `market_job_id` 查询。
+
+### 前端（账户面板与 token 机制删除）
+- 删 `src/js/auth.js`（token 存取 + 账户面板）与 `src/css/pages/auth.css`；`navConfig.js` 移除 `ACCOUNT_ITEM` 与侧栏/底部导航的"账户"入口；`index.html` 移除 `user-btn` 顶栏按钮与 `account-panel`。
+- `api.js` 移除 token 注入头与 401 全局事件的广播、WS 握手不再带 `token` query、移除 `4001` 处理分支；`app.js` 移除 `auth:changed` / `auth:unauthorized` 监听与启动拉取登录态；`report.js` 导出不再带 token query。
+- 文案：`landing.js` 的"不登录也可以直接使用 / 登录后归集到账户"改为"本机运行，数据不出你的电脑 / 打开即用，无需注册"。
+
+### 测试
+- 删 `tests/test_auth.py`（107 例）；改 `tests/test_api.py`（删 `TestAuthIntegration` 与 AUTH 开关 fixture）、`tests/test_entities.py`（归属隔离用例改为"列表返回全部"语义）、`tests/test_profile_service.py`（去 owner 形参、删"按用户隔离缓存"用例、journey 打点用例改为幂等语义）、`tests/test_interview_ws.py`（删 4001 用例、新增"握手无需 token"用例）。
+- **新增迁移回归**：`tests/test_db.py::TestAuthRemovalMigration` 钉住 v8.3 的三个不可逆迁移——`users` 表被删、`owner_id` 列被删、`journey_marks` 重建为 step_key 且多 owner 打点按最晚时间归并。
+
+验证：后端全量 **1039 passed / 1 skipped**（基线 1026 + 本轮重构后回归），`run.py lint` 分层契约通过，前端 `npm run build` 通过，前端 vitest 16 例通过。
+
+---
+
+## v8.3.1 面试入口收敛：简历/岗位来源只保留「从库选」（2026-08-31）
+
+> 起因是用户的要求："模拟面试入口里只需要留一个从岗位库选择，从简历库选择就行了，且要用圆角括号"。诊断下来的真问题是：原本 Step 1 同时提供「上传文件」「粘贴文本」「从库选」三种来源，对一个已被前置（简历库/岗位库 Tab）承载好的产品来说，是在重复同一件事——引导用户走"先入简历库、再来面试"的主路径能减少"上传了又丢"、"粘贴到一半换页"等半成品状态。
+
+- **Step 1 DOM 收敛**：`interview.js` 移除「上传简历文件 / 解析文件」「上传 JD / 解析 JD」「粘贴 / 上传」「粘贴 JD」整组入口，只剩「简历来源（从简历库选择）」「岗位来源（从岗位库选择）」两个库选择下拉，括号按要求统一为圆角 `（）`。
+- **死代码清理**：`handleUpload` / `handleJdUpload` 函数、`sourceSwitch` 函数、`onSourceChange` 函数全部移除（它们的前置 DOM 已不存在，保留只会增加阅读负担）；`onSourceChange` 改写为 `loadLibraryPicker`，挂载到 `setup` 视图末尾自动展开两个库选择下拉（去掉 `value !== 'library'` 的隐藏分支，因为来源只剩一种）。
+- **导入收敛**：`interview.js` 不再 import `uploadResume` / `uploadJd`；`api.js` 仍保留这两个函数（导出端保留可避免其他可能的本地调用失败，移除属于下一轮清理范围）。
+- **校验与提示语同步更新**：「下一步」按钮文案从「可直接粘贴或上传解析」改为「先从简历库选择一份简历，或直接在文本框中填写」；textarea 的 placeholder 改为「从上方库下拉中选择后将自动填入此处，仍可手动编辑」。
+
+验证：前端 `npm run build` 通过（dist 已更新），前端 vitest 16 例通过；后端无接口层变化，无需重跑后端测试。
 
 ---
 
