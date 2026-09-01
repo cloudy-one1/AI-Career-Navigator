@@ -2,7 +2,7 @@
 // report.js — 综合报告 + Chart.js 雷达图
 // ===================================================
 
-import { $, el, toast, DIM_NAMES, escHtml, countUp, skeletonBlock, burstParticles, scoreClass } from './utils.js';
+import { $, el, toast, DIM_NAMES, countUp, skeletonBlock, burstParticles, scoreClass } from './utils.js';
 import { getReport, exportReview, getGapAnalysis } from './api.js';
 
 let chartInstance = null;

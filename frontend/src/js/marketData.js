@@ -1115,6 +1115,14 @@ function renderGapResult(box, gap) {
  * `section` 必须与后端 insight.SECTIONS 的 key 一一对应。
  *
  * kind: text（无图，仅摘要+解读）| bar | hbar | doughnut | dual（柱+线双轴）| geo（中国地图）
+ *
+ * [v8.3.3] kind 'geo' 是「渲染器已就绪、卡片未接线」的半成品：drawGeoMap 已实现，
+ * 但本注册表尚无 geo 卡片、drawAllCharts 也无分发分支，因此该函数当前零调用点。
+ * 后端 insight.SECTIONS 已注册 "geo"（backend/market/insight.py）并由
+ * test_market_insight.py 断言存在，故不可按死代码直接删除。
+ * 接线（两步）：① 本表加一项 { section:'geo', title:'岗位地理分布', hint:'气泡大小＝岗位数量', kind:'geo' }；
+ * ② drawAllCharts 增加 `else if (kind === 'geo') drawGeoMap(section)`
+ * （pickSeries 的 geo→city 映射与柱状图降级均已就绪）。
  */
 const CHART_CARDS = [
   { section: 'overview', title: '市场总览', hint: '全部样本的整体画像', kind: 'text' },
@@ -1402,7 +1410,11 @@ function drawChart(section, kind) {
   state.chartInstances[section] = new window.Chart(canvas.getContext('2d'), config);
 }
 
-/* ─────────────────── 岗位地理分布（中国地图）─────────────────── */
+/* ─────────────────── 岗位地理分布（中国地图）───────────────────
+ * [v8.3.3] 本段当前无任何调用点——CHART_CARDS 无 geo 卡片、drawAllCharts 未分发
+ * （详见 CHART_CARDS 注释）。删除前必须先处置后端 insight.SECTIONS["geo"]
+ * 与 tests/test_market_insight.py 的集合断言，否则会留下无人消费的后端 section。
+ */
 
 let _geoLoaded = null;   // 懒加载缓存：{ geo }
 
