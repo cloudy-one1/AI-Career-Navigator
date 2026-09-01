@@ -2,7 +2,7 @@
 <h1 align="center">🤖 AI 求职领航（原 AI 求职陪跑平台）</h1>
 
 <p align="center">
-  <strong>v8.3.2 — 全流程求职陪跑平台（v8.0 引入求职档案领域核心；v8.2 市场数据分析 + AI 解读 + 产品落地页；v8.3 砍掉登录认证、术语统一、面试入口收敛；v8.3.2 仓库整理、文档标准化与公开范围收敛）</strong>
+  <strong>v8.7 — 全流程求职陪跑平台（v8.0 引入求职档案领域核心；v8.2 市场数据分析 + AI 解读 + 产品落地页；v8.3 砍掉登录认证、术语统一、面试入口收敛；v8.3.2 仓库整理、文档标准化与公开范围收敛；v8.5 全站视觉质感层；v8.6 模拟面试模块改进；v8.7 落地页 three.js 秀场动效改版）</strong>
 </p>
 
 <p align="center">
@@ -68,7 +68,7 @@ AI 求职领航（原 AI 求职陪跑平台）是一个面向求职者的全流�
 - **简历库 / 岗位库**：跨会话复用的输入资产，一次上传解析、反复选用，不必重复上传
 - **题库**：题目 CRUD、收藏、从历史会话导入
 - **多 AI 后端与优雅降级**：DeepSeek / 通义千问 / 智谱 GLM / OpenAI 可切换，`AI_PROVIDER=auto` 自动探测；主模型失败按回落链自动切换备用模型，调用方无感知
-- **工程保障**：import-linter 强制 L1–L4 分层契约、1039 个 pytest 用例（含黄金样本评测与 live-LLM 抽检）、前端 vitest、GitHub Actions CI
+- **工程保障**：import-linter 强制 L1–L4 分层契约、1079 个 pytest 用例（含黄金样本评测与 live-LLM 抽检）、前端 vitest、GitHub Actions CI
 
 > 各特性的落地版本与取舍理由见 [CHANGELOG.md](CHANGELOG.md)；产品命题与决策记录见 [CHARTER.md](CHARTER.md)。
 
@@ -285,7 +285,7 @@ AI模拟面试官/
 │
 ├── frontend/                     # 原生 ES Module 前端（Vite 工程化，双入口）
 │   ├── index.html                # SPA 骨架（主功能，默认首屏 = 能力档案）
-│   ├── landing.html              # [v8.2] 独立产品落地页（根路径 `/` 由后端返回）
+│   ├── landing.html              # [v8.2] 独立产品落地页（根路径 `/` 由后端返回；v8.7 three.js 秀场动效改版）
 │   ├── package.json / vite.config.js / eslint.config.js
 │   └── src/
 │       ├── main.js               # Vite 入口（注入全局 Chart + 装配 app.js）
@@ -309,20 +309,25 @@ AI模拟面试官/
 │       │   ├── memoryGraph.js    # [v6.4] 长期记忆 Tab（2D SVG 薄弱点图谱 + 明细联动 + resolved）
 │       │   ├── voice.js          # 语音交互（TTS + STT，v6.4 世代守卫真打断）
 │       │   ├── themeToggle.js    # [v7.1 NEW] 全局主题切换器（手动深浅；v7.2 移除语义色切换器）
+│       │   ├── landing.js        # [v8.7 NEW] 落地页动效总编排（three.js WebGL 墨晕 Hero / 逐字揭示 / 磁性按钮 / 3D 倾斜 / 时间线描边，仅 landing.html 使用）
 │       │   └── utils.js          # 工具函数（含 confirm 弹窗 / emptyState 三件套 / 动效入口）
 │       │   （v7.5 已删除：recruiterInbox.js / shareReport.js；v8.3 已删除：auth.js）
 │       └── css/
 │           ├── tokens.css        # Design Tokens（v7.1 纸墨印章色值重映射 + RGB 三元组）
 │           ├── theme.css         # [v7.1 NEW] 主题切换相关样式（html.theme-dark；v7.2 重写为「墨夜纸墨」覆盖层）
-│           ├── motion.css        # [v7.2 NEW] 动效基建层（面板过渡/stagger/骨架屏/盖章/countup/shake/降级）
+│           ├── motion.css        # [v7.2 NEW] 动效基建层（面板过渡/stagger/骨架屏/盖章/countup/shake/降级；v8.7 第 11 节 landing 秀场 keyframes）
+│           ├── surface.css       # [v8.5 NEW] 质感层（环境光/壳层玻璃/三级景深/渐变描边，注释单行 <link> 即整体回退）
 │           ├── layout.css        # [v8.0 NEW] 壳层布局（侧栏/底部导航 + 旅程时间线 + 进度条，自 components.css 迁出）
 │           ├── base.css          # reset + 排版
 │           ├── components.css    # 组件层（v7.2.2 并入原 style.css，332 条规则合流去重）
 │           └── pages/            # 领域样式（market / memory / profile / report / history / interview / landing）
 │   ├── vitest.config.js          # [v7.4 NEW] 前端测试配置（environment: node，运行时全部打桩）
-│   └── tests/voice.test.js       # [v7.4 NEW] 语音模块单测（世代号守卫/熔断韧性/VAD，16 例）
+│   └── tests/
+│       ├── voice.test.js         # [v7.4 NEW] 语音模块单测（世代号守卫/熔断韧性/VAD，16 例）
+│       ├── interview.test.js     # [v8.6 NEW] 面试主循环 WS 消息派发契约（29 种消息 + 源码扫描，36 例）
+│       └── landing.test.js       # [v8.7 NEW] 落地页动效纯函数（逐字拆分/磁性偏移/倾斜角/时间线进度钳制，25 例）
 │
-├── tests/                        # 后端自动化测试（1039 用例 + 1 live_llm 抽检，本机非 LLM 类全绿）
+├── tests/                        # 后端自动化测试（1079 用例 + 1 live_llm 抽检，本机非 LLM 类全绿）
 │   ├── conftest.py               # 共享 fixtures
 │   ├── test_schemas.py           # Schema 验证
 │   ├── test_api.py               # HTTP 路由集成测试（含安全测试）
@@ -356,7 +361,7 @@ AI模拟面试官/
 ├── docs/                         # 文档：公开文档（入库）+ 过程性资料（仅本地，见 docs/README.md）
 │   ├── README.md                 # docs 索引：公开 / 本地两类划分 + 文档约定
 │   ├── API.md                    # 后端接口全量参考（59 HTTP + 1 WebSocket）
-│   ├── LIMITATIONS.md            # 已知局限与架构取舍全文（21 条）
+│   ├── LIMITATIONS.md            # 已知局限与架构取舍全文（23 条）
 │   ├── job-crawler-UI设计系统规格.md  # [v7.1] 全站 UI 改造基线（Token/组件/深色覆盖/页面骨架）
 │   ├── 产品定位延伸_全流程求职陪跑.md  # [v7.3] 定位向上延伸方案全文（DC-07）
 │   ├── 前端设计方案_UIUX重构.md   # [v4.0] 前端信息架构与交互方案
@@ -384,7 +389,7 @@ AI模拟面试官/
 | **后端框架** | FastAPI + WebSocket + slowapi（频率限制） |
 | **数据库** | SQLite（aiosqlite 异步驱动） |
 | **AI 后端** | DeepSeek / Qwen / 智谱 GLM / OpenAI（可运行时切换） |
-| **前端** | 原生 HTML5 + CSS3 + ES Module（无框架依赖） |
+| **前端** | 原生 HTML5 + CSS3 + ES Module（无框架依赖）；three.js 仅限 landing 落地页（v8.7，动态 import 拆 async chunk，主应用包不受影响） |
 | **图表** | Chart.js v4（雷达图） |
 | **语音（v4.2）** | 小米 MiMo 云端（TTS/ASR，需 `MIMO_API_KEY`）+ 浏览器 Web Speech API 降级 |
 | **简历解析** | pdfplumber + python-docx |
@@ -393,7 +398,7 @@ AI模拟面试官/
 | **日志** | logging + RotatingFileHandler（5MB×3 旋转） |
 | **部署** | Docker + Docker Compose（跨平台一键部署） |
 | **分层校验** | import-linter 契约（L1-L4，`run.py lint` 强制） |
-| **测试** | pytest（后端 1039 用例 + 1 live_llm 抽检）+ vitest（前端 16 例，v7.4 起，本机非 LLM 类全绿） |
+| **测试** | pytest（后端 1079 用例 + 1 live_llm 抽检）+ vitest（前端 77 例，v7.4 起，本机非 LLM 类全绿） |
 | **CI（v7.2.1，v7.4 扩容）** | GitHub Actions：import-linter 契约 + 后端全量测试 + 前端 vitest 单测 + 前端构建冒烟 |
 
 ---
@@ -473,7 +478,7 @@ AI模拟面试官/
 
 ## 🧪 测试策略与工程保障（答辩看点）
 
-本项目的测试不是「堆数量」，而是**分层保障 + 评测（eval）**两套机制配合。1039 个自动化用例全绿，结构如下：
+本项目的测试不是「堆数量」，而是**分层保障 + 评测（eval）**两套机制配合。1079 个自动化用例全绿，结构如下：
 
 | 层级 | 代表文件 | 守什么 | 为什么必要 |
 |------|----------|--------|-----------|
@@ -491,7 +496,7 @@ AI模拟面试官/
 
 ## ⚠️ 已知局限与架构取舍
 
-本系统定位为**课程项目**，以下局限是已知的、刻意的取舍，**而非待修复的 bug**。完整清单（21 条，含可选演进方向）见 [docs/LIMITATIONS.md](docs/LIMITATIONS.md)，要点如下：
+本系统定位为**课程项目**，以下局限是已知的、刻意的取舍，**而非待修复的 bug**。完整清单（23 条，含可选演进方向）见 [docs/LIMITATIONS.md](docs/LIMITATIONS.md)，要点如下：
 
 - **无认证 / 无身份校验**：单用户本地工具，数据全存本机，全站免登录（CHARTER **DC-10**）
 - **内容护栏可被绕过**：正则过滤防不住认真攻击者，是课程项目级的启发式，**不是安全边界**
@@ -500,7 +505,7 @@ AI模拟面试官/
 - **市场基准数据来源**：历史数据来自本人此前的采集项目导入（学术诚信披露，详见局限文档）
 - **无断点续答**：流程位置已落库，但进程重启后不能从 DB 重建会话续答
 
-> **诚实边界**：「1039 个用例通过」不等于「核心功能被验证」——核心诊断质量最终依赖模型，测试套件验证的是工程正确性，模型质量仍需人工评审。
+> **诚实边界**：「1079 个用例通过」不等于「核心功能被验证」——核心诊断质量最终依赖模型，测试套件验证的是工程正确性，模型质量仍需人工评审。
 
 ---
 
@@ -529,7 +534,7 @@ AI模拟面试官/
 测试策略见上文「测试策略与工程保障」。常用命令：
 
 ```bash
-# 运行全部测试（1039 用例 + 1 live_llm 抽检，全绿；push/PR 由 GitHub Actions 自动执行）
+# 运行全部测试（1079 用例 + 1 live_llm 抽检，全绿；push/PR 由 GitHub Actions 自动执行）
 pytest tests/ -v
 
 # 仅跑黄金样本评测（确定性回归，默认运行）

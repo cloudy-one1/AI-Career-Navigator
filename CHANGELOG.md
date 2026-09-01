@@ -1,8 +1,163 @@
 # 变更日志（CHANGELOG）
 
-> 记录 v2 → v8.3 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
+> 记录 v2 → v8.7 的版本迭代叙事（新增/推翻/修复/范围）。不变的架构约束与决策记录见 [CHARTER.md](CHARTER.md)，日常协作入口见 [CODEBUDDY.md](CODEBUDDY.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的"AI 求职陪跑"为历史名称，保留不删。**
+
+---
+
+## v8.7 落地页秀场动效改版：three.js WebGL 墨晕 + 大留白重排（2026-09-01）
+
+> 起因是用户递来 `MengTo/threeui`（React + Three.js 的 WebGL shader 视觉组件库）要求「参考这个项目做一个动效十足的首页，注意留白，元素之间多留空，别把页面塞满」。**关键决策**：用户在技术路线选项中显式选择**引入 three.js**——这一条覆盖了 v8.5 条目里「刻意不借鉴 shader 实时背景、不引 three.js」的记录决策；覆盖**仅限 landing.html 独立入口**，主应用「零框架依赖」纪律不变（three 拆为 735KB min / 190KB gzip 的 async chunk，landing 首屏渲染后才拉取；主应用包 385KB 不受影响）。范围经用户确认：只改 landing 落地页，主应用与后端零改动；动效强度「拉满秀场感但仍不碰霓虹/弹跳/粒子爆炸」；允许为大留白重排区块。
+
+### 1. WebGL 流动墨晕 Hero
+
+- `frontend/src/js/landing.js`（新增，约 380 行）的 `initHeroGL()`：动态 `import('three')`，全屏三角形 + 自定义 GLSL fragment shader（fbm 噪声，桌面 5 octaves / 移动端 3），印章红 / 黄铜 / 青绿三个色源在墨黑底上以约 36s 周期低频流动，指针视差 lerp 跟随。色值与 tokens 纸墨色板同源（`HERO_COLORS` 注释注明同步关系）。
+- 渲染循环只在 Hero 可见（IntersectionObserver threshold 0.02）且页面处于前台时运行；`pixelRatio` 封顶 1.5；`pagehide` 释放 GL 资源。
+- **三级降级**：three chunk 加载失败 / WebGL 上下文创建失败 / `webglcontextlost` → canvas 透明，露出 `.ld-hero::before` 的 CSS 径向墨晕（v8.2 既有层，保留为永久 fallback，不可删）；`prefers-reduced-motion` → 渲一帧静态（uTime=12）后永不启动循环；JS 整体未加载 → 内容默认可见（`.ld-reveal` 渐进增强契约不变，不出现 opacity:0 死页）。
+
+### 2. DOM 秀场动效（缓动统一 --ease-out 系，时长 250–650ms，不用弹跳曲线）
+
+- **逐字标题揭示**：`splitChars()` 遍历标题子节点（保留 `.ld-hero-accent` 嵌套配色），逐字包 `.ld-char`（`--ci` 错峰 40ms）；原文写 `aria-label`、字 spans `aria-hidden`，读屏不念两遍。keyframes 在 motion.css 新增第 11 节（`ld-char-in`：上移 + 轻旋 4deg + 模糊消散，640ms）。
+- **磁性按钮**：pointermove 吸附（强度 0.28、钳 ±12px）+ 离开 lerp 归位；仅 `pointer:fine` 启用。
+- **卡片 3D 倾斜 + 高光跟随**：`normPointer → tiltAngles`（±7deg 钳制）lerp 驱动 `perspective(900px) rotateX/Y`，`--mx/--my` 锚定 `::before` 径向高光。
+- **纵向时间线滚动描边**：中轴 `::before` 轨道 + `::after` 黄铜→朱砂渐变 `scaleY(--tl-p)` 生长（origin top），`timelineProgress()` 以视口 72% 线为生长起止；五个步骤节点左右交替，圆形序号章骑跨中轴。
+- **Hero 视差 + 淡出**：内容层 0.16 速率下沉，70% Hero 高度内线性淡出。
+- 共享 `createLerpLoop()`（无任务自动停摆）与单个 scroll 被动监听（rAF 节流）；全部交互挂 `prefers-reduced-motion` 总开关，JS 侧不再执行。
+
+### 3. 大留白重排（用户核心诉求）
+
+- tokens.css **只新增**：`--space-9/10/11`（96/128/160px）与 `--text-display-1/2/3`（clamp 流式展示字号）；区块间距升至 160px、Hero 满屏 `calc(100vh - 56px)`、五步由五列 grid 改为纵向时间线、3×2 卡片改为疏朗 2 列大卡（gap 32px）。
+- landing.html 结构重排：Hero 增 `<canvas class="ld-hero-gl">` 挂载层与滚动提示；五步改 `<ol class="ld-timeline">` 语义结构（保留全部 5 个 hash 跳转）；补引 motion.css（纪律：keyframes 只在动效层定义）；主题切换逻辑从内联 script 迁入 landing.js；新增内联 SVG favicon。
+- vite.config.js `chunkSizeWarningLimit` 700→800（注释说明：three async chunk 仅此一个超限来源）。
+
+### 4. 顺手修复的三个实测 bug
+
+- **深色模式 Hero 变白底**：`--slate-800/900` 在深色主题被重映射为纸白色，v8.2 起 Hero 底色引用它们导致深色下变白。新增专用 token `--ld-hero-bg`（浅色 #171A18 / 深色 #101310），Hero 两主题恒为深墨底——这才是 landing.css 头部纪律③的原意。
+- **深色标题渲染成白色色块**：theme.css 深色 h1 渐变文字（`background-clip: text` + 透明填充）与逐字 `.ld-char` spans 冲突（char 的 filter/transform 打断父级文本裁剪路径）。深色下对 Hero 标题禁用渐变文字，accent 段恢复朱砂填充；`.ld-h2` 不拆字符，不受影响。
+- **窄屏「拿 Offer」断成「拿Of/fer」**：逐字 span 使英文单词可在任意字母间断行，accent 段加 `white-space: nowrap` 作为整体换行单元。
+
+### 5. 测试与验证
+
+- 新增 `frontend/tests/landing.test.js`（25 例，node 环境）：`charEntries`（offset 累计 / 空串 / 代理对不拆散）、`magneticOffset` 与 `tiltAngles` 边界钳制（含 -0 归一化）、`normPointer` 越界与零尺寸、`timelineProgress` 生长起止、`parallaxShift / heroFade` 退化输入。
+- `npm run test` **77 passed**（16 voice + 36 interview + 25 landing）；`npm run build` 零告警（landing 入口本体 9.4KB）；`pytest tests/test_repo_hygiene.py -q` 5 passed。
+- playwright 真机截图（桌面浅/深双主题 + 390px 移动端）：WebGL 墨晕渲染、逐字揭示、时间线描边生长、卡片倾斜高光、深色 Hero、移动端断行全部符合预期，**控制台 0 错误 0 警告**（favicon 404 已随内联 SVG 图标消除）。
+
+### 6. 范围纪律
+
+- 只动 landing 入口相关文件 + tokens/motion 的追加式扩展；主应用 index.html 及其 JS 一行未动，后端零改动；CHARTER.md 未触碰；v7.1 纸墨印章色板不变。
+- 设计稿：`docs/specs/2026-09-01-landing-motion-design.md`。
+
+---
+
+## v8.6 模拟面试模块：外部评估报告对照 + 四项改进（2026-09-01）
+
+> 起因是用户递来第三方《模拟面试模块 · 专项深度评估》（v8.3 快照，A / 9.0 分，只读评估产物）要求「对照比较给出修改建议」。**复核结论**：报告的技术判断基本属实（10 条断言 9 条属实、1 条表述不准），但它是一张**滞后两轮**的快照——行数与版本号均已过时；更要紧的是它第七节 5 条改进里，**1 条后半段已落地、4 条早已登记为已知局限**，真正的新增信息只有 1 条。本轮先逐条对齐，再把核对后仍然成立的问题按优先级修掉。对照报告产出到项目外 `F:/Desktop/AI面试官评估产出/模拟面试模块_评估报告对照与修改建议.html`（与另两份评估产物同处，**不入库**）。
+
+### 0. 复核：报告的三种"不准确"
+
+| 类别 | 内容 |
+|---|---|
+| **数字过时** | `session.py` 报告称 1306 行 → 实测 **1499**；`interview.js` 称 1623 行 → 实测 **1796**；版本称 v8.3 → 仓库已到 **v8.5** |
+| **建议已落地** | 第七节建议 #1 的后半句「至少把追问内容纳入本题最弱维度证据」在 v8.x 已完成：`report.py:_build_follow_up_map()` + `qa_breakdown.follow_ups` + `detailed_qa.follow_ups` + Markdown 导出。**追问补充此前是"进得了报告、进不了分数"，缺口只剩"不重评"** |
+| **早已登记** | 双 Agent 成本（LIMITATIONS L14）、无断点续答（L12）、测试偏纯函数（L18）、前端补测（v8.3.3 已列"本轮明确未做"）——报告把它们当新发现，实际是既有登记的推进 |
+
+**唯一的新增发现**：`thinking_seconds` 完全由前端上报、后端只做 0–600s 归零，且它是报告 `qa_breakdown` 与 `_fallback_impact()` 兜底文案的判据之一——报告只列为"恶意前端可污染"，低估了"前端计时本身会系统性失真"这一层。
+
+另：报告称"非流式诊断走 `asyncio.to_thread`"表述不准——那是 v1 兼容降级路径，WS 主路径走 `_astream`/`chat_stream_async` 真异步。
+
+### 1. 追问补评（P0，用户指定优先）
+
+- 追问补充提交后触发一次**只含 Diagnostician 单段**的增量重评（不产改写、不产追问，约为正常诊断一半 token），**五维分 + 加权总分 + 最弱维度全部更新**——用户的口径是"追问补充必须影响总分"，不做"只更新总分"的缩水版。
+- **补评与首评共用 `_score_and_weakest()`**（v8.6 从 `normalize_result` 抽出）：加权公式、规则化加减分项、最弱维度交叉校验三处口径必须同源，否则报告里会出现"同一道题两种算法"。新增 `test_same_scores_as_first_assessment` 钉住这一点。
+- **原分必留痕**：`pre_follow_up` 保存首评快照，`reassessment_delta` 记录变动量，报告 `qa_breakdown` / `detailed_qa` / Markdown 导出 / 诊断卡四处同步披露——与 `assisted`、`follow_up_skipped` 同一条诚实纪律。
+- **补评可以降分**：prompt 显式约束"补充不等于加分"，`reassessment_stats.downgraded_questions` 收集补充反而暴露问题的题。若补评只能涨分，追问就从诊断工具退化成送分机制，比不补评更有害。
+- **只补评一次 / 失败静默回退**：同一题二次追问不再补评（否则分数被反复改写，首评快照失去意义）；拿不到 `reassessment_done` 即视为没发生，保留首评。刻意**不重跑难度调度**——难度档已按首评触发，事后改分不撤销已变过的档。
+- 开关：`FOLLOW_UP_REASSESS`（默认 true）。
+
+### 2. 改写改为按需生成（P1）
+
+- `AUTO_REWRITE=false` 时诊断完成即返回，改写由前端拿到评分后发 `request_rewrite` 索取。省的是**感知延迟**（用户不再干等第二次完整往返），不是 token——这点在配置注释与 LIMITATIONS 里都写明了，避免被误读成"省调用"。
+- **刻意不用后台并发**：`diagnosis_done` 后 WS 层会立刻推下一题/追问，改写流会串台到新题卡片上。改用按需请求 + `round/question_idx` 身份校验，请求晚到（已翻页）直接拒绝。
+- `run_rewrite_streaming()` 独立成流，自动路径与按需路径**共用同一实现**；`rewrite_done` 补带 `round/question_idx`，供前端回填到正确的诊断卡。
+- `request_rewrite` 与 `ping` 统一由 `_handle_control_message()` 处理——答题等待循环与追问等待循环都要响应，两处各写一遍迟早漏掉一种（漏掉的表现是"点了没反应"，且只在特定时机复现）。
+
+### 3. 启发式精确化（P3，保持确定性、不引 LLM）
+
+- `needs_recovery` 加**转折豁免**：命中示弱词但转折词在其后、且转折后还有实质内容（≥8 字）则不触发。修复"我没做过这个，但我了解原理"被误判卡壳——误判的代价是双重的：恢复话术打断节奏，且该题被打上 `assisted` 标记进了报告，成一个假信号。
+- `is_end_signal` 加**长度约束**（≤30 字）：长回答里顺带提到"结束面试"四字不再掐断整场面试。30 字取的是"能容纳中英口令（"OK, let's End Interview now" 为 28 字）、又远短于任何实质回答"。
+- 不改成 LLM 判定：`session.py` 既有注释已论证关键词匹配的理由（低成本、可测试、无幻觉），且这是同步路径，为它多一次 LLM 往返不值当。
+
+### 4. 前端补测（P2）
+
+- `handleWSMessage` 加 `export`（**唯一改动，零逻辑修改**），新增 `frontend/tests/interview.test.js`（36 例）：node 环境下用 Proxy 做最小 DOM 替身 + `vi.mock` 桩化四个依赖，覆盖 29 种消息类型的派发契约、未知类型静默忽略、`error`/`security_block` 转 toast、`mode_change` 同步模式、`radar_update` 驱动雷达；另有一条**源码扫描**用例，断言 switch 的 case 标签覆盖全部契约类型。
+- **不抽纯函数重构、不加 DOM 依赖**：为可测性拆 1796 行文件收益低于风险；`vitest.config.js` 的 `environment: 'node'` 是 v7.4 的刻意选择，本轮维持。
+
+### 5. 思考时长：从"完全信任前端"降级为"可交叉校验"（P4）
+
+- 服务端记录"推题 → 收到回答"的墙钟差。**不变量：前端上报值不可能大于它**（后者还多算网络与渲染）。违反时以服务端值为准并标注 `thinking_seconds_anomalous`。
+- 为什么值得做：该数字进报告 `qa_breakdown`，还是 `_fallback_impact()` 兜底文案（"耗时偏长，可能被质疑熟练度"）的判据。页面切后台、设备休眠、组件重渲染导致计时起点被重置都会让它失真——这不是"恶意才出问题"。
+
+### 6. 明确不做
+
+- **断点续答**：需序列化整个 `InterviewSession`，CHARTER.md:180 已列"现阶段不做"，报告自己也标注为可选。
+- **启发式改 LLM 语义判定**：见上第 3 条理由。
+- **前端抽纯函数重构 / 引 happy-dom**：见上第 4 条理由。
+
+### 7. 验证
+
+- 后端全量 `python -m pytest tests/ -q`：**1079 passed / 1 skipped**（基线 1039 + 本轮 40）。
+- `python -m pytest tests/test_repo_hygiene.py -q` 5 passed。
+- 前端 `npm run lint` 0 errors / 25 warnings；`npm run test` **77 passed**；`npm run build` 通过。
+- 协议变更已同步 `docs/API.md`（客户端→服务端 4→5 种、服务端→客户端新增 4 种）；已知局限已同步 `docs/LIMITATIONS.md`（21 → 23 条）。
+
+### 8. 范围纪律
+
+- 未新增任何 npm / Python 依赖；未触碰 CHARTER.md 任何架构约束与决策记录；`.importlinter` 分层契约未改（本轮改动全部落在既有 L2/L3/L4 内）。
+- 本轮 4 项均为**既有能力增强**，非新功能模块。
+
+> ⚠️ **待用户确认的并行改动**：本轮进行期间，工作区出现了非本轮产出的 `frontend/src/js/landing.js` + `frontend/tests/landing.test.js` + `three` 依赖 + `vite.config.js`/`package.json` 改动（其文件头自称"v8.6 新增"）。它们与本章同处 v8.6，但主题不同（落地页 WebGL）。本轮未改动这些文件，前端 77 例中包含 landing 的 25 例。若两者要合并为同一版本，需统一 v8.6 叙事。
+
+---
+
+## v8.5 全站视觉质感提升：threeui 手法迁移（2026-09-01）
+
+> 起因是用户递来 `MengTo/threeui`（React + Three.js 的 WebGL shader 视觉组件库）希望参考其视觉语言。**评估结论**：组件形态（React + Three.js）不可引入——会破坏本项目原生 ES Module 架构并与 DC-09 专业评测定位冲突；但其**视觉手法**（大面积低频渐变环境光、玻璃拟态、多层景深阴影、渐变描边、hover 光晕、入场错峰）可以零成本迁移为原生 CSS。本轮**只做质感**——不动色板（v7.1 纸墨印章基线不变）、不改 DOM 结构、不改任何 JS 业务逻辑与后端，**零新增依赖**。
+
+### 1. 独立质感层 `surface.css`
+- 新增 `frontend/src/css/surface.css`，层叠位置：components.css 之后、motion.css 之前（详见 index.html 头部注释）。
+- 该文件**不定义任何 animation**（一律交给 motion.css）。出现异常时注释 `<link>` 即可完整回退到 v8.3 视觉，爆炸半径最小——这是本轮最关键的纪律。
+- `tokens.css` 新增**质感变量族**（环境光/表面/景深/描边/内高光/玻璃参数），`:root` 与 `html.theme-dark` 各一份；**既有色值一个都不改**。
+
+### 2. threeui 手法 → 本项目落地对照
+| threeui 手法 | 落地方式 | 备注 |
+|---|---|---|
+| 大面积低频渐变环境光 | `body::after` 6 层径向渐变（含 3 条壳层色带） | CSS 等价于 shader 背景，零依赖 |
+| 玻璃拟态 Glassmorphism | Header / 侧栏 / 底部导航 + 悬浮层 | 同屏 ≤ 4 个；滚动容器与 canvas 容器强制禁滤镜（性能硬规则） |
+| 多层景深 | `--depth-1/2/3` + `--depth-hover` | 替代单层平影，明确 z 轴秩序 |
+| 顶部内高光 sheen | `inset 0 1px 0` 亮线 + 底部 inset 暗线 | 模拟纸的受光边；深色侧已有的处理对称补到浅色 |
+| 渐变描边 Gradient border | `mask-composite` 1px 渐变 | 仅用于「下一步建议」卡，保留 urgency 三态左边框 |
+| hover 抬升 + 光晕 | 分级 `translateY` + `::before` 径向渐变渐显 | 沿用既有 `.card-hover` 契约，不重复定义 transform |
+| 入场错峰 stagger | `animation-timeline: view()` 渐进增强 | `@supports` 包裹；Firefox 内容直接可见，零风险 |
+
+### 3. 刻意不借鉴的部分
+- 3D 翻转、粒子爆炸、霓虹辉光、弹跳缓动、shader 实时背景——与 DC-09「禁游戏化、要专业感」判断依据冲突；技术上引入 three.js（~600KB + 常驻 GPU 占用）换来 CSS 渐变同等观感得不偿失。
+
+### 4. 参数定档
+- 玻璃不透明度 **20%** + 模糊 **44px** —— 用户在原型滑块拖到两边界值确认（最极透最重的磨砂）。
+- 极透玻璃的**可读性补偿**：`backdrop-filter` 加 `brightness(1.07)` 浅色提亮 / `brightness(0.60)` 深色压暗，保证墨色 / 纸白文字对比度。
+
+### 5. 顺手修复
+- `landing.html` 缺 `layout.css`（Header 裸奔）已补；
+- `landing.html` 的 `theme.css` 被 `landing.css` 覆盖（深色落地页不生效），把 theme.css 移到最后修正。
+
+### 6. 范围纪律遵守
+- CHARTER.md 任何架构约束 / 决策记录未触碰；
+- 未新增任何 npm 依赖；
+- 仅 `market.css` / `memory.css` 用「减法」统一（它们已有 54 处重视觉，叠加会过腻）。
+
+### 7. 验证
+- `npm run test` 16 passed；`python -m pytest tests/test_repo_hygiene.py -q` 5 passed；`npm run build` 4.44s / main CSS 98.84 kB（含 surface.css）；playwright 真机双主题截图，Header 玻璃 / 卡片景深 / 内高光 / 雷达图均符合预期，控制台零错误。
 
 ---
 
