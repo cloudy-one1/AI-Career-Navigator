@@ -34,6 +34,10 @@ export default defineConfig({
     //       已通过动态 import() 拆成独立的懒加载 chunk，不进主包（仅在打开
     //       「数据分析」视图需要渲染地图时才拉取）。这里放宽告警阈值，避免它
     //       掩盖其它真正需要拆分的 chunk——超过 700kB 仍会告警。
-    chunkSizeWarningLimit: 700,
+    // v8.6: three.js（约 735KB min / 190KB gzip）经 landing.js 动态 import()
+    //       拆为独立 async chunk，仅 landing.html 在首屏渲染后按需拉取，
+    //       主应用包（385KB）不受影响。告警阈值放宽到 800kB 以容纳它，
+    //       其余 chunk 超过 800kB 仍会告警。
+    chunkSizeWarningLimit: 800,
   },
 });

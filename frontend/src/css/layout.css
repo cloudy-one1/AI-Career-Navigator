@@ -239,8 +239,12 @@
   background: var(--teal);
   opacity: .55;
 }
-/* 进度条完成计数 */
+/* 进度条完成计数（顶部「X/Y 步已完成」标签）。
+   隐藏原因：与节点完成态视觉语义冗余，且顶部窄屏时挤占标签空间； */
 .jp-counter {
+  display: none;
+}
+.jp-counter.jp-counter-legacy {
   font-size: var(--text-xs);
   color: var(--slate-400);
   margin-right: 2px;

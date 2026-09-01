@@ -4,12 +4,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>AI 求职领航</title>
+  <!-- v8.6：内联 SVG 印章图标，消除 favicon.ico 404（控制台零错误验证要求） -->
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Ccircle cx='12' cy='12' r='11' fill='%23C44F3A'/%3E%3Cpath d='M17 11.2a5.2 5.2 0 0 1-.6 2.4 5.3 5.3 0 0 1-4.7 2.9 5.2 5.2 0 0 1-2.4-.6L6 17l1.2-3.3a5.2 5.2 0 0 1-.6-2.4 5.3 5.3 0 0 1 2.9-4.7 5.2 5.2 0 0 1 2.4-.6h.3a5.3 5.3 0 0 1 4.8 5.2z' fill='none' stroke='%23F4F2ED' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Serif+SC:wght@600;700;900&family=Noto+Sans+SC:wght@400;500;600;700&family=JetBrains+Mono:wght@500;600&display=swap">
   <link rel="stylesheet" href="/src/css/tokens.css">
   <link rel="stylesheet" href="/src/css/base.css">
-  <link rel="stylesheet" href="/src/css/theme.css">
+  <!-- v8.5 补齐：落地页此前未引入 layout.css，导致 .app-header /
+       .brand / .brand-logo 全部没有样式（Header 裸奔）。
+       同时把 theme.css 移到最后 —— 它是深色覆盖层，必须处于最高
+       优先级；原先排在 landing.css 之前，深色规则被页面样式盖掉。 -->
+  <link rel="stylesheet" href="/src/css/layout.css">
   <link rel="stylesheet" href="/src/css/pages/landing.css">
+  <link rel="stylesheet" href="/src/css/surface.css">
+  <!-- v8.6 补引 motion.css：landing 的逐字揭示 / 时间线描边 / 滚动提示
+       等 keyframes 全部登记在 motion.css（纪律：动效只在动效层定义）。
+       层叠位置与 index.html 一致：surface.css 之后、theme.css 之前。 -->
+  <link rel="stylesheet" href="/src/css/motion.css">
+  <link rel="stylesheet" href="/src/css/theme.css">
   <script>
     try { if (localStorage.getItem('theme') === 'dark') { document.documentElement.classList.add('theme-dark'); } } catch (e) {}
   </script>
@@ -29,93 +41,129 @@
 </header>
 
 <main class="ld-page" id="ld-page">
-  <section class="ld-hero">
-    <div class="ld-hero-inner">
+
+  <!-- ══ 区块一：Hero（深墨沉浸 + WebGL 流动墨晕）══════════════ -->
+  <section class="ld-hero" id="ld-hero">
+    <!-- WebGL 挂载层。降级链：three chunk 加载失败 / WebGL 上下文创建失败
+         时 canvas 保持透明，露出 .ld-hero::before 的 CSS 径向墨晕（永久
+         fallback 层，landing.css 保留）；prefers-reduced-motion 只渲一帧静态。 -->
+    <canvas class="ld-hero-gl" id="ld-hero-gl" aria-hidden="true"></canvas>
+    <div class="ld-hero-inner" data-parallax="0.16">
       <p class="ld-eyebrow">AI 求职领航</p>
-      <h1 class="ld-hero-title">从职业定位到<span class="ld-hero-accent">拿 Offer</span></h1>
+      <h1 class="ld-hero-title" id="ld-hero-title" data-split>从职业定位到<span class="ld-hero-accent">拿 Offer</span></h1>
       <p class="ld-hero-sub">全流程 AI 求职领航</p>
       <p class="ld-hero-desc">把求职拆成五步：看行情、备材料、做演练、做诊断、定路径。每一步都有真实数据支撑，练完就有诊断，诊断完就有下一步。</p>
       <div class="ld-hero-actions">
-        <a class="ld-btn ld-btn-primary" href="./index.html#/home">开始您的旅程</a>
-        <a class="ld-btn ld-btn-ghost" href="./index.html#/market-data">先看看市场行情</a>
+        <a class="ld-btn ld-btn-primary" data-magnetic href="./index.html#/home">开始您的旅程</a>
+        <a class="ld-btn ld-btn-ghost" data-magnetic href="./index.html#/market-data">先看看市场行情</a>
       </div>
       <p class="ld-hero-note">本机运行，数据不出你的电脑</p>
     </div>
+    <span class="ld-hero-scrollcue" aria-hidden="true"></span>
   </section>
 
-  <section class="ld-section">
-    <p class="ld-eyebrow">五步主线</p>
-    <h2 class="ld-h2">求职不是一场突击，是一条有顺序的路</h2>
-    <p class="ld-lead">每一步都建立在上一步的输入之上：先看清行情再定方向，先有简历再做演练，练完才有诊断，诊断完才知道该补什么。</p>
-    <div class="ld-steps">
-      <button type="button" class="ld-step" onclick="location.href='./index.html#/market-data'">
-        <span class="ld-step-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></span>
-        <span class="ld-step-num">壹</span>
-        <span class="ld-step-title">职业定位</span>
-        <span class="ld-step-note">看清目标岗位的真实市场基准，再选定方向</span>
-      </button>
-      <button type="button" class="ld-step" onclick="location.href='./index.html#/resume-library'">
-        <span class="ld-step-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/></svg></span>
-        <span class="ld-step-num">贰</span>
-        <span class="ld-step-title">简历准备</span>
-        <span class="ld-step-note">上传简历建立档案基线，作为匹配与追问的输入</span>
-      </button>
-      <button type="button" class="ld-step" onclick="location.href='./index.html#/interview'">
-        <span class="ld-step-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span>
-        <span class="ld-step-num">叁</span>
-        <span class="ld-step-title">面试演练</span>
-        <span class="ld-step-note">在真实 JD 上做多轮对话演练，支持语音</span>
-      </button>
-      <button type="button" class="ld-step" onclick="location.href='./index.html#/report'">
-        <span class="ld-step-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg></span>
-        <span class="ld-step-num">肆</span>
-        <span class="ld-step-title">能力诊断</span>
-        <span class="ld-step-note">五维诊断与逐题拆解，薄弱点跨场沉淀</span>
-      </button>
-      <button type="button" class="ld-step" onclick="location.href='./index.html#/career-plan'">
-        <span class="ld-step-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg></span>
-        <span class="ld-step-num">伍</span>
-        <span class="ld-step-title">发展路径</span>
-        <span class="ld-step-note">把薄弱点转成分阶段的能力提升路径</span>
-      </button>
+  <!-- ══ 区块二：五步主线（纵向时间线，大留白）═════════════════ -->
+  <section class="ld-section" id="ld-journey">
+    <div class="ld-section-head ld-reveal">
+      <p class="ld-eyebrow">五步主线</p>
+      <h2 class="ld-h2">求职不是一场突击，是一条有顺序的路</h2>
+      <p class="ld-lead">每一步都建立在上一步的输入之上：先看清行情再定方向，先有简历再做演练，练完才有诊断，诊断完才知道该补什么。</p>
     </div>
+    <!-- 中轴进度线用 ::before（轨道）/::after（描边生长）绘制，
+         生长进度由 landing.js 写 --tl-p（0~1），无需额外 DOM。 -->
+    <ol class="ld-timeline" id="ld-timeline">
+      <li class="ld-tl-item ld-reveal">
+        <span class="ld-tl-node" aria-hidden="true">壹</span>
+        <a class="ld-tl-card" href="./index.html#/market-data">
+          <span class="ld-tl-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg></span>
+          <span class="ld-tl-text">
+            <span class="ld-tl-title">职业定位</span>
+            <span class="ld-tl-note">看清目标岗位的真实市场基准，再选定方向</span>
+          </span>
+        </a>
+      </li>
+      <li class="ld-tl-item ld-reveal">
+        <span class="ld-tl-node" aria-hidden="true">贰</span>
+        <a class="ld-tl-card" href="./index.html#/resume-library">
+          <span class="ld-tl-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="12" y1="18" x2="12" y2="12"/></svg></span>
+          <span class="ld-tl-text">
+            <span class="ld-tl-title">简历准备</span>
+            <span class="ld-tl-note">上传简历建立档案基线，作为匹配与追问的输入</span>
+          </span>
+        </a>
+      </li>
+      <li class="ld-tl-item ld-reveal">
+        <span class="ld-tl-node" aria-hidden="true">叁</span>
+        <a class="ld-tl-card" href="./index.html#/interview">
+          <span class="ld-tl-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span>
+          <span class="ld-tl-text">
+            <span class="ld-tl-title">面试演练</span>
+            <span class="ld-tl-note">在真实 JD 上做多轮对话演练，支持语音</span>
+          </span>
+        </a>
+      </li>
+      <li class="ld-tl-item ld-reveal">
+        <span class="ld-tl-node" aria-hidden="true">肆</span>
+        <a class="ld-tl-card" href="./index.html#/report">
+          <span class="ld-tl-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg></span>
+          <span class="ld-tl-text">
+            <span class="ld-tl-title">能力诊断</span>
+            <span class="ld-tl-note">五维诊断与逐题拆解，薄弱点跨场沉淀</span>
+          </span>
+        </a>
+      </li>
+      <li class="ld-tl-item ld-reveal">
+        <span class="ld-tl-node" aria-hidden="true">伍</span>
+        <a class="ld-tl-card" href="./index.html#/career-plan">
+          <span class="ld-tl-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg></span>
+          <span class="ld-tl-text">
+            <span class="ld-tl-title">发展路径</span>
+            <span class="ld-tl-note">把薄弱点转成分阶段的能力提升路径</span>
+          </span>
+        </a>
+      </li>
+    </ol>
   </section>
 
-  <section class="ld-section">
-    <p class="ld-eyebrow">核心能力</p>
-    <h2 class="ld-h2">每一步都有对应的工具</h2>
+  <!-- ══ 区块三：核心能力（疏朗 2 列大卡，3D 倾斜）═════════════ -->
+  <section class="ld-section" id="ld-cap">
+    <div class="ld-section-head ld-reveal">
+      <p class="ld-eyebrow">核心能力</p>
+      <h2 class="ld-h2">每一步都有对应的工具</h2>
+      <p class="ld-lead">六个模块覆盖求职全流程，打开即用，数据互通。</p>
+    </div>
     <div class="ld-cards">
-      <a class="ld-card" href="./index.html#/interview">
+      <a class="ld-card ld-reveal" data-tilt href="./index.html#/interview">
         <span class="ld-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span>
         <span class="ld-card-title">模拟面试</span>
         <span class="ld-card-note">多轮追问与语音对话，可按目标公司风格调整</span>
         <span class="ld-card-go">进入</span>
       </a>
-      <a class="ld-card" href="./index.html#/question-bank">
+      <a class="ld-card ld-reveal" data-tilt href="./index.html#/question-bank">
         <span class="ld-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg></span>
         <span class="ld-card-title">题库</span>
         <span class="ld-card-note">按题型与难度自助练习，支持批量导入</span>
         <span class="ld-card-go">进入</span>
       </a>
-      <a class="ld-card" href="./index.html#/market-data">
+      <a class="ld-card ld-reveal" data-tilt href="./index.html#/market-data">
         <span class="ld-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10"/><path d="M12 20V4"/><path d="M6 20v-6"/></svg></span>
         <span class="ld-card-title">市场数据</span>
         <span class="ld-card-note">岗位分布、薪资区间与技能需求的一手数据</span>
         <span class="ld-card-go">进入</span>
       </a>
-      <a class="ld-card" href="./index.html#/resume-library">
+      <a class="ld-card ld-reveal" data-tilt href="./index.html#/resume-library">
         <span class="ld-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg></span>
         <span class="ld-card-title">简历库</span>
         <span class="ld-card-note">简历解析与版本管理，作为档案的输入源</span>
         <span class="ld-card-go">进入</span>
       </a>
-      <a class="ld-card" href="./index.html#/report">
+      <a class="ld-card ld-reveal" data-tilt href="./index.html#/report">
         <span class="ld-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>
         <span class="ld-card-title">综合报告</span>
         <span class="ld-card-note">雷达图、逐题复盘与能力成长曲线</span>
         <span class="ld-card-go">进入</span>
       </a>
-      <a class="ld-card" href="./index.html#/career-plan">
+      <a class="ld-card ld-reveal" data-tilt href="./index.html#/career-plan">
         <span class="ld-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6"/><line x1="8" y1="2" x2="8" y2="18"/><line x1="16" y1="6" x2="16" y2="22"/></svg></span>
         <span class="ld-card-title">职业规划</span>
         <span class="ld-card-note">结合市场技能缺口，生成分阶段提升路径</span>
@@ -124,35 +172,22 @@
     </div>
   </section>
 
+  <!-- ══ 区块四：页脚 CTA（大留白收束）════════════════════════ -->
   <section class="ld-section ld-footer">
-    <div class="ld-footer-box">
+    <div class="ld-footer-box ld-reveal">
       <h2 class="ld-h2">现在开始你的第一步</h2>
       <p class="ld-lead">打开即用，无需注册；简历、岗位与历史记录都保存在本机数据库中。</p>
       <div class="ld-hero-actions ld-footer-actions">
-        <a class="ld-btn ld-btn-primary" href="./index.html#/home">开始您的旅程</a>
+        <a class="ld-btn ld-btn-primary" data-magnetic href="./index.html#/home">开始您的旅程</a>
       </div>
     </div>
   </section>
+
 </main>
 
-<script>
-  (function () {
-    const btn = document.getElementById('theme-toggle');
-    const root = document.documentElement;
-    function updateLabel() {
-      const isDark = root.classList.contains('theme-dark');
-      if (btn) btn.textContent = isDark ? '☀️ 浅色风' : '🌙 深色风';
-    }
-    if (btn) {
-      btn.addEventListener('click', function () {
-        root.classList.toggle('theme-dark');
-        try { localStorage.setItem('theme', root.classList.contains('theme-dark') ? 'dark' : 'light'); } catch (e) {}
-        updateLabel();
-      });
-    }
-    updateLabel();
-  })();
-</script>
+<!-- v8.6：落地页动效总编排（module，解析后执行）。
+     主题切换逻辑已迁移至此（landing.js initThemeToggle）。 -->
+<script type="module" src="/src/js/landing.js"></script>
 
 </body>
 </html>

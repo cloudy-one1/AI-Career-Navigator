@@ -15,7 +15,8 @@
   },
   "dependencies": {
     "chart.js": "^4.4.0",
-    "chartjs-chart-geo": "^4.3.6"
+    "chartjs-chart-geo": "^4.3.6",
+    "three": "^0.185.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

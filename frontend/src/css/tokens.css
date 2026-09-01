@@ -104,6 +104,12 @@
   --text-2xl: 28px;
   --text-3xl: 36px;
 
+  /* v8.6 landing 秀场排版（只新增）：展示级流式字号，clamp 随视口缩放。
+     仅 landing.html 引用；与主题无关，深色侧无需对称覆盖。 */
+  --text-display-1: clamp(42px, 7.2vw, 84px);   /* Hero 主标题 */
+  --text-display-2: clamp(30px, 4.2vw, 44px);   /* 区块标题 */
+  --text-display-3: clamp(19px, 2.2vw, 24px);   /* Hero 副标题 */
+
   /* ══ 间距 4pt 网格 ══ */
   --space-1: 4px;
   --space-2: 8px;
@@ -113,6 +119,15 @@
   --space-6: 32px;
   --space-7: 48px;
   --space-8: 64px;
+  /* v8.6 landing 大留白档（只新增）：秀场页区块间距，仅 landing.html 引用 */
+  --space-9: 96px;
+  --space-10: 128px;
+  --space-11: 160px;
+
+  /* v8.6 landing Hero 底色（只新增）：深墨沉浸底是设计意图本身，两个
+     主题都不变浅 —— 所以不能引用 --slate-900（它在深色主题被重映射为
+     纸白，v8.5 及之前 Hero 在深色模式变白底正是这个 bug）。 */
+  --ld-hero-bg: #171A18;
 
   /* ══ 圆角（对齐 job-crawler：卡片 20 / 按钮 26 / 表单 12 / 药丸 999）══ */
   --radius-sm: 8px;
@@ -141,6 +156,51 @@
   --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
   --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
   --ease-standard: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ══ v8.5 质感变量族（参照 threeui 视觉手法，用原生 CSS 复刻）══
+     纪律：本块**只新增**变量，绝不修改上方任何既有色值 ——
+     本轮是「加质感」不是「换肤」，色板与双主题机制保持 v7.1 原样。
+     深色侧在 html.theme-dark 有同名变量对称覆盖，见本文件末尾。 */
+
+  /* 环境光：页面基底的低频渐变光斑（替代 threeui 的 shader 背景） */
+  --ambient-1: rgba(196, 79, 58, .075);     /* 印章红 */
+  --ambient-2: rgba(160, 137, 69, .062);    /* 黄铜 */
+  --ambient-3: rgba(58, 122, 106, .045);    /* 青绿 */
+  /* 壳层色带：Header / 侧栏玻璃「后面」必须有色彩，磨砂才看得出来 */
+  --ambient-shell-1: rgba(196, 79, 58, .22);
+  --ambient-shell-2: rgba(160, 137, 69, .18);
+  --ambient-shell-3: rgba(58, 122, 106, .22);
+
+  /* 表面：补齐浅色侧缺失的渐变底（深色侧 v7.2 已有 --bg-page / --bg-card） */
+  --surface-page: linear-gradient(180deg, #F8F6F2 0%, #F1EEE7 55%, #EFEBE3 100%);
+  --surface-card: linear-gradient(170deg, #FDFCF9 0%, #FAF8F3 100%);
+  --surface-raised: linear-gradient(170deg, #FFFFFF 0%, #FBF9F5 100%);
+
+  /* 景深：三级「贴地实影 + 中程柔影 + 大范围扩散影」，替代单层平影 */
+  --depth-1: 0 1px 1px rgba(31, 35, 32, .030), 0 2px 6px -3px rgba(31, 35, 32, .045);
+  --depth-2: 0 1px 2px rgba(31, 35, 32, .035), 0 6px 14px -6px rgba(31, 35, 32, .065),
+             0 18px 36px -22px rgba(31, 35, 32, .09);
+  --depth-3: 0 2px 4px rgba(31, 35, 32, .045), 0 12px 26px -8px rgba(31, 35, 32, .10),
+             0 34px 64px -30px rgba(31, 35, 32, .14);
+  --depth-hover: 0 4px 8px rgba(31, 35, 32, .055), 0 16px 34px -10px rgba(31, 35, 32, .11),
+                 0 40px 72px -32px rgba(31, 35, 32, .16);
+
+  /* 描边与内高光：hairline 收口 + 顶部那道「纸的受光边」 */
+  --hairline: rgba(31, 35, 32, .075);
+  --hairline-strong: rgba(31, 35, 32, .12);
+  --edge-glow: linear-gradient(135deg, rgba(196, 79, 58, .50), rgba(160, 137, 69, .30) 46%,
+               rgba(31, 35, 32, .04) 78%);
+  --sheen-top: inset 0 1px 0 rgba(255, 255, 255, .85);
+  --sheen-bottom: inset 0 -1px 0 rgba(31, 35, 32, .022);
+
+  /* 玻璃：alpha 越小越透、blur 越大磨砂越重（参数经原型实测定档） */
+  --glass-alpha: .20;
+  --glass-blur: 44px;
+  --glass-bright: 1.07;   /* 极透玻璃的可读性补偿：提亮透出的背景，保住墨字对比度 */
+  --glass-rgb: 252 250 246;
+  --glass-shell: rgb(var(--glass-rgb) / var(--glass-alpha));
+  --glass-shell-soft: rgb(var(--glass-rgb) / calc(var(--glass-alpha) * .72));
+  --shell-shadow: 0 1px 0 var(--hairline), 0 10px 28px -20px rgba(31, 35, 32, .22);
 }
 
 /* ===================================================
@@ -287,4 +347,42 @@ html.theme-dark {
   --warning-rgb: 201, 169, 97;
   --danger-rgb: 255, 138, 117;
   --ink-rgb: 242, 239, 230;
+
+  /* ── v8.5 质感变量族（深色对称覆盖，与 :root 同名）──
+     只需覆盖「色相/明度相关」的项；--glass-alpha / --glass-blur
+     沿用浅色档位（同一套玻璃参数在两个主题下表现一致）。
+     --glass-shell 虽定义在 :root，但 var() 在使用点解析，
+     因此这里改 --glass-rgb 即可让壳层自动切到墨色玻璃。 */
+  --ambient-1: rgba(224, 106, 82, .15);
+  --ambient-2: rgba(201, 169, 97, .10);
+  --ambient-3: rgba(95, 168, 150, .075);
+  --ambient-shell-1: rgba(224, 106, 82, .30);
+  --ambient-shell-2: rgba(201, 169, 97, .22);
+  --ambient-shell-3: rgba(95, 168, 150, .17);
+
+  --surface-page: linear-gradient(165deg, #191C18 0%, #131512 55%, #171511 100%);
+  --surface-card: linear-gradient(160deg, rgba(38, 42, 37, .94) 0%, rgba(27, 31, 27, .97) 100%);
+  --surface-raised: linear-gradient(160deg, rgba(44, 49, 43, .96) 0%, rgba(30, 34, 30, .98) 100%);
+
+  --depth-1: 0 1px 2px rgba(0, 0, 0, .34), 0 2px 8px -3px rgba(0, 0, 0, .30);
+  --depth-2: 0 2px 4px rgba(0, 0, 0, .40), 0 8px 18px -6px rgba(0, 0, 0, .42),
+             0 20px 40px -24px rgba(0, 0, 0, .48);
+  --depth-3: 0 3px 6px rgba(0, 0, 0, .44), 0 14px 30px -8px rgba(0, 0, 0, .50),
+             0 36px 68px -30px rgba(0, 0, 0, .56);
+  --depth-hover: 0 5px 10px rgba(0, 0, 0, .46), 0 18px 38px -10px rgba(0, 0, 0, .54),
+                 0 44px 78px -34px rgba(0, 0, 0, .60);
+
+  --hairline: rgba(240, 235, 220, .12);
+  --hairline-strong: rgba(240, 235, 220, .18);
+  --edge-glow: linear-gradient(135deg, rgba(224, 106, 82, .55), rgba(201, 169, 97, .34) 46%,
+               transparent 78%);
+  --sheen-top: inset 0 1px 0 rgba(242, 239, 230, .07);
+  --sheen-bottom: inset 0 -1px 0 rgba(0, 0, 0, .24);
+
+  --glass-rgb: 24 27 23;
+  --glass-bright: .60;   /* 深色反向补偿：压暗透出的背景，保住纸白字对比度 */
+  --shell-shadow: 0 1px 0 rgba(240, 235, 220, .07), 0 12px 32px -22px rgba(0, 0, 0, .60);
+
+  /* v8.6：Hero 保持深墨底（比页面基底深半档，保住沉浸区块轮廓） */
+  --ld-hero-bg: #101310;
 }

@@ -297,6 +297,88 @@
 }
 
 /* ===================================================
+   10. v8.5 质感层动效（环境光漂移 / 滚动揭示）
+   ---------------------------------------------------
+   动效一律定义在本文件 —— surface.css 只描述静态外观，
+   不写任何 animation。本节的每一项新增动画，其选择器
+   都必须登记进下方第 7 节的 prefers-reduced-motion 清单，
+   否则降级纪律会出现缺口。
+   =================================================== */
+
+/* 环境光漂移：只动 transform，不触发重绘；周期 34s、位移 ≤ 3%。
+   观感应当是「呼吸」而不是「动画」—— 一旦让人注意到它在动，
+   就是过了。 */
+body::after {
+  animation: ambient-drift 34s var(--ease-standard) infinite alternate;
+}
+@keyframes ambient-drift {
+  0%   { transform: translate3d(0, 0, 0) scale(1); }
+  50%  { transform: translate3d(1.6%, -1.1%, 0) scale(1.025); }
+  100% { transform: translate3d(-1.4%, 1.4%, 0) scale(1.04); }
+}
+
+/* 移动端关闭漂移：常驻动画在小屏上纯属耗电，且几乎感知不到 */
+@media (max-width: 767px) {
+  body::after {
+    animation: none !important;
+  }
+}
+
+/* 滚动揭示：纯 CSS 渐进增强。
+   包在 @supports 里 —— 不支持 animation-timeline 的浏览器
+   （如 Firefox）内容直接可见、无动画，是零风险的降级。
+   只用于首屏以下的次要区块：首屏不做，避免拖慢首屏呈现；
+   长列表也不做逐项错峰（简历库可能有上百项，会造成长任务）。 */
+@supports (animation-timeline: view()) {
+  .reveal-on-scroll {
+    animation: reveal-in var(--dur-reveal) var(--ease-out) both;
+    animation-timeline: view();
+    animation-range: entry 8% cover 26%;
+  }
+}
+@keyframes reveal-in {
+  from { opacity: 0; transform: translateY(14px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ===================================================
+   11. v8.6 landing 秀场动效（逐字揭示 / 滚动提示）
+   ---------------------------------------------------
+   仅 landing.html 使用。纪律同第 10 节：本节的每一项新增动画，
+   其选择器都必须登记进下方第 7 节的 prefers-reduced-motion 清单。
+   磁性按钮 / 3D 倾斜 / 时间线描边由 landing.js 以 transform 驱动，
+   不产生 keyframes，无需登记（JS 侧有 reduced-motion 总开关）。
+   =================================================== */
+
+/* 逐字标题揭示：上移 + 轻微旋转 + 模糊消散。
+   错峰由 landing.js 写 --ci（字序）实现，不走 nth-child ——
+   标题字数可变，nth-child 清单无法覆盖。 */
+.ld-char {
+  display: inline-block;
+  animation: ld-char-in 640ms var(--ease-out) both;
+  animation-delay: calc(var(--ci, 0) * 40ms + 120ms);
+  /* filter 动画只发生在载入一次性阶段（约 14 字 × 640ms），
+     不参与滚动/常驻渲染，开销可接受 */
+  will-change: transform, opacity;
+}
+@keyframes ld-char-in {
+  from { opacity: 0; transform: translateY(0.42em) rotate(4deg); filter: blur(6px); }
+  to   { opacity: 1; transform: none; filter: blur(0); }
+}
+
+/* Hero 底部滚动提示：细线上的光点往复下滑，暗示下方还有内容。
+   线的静态外观在 landing.css，这里只负责光点的运动。 */
+.ld-hero-scrollcue::after {
+  animation: ld-cue-drop 2.2s var(--ease-standard) infinite;
+}
+@keyframes ld-cue-drop {
+  0%   { transform: translateY(-110%); opacity: 0; }
+  22%  { opacity: 1; }
+  78%  { opacity: 1; }
+  100% { transform: translateY(420%); opacity: 0; }
+}
+
+/* ===================================================
    7. 降级：偏好减弱动效时全站静默（承接 base.css 全局机制）
    =================================================== */
 @media (prefers-reduced-motion: reduce) {
@@ -312,7 +394,14 @@
   .particle,
   .pop-in,
   .quote-scan::after,
-  .btn-press::after {
+  .btn-press::after,
+  /* v8.5 新增：环境光漂移与滚动揭示，必须一并登记，
+     否则降级清单出现缺口 —— 减弱动效时全站应完全静止 */
+  body::after,
+  .reveal-on-scroll,
+  /* v8.6 新增：landing 逐字揭示与滚动提示光点 */
+  .ld-char,
+  .ld-hero-scrollcue::after {
     animation: none !important;
   }
   ::view-transition-old(root),

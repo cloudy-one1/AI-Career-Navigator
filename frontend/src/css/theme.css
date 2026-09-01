@@ -10,18 +10,18 @@
    v7.2 变更：赛博蓝紫 → 墨夜纸墨；移除语义色切换器。
    =================================================== */
 
-/* ---------- 1. 页面基底 + 顶部印章红余晖 ---------- */
+/* ---------- 1. 页面基底 ---------- */
 html.theme-dark body {
-  background: var(--bg-page) !important;
+  background: var(--surface-page) !important;
   background-attachment: fixed !important;
   color: var(--text-primary) !important;
   position: relative;
 }
-html.theme-dark body::before {
-  content: "";
-  position: fixed; inset: 0; z-index: -1; pointer-events: none;
-  background: radial-gradient(ellipse at 28% 0%, rgba(224,106,82,0.07) 0%, transparent 55%);
-}
+/* v8.5：原先此处的 body::before 朱砂余晖已移除。
+   环境光改由 surface.css 的 body::after 统一提供 —— 深浅两色共用
+   同一个伪元素，靠 tokens.css 的 --ambient-* 变量切换。
+   保留两个伪元素叠加会让深色光斑浓度失控（0.30 + 0.07 叠加后偏亮），
+   单一数据源更好控，也让「注释掉 surface.css 就完全回退」仍然成立。 */
 
 /* ---------- 2. 标题渐变文字（h1/h2）：纸白 → 朱砂；h3~h5 纯纸白 ---------- */
 html.theme-dark h1,
@@ -40,14 +40,20 @@ html.theme-dark h5 {
 }
 
 /* ---------- 3. 框架层（header / 侧栏 / 底部导航）---------- */
+/* v8.5：壳层玻璃改走统一变量。--glass-rgb 在深色下已被 tokens.css
+   重映射为墨色，--glass-bright 反向补偿（压暗）保证纸白字对比度 */
 html.theme-dark .app-header {
-  background: rgba(24,27,23,0.82) !important;
-  border-bottom: 1px solid var(--border-card) !important;
-  -webkit-backdrop-filter: blur(12px); backdrop-filter: blur(12px);
+  background: var(--glass-shell) !important;
+  border-bottom: 1px solid var(--hairline) !important;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.35) brightness(var(--glass-bright));
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.35) brightness(var(--glass-bright));
+  box-shadow: var(--shell-shadow);
 }
 html.theme-dark .app-nav {
-  background: rgba(24,27,23,0.82) !important;
-  border-right: 1px solid var(--border-card) !important;
+  background: linear-gradient(180deg, var(--glass-shell), var(--glass-shell-soft)) !important;
+  border-right: 1px solid var(--hairline) !important;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.30) brightness(var(--glass-bright));
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.30) brightness(var(--glass-bright));
 }
 html.theme-dark .nav-item { color: var(--text-secondary) !important; }
 html.theme-dark .nav-item:hover { color: #F2EFE6 !important; background: rgba(240,235,220,0.06) !important; }
@@ -59,45 +65,99 @@ html.theme-dark .nav-item.active::before {
   background: var(--stamp) !important;
 }
 html.theme-dark .bottom-nav {
-  background: rgba(24,27,23,0.86) !important;
-  border-top: 1px solid var(--border-card) !important;
+  background: var(--glass-shell) !important;
+  border-top: 1px solid var(--hairline) !important;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.30) brightness(var(--glass-bright));
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.30) brightness(var(--glass-bright));
 }
+/* 深色下 --indigo-400/--stamp/--indigo-600 三个色标都映射到相近的朱砂，
+   直接用变量做渐变会退化成纯色，因此这里写死一组深色专用色阶 */
 html.theme-dark .brand-logo {
-  background: var(--stamp) !important;
+  background: linear-gradient(150deg, #EC8169, var(--stamp) 62%, #FF8A75) !important;
   color: #20140F !important;
+  box-shadow: 0 2px 8px rgba(224, 106, 82, .34),
+              inset 0 1px 0 rgba(255, 255, 255, .18);
 }
 
 
 /* ---------- 4. 卡片（墨纸卡底 + hover 朱砂描边）---------- */
+/* 二级表面：常规卡片。景深改走统一的 --depth-* / --sheen-* 变量，
+   深浅两色共用同一套质感描述，色值差异全部由 tokens.css 承担 */
 html.theme-dark .card,
-html.theme-dark .modal {
-  background: var(--bg-card) !important;
-  border: 1px solid var(--border-card) !important;
-  box-shadow: 0 8px 32px rgba(0,0,0,0.30), inset 0 1px 0 rgba(242,239,230,0.04) !important;
+html.theme-dark .modal,
+html.theme-dark .report-dim-card,
+html.theme-dark .metric-item,
+html.theme-dark .career-path-card,
+html.theme-dark .career-summary,
+html.theme-dark .career-life-card {
+  background: var(--surface-card) !important;
+  border: 1px solid var(--hairline) !important;
+  box-shadow: var(--depth-2), var(--sheen-top), var(--sheen-bottom) !important;
   color: var(--text-primary) !important;
 }
-html.theme-dark .card:hover {
-  border-color: rgba(224,106,82,0.32) !important;
-  box-shadow: 0 8px 40px rgba(0,0,0,0.38), inset 0 1px 0 rgba(242,239,230,0.04) !important;
+/* 一级表面：列表项。深色下同样降一级，保持与浅色的层次关系一致 */
+html.theme-dark .history-item,
+html.theme-dark .gap-item,
+html.theme-dark .timeline-node,
+html.theme-dark .memory-item {
+  background: var(--surface-card) !important;
+  border: 1px solid var(--hairline) !important;
+  box-shadow: var(--depth-1), var(--sheen-top) !important;
+}
+/* hover 必须写在静态之后：两者优先级相同，靠顺序取胜 */
+html.theme-dark .card:hover,
+html.theme-dark .card-hover:hover,
+html.theme-dark .history-item:hover,
+html.theme-dark .gap-item:hover,
+html.theme-dark .career-stage-card:hover,
+html.theme-dark .career-mode-card:hover {
+  border-color: rgba(224, 106, 82, .34) !important;
+  box-shadow: var(--depth-hover), var(--sheen-top), var(--sheen-bottom) !important;
+}
+/* 首屏「下一步建议」：三级表面 */
+html.theme-dark .nba-card {
+  background: var(--surface-raised) !important;
+  border-color: var(--hairline) !important;
+  box-shadow: var(--depth-3), var(--sheen-top), var(--sheen-bottom) !important;
+}
+html.theme-dark .nba-mark {
+  background: linear-gradient(150deg, #EC8169, var(--stamp) 60%, #FF8A75) !important;
+  color: #20140F !important;
+  box-shadow: 0 3px 12px rgba(224, 106, 82, .34),
+              inset 0 1px 0 rgba(255, 255, 255, .16) !important;
+}
+html.theme-dark .profile-chip.is-warn {
+  background: linear-gradient(135deg,
+              rgba(224, 106, 82, .16), rgba(201, 169, 97, .05)) !important;
 }
 
 /* ---------- 5. 按钮 ---------- */
 html.theme-dark .btn { border-radius: var(--radius-full) !important; }
-html.theme-dark .btn-primary {
-  background: var(--stamp) !important;
+/* 与浅色对称：主按钮同样给渐变 + 内高光，只把色阶换成深色专用组 */
+html.theme-dark .btn-primary,
+html.theme-dark .nba-go {
+  background: linear-gradient(180deg, #EC8169, var(--stamp) 58%, #D85C45) !important;
   color: #20140F !important;
-  box-shadow: none !important;
+  box-shadow: 0 2px 8px rgba(224, 106, 82, .30),
+              inset 0 1px 0 rgba(255, 255, 255, .20) !important;
 }
-html.theme-dark .btn-primary:hover {
-  background: var(--indigo-700) !important;
-  box-shadow: 0 6px 24px rgba(224,106,82,0.25) !important;
+html.theme-dark .btn-primary:hover,
+html.theme-dark .nba-go:hover {
+  background: linear-gradient(180deg, var(--stamp), #D85C45) !important;
+  box-shadow: 0 8px 24px rgba(224, 106, 82, .36),
+              inset 0 1px 0 rgba(255, 255, 255, .16) !important;
 }
 html.theme-dark .btn-secondary {
-  background: rgba(240,235,220,0.05) !important;
+  background: var(--surface-card) !important;
   color: #F2EFE6 !important;
-  border: 1px solid var(--border-card) !important;
+  border: 1px solid var(--hairline) !important;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .30), var(--sheen-top) !important;
 }
-html.theme-dark .btn-secondary:hover { background: rgba(224,106,82,0.12) !important; }
+html.theme-dark .btn-secondary:hover {
+  border-color: rgba(224, 106, 82, .42) !important;
+  color: #EC8169 !important;
+  box-shadow: 0 4px 14px -4px rgba(224, 106, 82, .30), var(--sheen-top) !important;
+}
 html.theme-dark .btn-danger { background: var(--indigo-800) !important; color: #20140F !important; }
 
 /* ---------- 6. 表单 ---------- */
@@ -105,16 +165,18 @@ html.theme-dark .form-input,
 html.theme-dark .form-textarea,
 html.theme-dark .form-control,
 html.theme-dark .answer-textarea {
-  background: rgba(0,0,0,0.24) !important;
-  border: 1px solid var(--border-card) !important;
+  background: rgba(0, 0, 0, .26) !important;
+  border: 1px solid var(--hairline) !important;
   color: #F2EFE6 !important;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .30) !important;
 }
 html.theme-dark .form-input:focus,
 html.theme-dark .form-textarea:focus,
 html.theme-dark .form-control:focus,
 html.theme-dark .answer-textarea:focus {
   border-color: var(--stamp) !important;
-  box-shadow: 0 0 0 3px rgba(224,106,82,0.16) !important;
+  box-shadow: 0 0 0 4px rgba(224, 106, 82, .15),
+              inset 0 1px 2px rgba(0, 0, 0, .24) !important;
 }
 html.theme-dark .form-label,
 html.theme-dark .form-group label { color: var(--text-secondary) !important; }
@@ -122,21 +184,39 @@ html.theme-dark .form-group label { color: var(--text-secondary) !important; }
 /* ---------- 7. 弹层 / 遮罩 / Toast ---------- */
 html.theme-dark .modal-overlay,
 html.theme-dark .confirm-mask {
-  background: rgba(10,12,10,0.62) !important;
-  -webkit-backdrop-filter: blur(4px); backdrop-filter: blur(4px);
+  background: rgba(10, 12, 10, .62) !important;
+  -webkit-backdrop-filter: blur(8px) brightness(.70);
+  backdrop-filter: blur(8px) brightness(.70);
 }
-html.theme-dark .modal {
-  background: rgba(26,30,26,0.97) !important;
-  border-color: var(--border-card) !important;
-  box-shadow: 0 20px 60px rgba(0,0,0,.5) !important;
-}
+/* 弹层是三级表面（真实悬浮于内容之上），与 surface.css 浅色侧对称。
+   注意它同时出现在上方第 4 节的二级表面清单里，此处靠顺序覆盖为三级 */
+html.theme-dark .modal,
 html.theme-dark .confirm-box {
-  background: rgba(26,30,26,0.97) !important;
+  background: var(--surface-raised) !important;
+  border-color: var(--hairline) !important;
+  box-shadow: var(--depth-3), var(--sheen-top) !important;
   color: var(--text-primary) !important;
+}
+html.theme-dark .drawer {
+  background: var(--glass-shell) !important;
+  border-left: 1px solid var(--hairline) !important;
+}
+html.theme-dark .drawer-section {
+  background: var(--surface-card) !important;
+  border-color: var(--hairline) !important;
+  box-shadow: var(--depth-1), var(--sheen-top) !important;
 }
 html.theme-dark .modal-title,
 html.theme-dark .confirm-title { color: #F2EFE6 !important; }
-html.theme-dark .toast { box-shadow: 0 8px 32px rgba(0,0,0,.4) !important; }
+/* 悬浮类元件统一走墨色玻璃（阴影交给 --depth-*，不再各自写死） */
+html.theme-dark .toast,
+html.theme-dark .glass-panel,
+html.theme-dark .journey-progress,
+html.theme-dark .profile-chip,
+html.theme-dark .stat-chip {
+  background: var(--glass-shell) !important;
+  border-color: var(--hairline) !important;
+}
 
 /* ---------- 8. 切换风格按钮（两风格均可见）---------- */
 .theme-toggle {

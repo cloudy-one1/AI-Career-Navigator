@@ -20,6 +20,11 @@
   <link rel="stylesheet" href="/src/css/pages/memory.css">
   <link rel="stylesheet" href="/src/css/pages/profile.css">
   <link rel="stylesheet" href="/src/css/components.css">
+  <!-- v8.5 质感层：必须位于 components.css 之后、motion.css 之前。
+       在 pages/*.css 之后 → 能统一覆盖各页面卡片，达成全站一致；
+       在 motion 之前 → 动效层保持最高优先级，质感层只描述静态外观。
+       出现异常时注释本行，即可完整回退到 v8.3 视觉。 -->
+  <link rel="stylesheet" href="/src/css/surface.css">
   <link rel="stylesheet" href="/src/css/motion.css">
   <link rel="stylesheet" href="/src/css/theme.css">
   <script>
