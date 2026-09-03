@@ -11,6 +11,7 @@
   <img src="https://img.shields.io/badge/docker-supported-blue.svg" alt="Docker">
   <img src="https://img.shields.io/badge/license-MIT-yellow.svg" alt="License">
   <img src="https://img.shields.io/badge/status-active-success.svg" alt="Status">
+  <a href="https://github.com/cloudy-one1/AI-simulated-interviewer/actions/workflows/ci.yml"><img src="https://github.com/cloudy-one1/AI-simulated-interviewer/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
 </p>
 
 <p align="center">
@@ -66,7 +67,7 @@ AI 求职领航 是一个面向求职者的全流程陪跑系统，按五步主�
 - **简历库 / 岗位库**：跨会话复用的输入资产，一次上传解析、反复选用，不必重复上传
 - **题库**：题目 CRUD、收藏、从历史会话导入
 - **多 AI 后端与优雅降级**：DeepSeek / 通义千问 / 智谱 GLM / OpenAI 可切换，`AI_PROVIDER=auto` 自动探测；主模型失败按回落链自动切换备用模型，调用方无感知
-- **工程保障**：import-linter 强制 L1–L4 分层契约、1000+ pytest 用例（含黄金样本评测与 live-LLM 抽检）、前端 vitest、GitHub Actions CI
+- **工程保障**：import-linter 强制 L1–L4 分层契约、1000+ pytest 用例（含黄金样本评测与 live-LLM 抽检）、前端 vitest、GitHub Actions CI、dependabot 每周自动维护依赖（后端 pip + 前端 npm）
 
 ---
 
@@ -482,6 +483,11 @@ python run.py lint
 
 > Windows 下无需额外操作：`run.py lint` 已内置 `PYTHONUTF8=1`，避免 grimp 按 GBK 解析 UTF-8 源码导致漏检。
 
+### 持续集成与依赖维护
+
+- **CI**（`.github/workflows/ci.yml`）：push 到 `master` 与所有 PR 触发，两个 job——后端 `run.py lint` + 全量 pytest；前端 `npm ci` + vitest + `npm run build`。**干净环境可直接跑通**：`tests/conftest.py` 注入占位 Key（无需真实 LLM Key，live-LLM 抽检默认跳过）、采集器测试在导入前 stub 了 playwright（无需 `playwright install chromium`）、`package-lock.json` 已入库（`npm ci` 不会因 lockfile 缺失红灯）。
+- **依赖维护**（`.github/dependabot.yml`）：每周一检查一次 pip（根 `requirements.txt`）与 npm（`frontend/`）依赖，PR 上限 5 条。前端更新会同步改 package.json 与 lockfile，合入前以 CI 绿灯为准。
+
 ---
 
 ## ⚠️ 已知局限
@@ -512,3 +518,5 @@ python run.py lint
 ## 📄 许可证
 
 本项目采用 [MIT License](LICENSE) 开源。
+
+版本迭代历史见 [CHANGELOG.md](CHANGELOG.md)，架构约束与决策记录见 [CHARTER.md](CHARTER.md)。

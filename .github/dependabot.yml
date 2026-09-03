@@ -1,0 +1,26 @@
+# Dependabot：自动维护依赖（后端 pip + 前端 npm）。
+#
+# 口径说明：
+# - requirements.txt 只声明版本下限（>=），dependabot 的更新是"放宽"而非"收紧"，
+#   合入前仍需本地 `pip install -r requirements.txt` 且 CI 绿灯。
+# - frontend/ 有 package-lock.json，更新 PR 会同时改 package.json 与 lockfile；
+#   CI 用 `npm ci`，两者不同步会直接红灯——合入前务必确认 lockfile 已随 PR 一并更新。
+# - 每周一检查一次、PR 上限 5 条，避免依赖变更一次涌入过多。
+# - commit message 沿用 dependabot 默认前缀（不自定义），以免与仓库的 Commit Message
+#   规范冲突。
+version: 2
+
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5
+
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    open-pull-requests-limit: 5

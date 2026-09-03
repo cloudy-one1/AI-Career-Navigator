@@ -40,14 +40,14 @@ frontend/dist/
 .coverage
 htmlcov/
 
-# === 对外仓库不含文档（本地保留，不入库）===
-# 仓库的公开面是代码本身：README 承担全部对外说明，接口文档由运行时的
-# /docs（Swagger UI）自动生成。docs/ 下的过程性资料（需求文档 / 竞品研读 /
-# 验收材料等）与下面三份根目录文档，一律**只停止跟踪、不删除**——需要重新入库时，
-# 删掉本节对应条目再 git add 即可。
+# === 过程性文档（本地保留，不入库）===
+# v8.8 调整：CHANGELOG.md 与 CHARTER.md 已恢复跟踪——版本叙事与架构/决策记录属于
+# 标准开源仓库的对外要素，见 CHANGELOG v8.8。docs/ 下的过程性资料（需求文档 /
+# 竞品研读 / 验收材料等）与 CODEBUDDY.md（AI 协作索引，只服务本机会话）仍**只停止
+# 跟踪、不删除**——需要重新入库时，删掉本节对应条目再 git add 即可。
+# 注意：CHANGELOG / CHARTER 入库后，tests/test_repo_hygiene.py 第 5 条会检查它们
+# 内部的相对链接，禁止再链向本节未跟踪的文件（CODEBUDDY.md 已改为纯文本提及）。
 docs/
-/CHANGELOG.md
-/CHARTER.md
 /CODEBUDDY.md
 
 # === 源码打包产物（不入库） ===

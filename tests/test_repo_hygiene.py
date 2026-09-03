@@ -17,10 +17,11 @@ docx 和一份竞品学习报告，全都"不违反任何一条黑名单"。黑�
 约定：AI 会话产生的临时脚本一律放根目录并用 `_` 前缀命名（如 _scratch.py），
 用完即删；确需长期保留的辅助脚本应给正式名字放进正式位置（如
 tests/fixtures/generate_golden_samples.py）。
-**对外仓库不含文档目录**：docs/ 与根目录的 CHANGELOG / CHARTER / CODEBUDDY 均已
-停止跟踪（.gitignore 已排除，文件保留在本地）。对外说明只保留
-README.md，接口文档由运行时的 /docs（Swagger UI）承担；新文档一律不要 git add，
-也不要在 README 里链向这些未跟踪文件（第 5 条会拦）。
+**v8.8 对外文档范围调整**：CHANGELOG.md 与 CHARTER.md 已恢复跟踪——版本迭代叙事
+与架构/决策记录是标准开源仓库的对外要素；README.md 承担快速开始与对外说明。
+docs/（过程性资料）与 CODEBUDDY.md（AI 协作索引，只服务本机会话）仍停止跟踪
+（.gitignore 已排除，文件保留在本地）。因此第 5 条的链接检查对 CHANGELOG / CHARTER
+同样生效：它们不得链向未跟踪文件（涉及的 CODEBUDDY.md 已改为纯文本提及）。
 """
 import os
 import re
@@ -40,6 +41,8 @@ ALLOWED_ROOT_FILES: set[str] = {
     ".gitattributes",     # 跨平台换行符统一为 LF
     ".gitignore",
     ".importlinter",      # 分层依赖契约（L1-L4）
+    "CHANGELOG.md",       # [v8.8] 版本迭代叙事（对外可见，标准开源要素）
+    "CHARTER.md",         # [v8.8] 不变宪章：产品命题 / 架构约束 / 决策记录 / 已知局限
     "Dockerfile",
     "LICENSE",
     "README.md",
@@ -105,7 +108,7 @@ def test_root_directory_whitelist():
     bad = sorted(top_level - allowed)
     assert not bad, (
         f"根目录出现白名单外的跟踪条目: {bad}。"
-        "处理：对外仓库不收文档（README 之外一律不 git add）；临时脚本用 `_` 前缀并尽快删除，"
+        "处理：docs/ 与 CODEBUDDY.md 属本地资料，不得 git add；临时脚本用 `_` 前缀并尽快删除，"
         "确属工程文件的在 tests/test_repo_hygiene.py 的 ALLOWED_ROOT_FILES / "
         "ALLOWED_ROOT_DIRS 登记并写明用途。v8.4 整理时根目录曾散落畸形文件、"
         "对话附件与两份文档——黑名单三条全不违反，正是补这条白名单的原因。"
