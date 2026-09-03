@@ -14,7 +14,7 @@ markdown>=3.5                 # 复盘报告 Markdown→HTML 导出（浏览器�
 pyyaml>=6.0                   # 公司风格配置层（company_profiles/*.yaml，缺失时该层降级）
 
 # 实时采集（内嵌 job-crawler 采集器）：需额外执行 playwright install chromium
-playwright>=1.40
+playwright>=1.62.0
 playwright-stealth>=1.0.6
 
 # 测试
