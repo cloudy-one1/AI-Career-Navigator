@@ -15,6 +15,18 @@
 - 两个 package-ecosystem：`pip`（`directory: "/"`，对应根 `requirements.txt`）与 `npm`（`directory: "/frontend"`，对应 `package-lock.json`），`version: 2`。
 - 节奏 `weekly`（`day: monday`）、`open-pull-requests-limit: 5`，避免依赖变更一次涌入；**commit message 不自定义前缀**，沿用 dependabot 默认，以免与 CHARTER 的 Commit Message 规范冲突。
 - 文件头注释钉住两条合并门槛：`requirements.txt` 只声明版本下限（`>=`），合入前仍需本地安装 + CI 绿灯；前端更新会同时改 `package.json` 与 lockfile，而 CI 走 `npm ci`，两者不同步直接红灯（ci.yml 已有同款口径注释）。
+- **首轮扫描当天即产出 7 个 PR**（pip 5 + npm 2，各自卡在 `open-pull-requests-limit: 5`），按风险分三档处置：
+  | PR | 依赖 | 变化 | 处置 |
+  |---|---|---|---|
+  | #1 | pyyaml | 6.0 → 6.0.3 | 合并（patch，仅加 Python 3.14 支持） |
+  | #3 | pydantic | 2.6.0 → 2.13.5 | 合并（同 major，changelog 全为 fixes） |
+  | #4 | aiosqlite | 0.20.0 → 0.22.1 | 合并（breaking 已核对，见下） |
+  | #2 | playwright | 1.40 → 1.62.0 | 保留待人工验证（跨 22 个 minor，且需重装 chromium） |
+  | #6 | openai | `>=1.30.0` → `>=3.6.0` | **冻结**（跨 2 个 major，直击 `backend/llm_client.py`） |
+  | #5 | vite | 5.4.21 → 8.2.2 | **冻结**（跨 3 个 major，构建链配置可能不兼容） |
+  | #7 | vitest | 2.1.9 → 4.1.11 | **冻结**（跨 2 个 major，测试 API 可能变） |
+- **aiosqlite 0.22 的 breaking 已核对**：官方 changelog 写明 `Connection` 不再继承 `threading.Thread`，不用 context manager 的调用方必须 `await close()` 或 `stop()`，否则 ResourceWarning。本项目 `backend/db.py`、`backend/market/store.py`、`backend/market/importer.py` 全部是 `db = await get_db(); try: ... finally: await db.close()` 模式——**正是新版要求的做法**，故 #4 不受影响。
+- **跨 major 升级一律加 `ignore: version-update:semver-major` 冻结**（openai 在 pip 段，vite / vitest 在 npm 段）。理由：`requirements.txt` 只写下限（`>=`），抬高下限等于要求**所有新装环境**直装新版——一旦有 breaking，"首次安装即崩"会外溢到 README 的快速开始流程，而 PR 页面的 checks 只能覆盖 CI 那一种环境。冻结后需人工在本机 + CI 双验证，再手动提下限。
 
 ### 2. LICENSE 补署名
 

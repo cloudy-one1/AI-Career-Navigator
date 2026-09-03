@@ -17,6 +17,12 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    ignore:
+      # openai SDK 跨 major 有 breaking change，而 backend/llm_client.py 是调用入口；
+      # requirements.txt 只写下限（>=），抬高下限会让**所有新装环境**直接装到新版，
+      # 风险外溢到"首次安装即崩"。major 升级需人工在本机 + CI 双验证后再手动提下限。
+      - dependency-name: "openai"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "npm"
     directory: "/frontend"
@@ -24,3 +30,10 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    ignore:
+      # 构建链（vite）与测试链（vitest）跨 major 会改配置项与 API，
+      # 涉及 vite.config.js 的入口/chunk 配置与 vitest 用例写法，需人工验证后再动。
+      - dependency-name: "vite"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "vitest"
+        update-types: ["version-update:semver-major"]
