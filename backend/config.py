@@ -17,9 +17,7 @@ logger = logging.getLogger(__name__)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 load_dotenv(os.path.join(BASE_DIR, ".env"))
 
-# 全局唯一版本号：FastAPI app（main.py）、/api/health（routers/system.py）、
-# run.py 启动横幅统一引用此处，避免再出现「横幅 3.1 / 实际 7.3」的版本尾巴。
-APP_VERSION = "8.1.0"
+
 
 
 def validate_api_key(key: str) -> str | None:

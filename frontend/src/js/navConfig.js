@@ -38,7 +38,7 @@ const ICONS = {
 };
 
 /**
- * 五步主线（对齐 docs/产品定位延伸_全流程求职陪跑.md 的旅程叙事）。
+ * 五步主线：职业定位 → 简历准备 → 面试演练 → 能力诊断 → 发展路径。
  *
  * v8.1 术语统一：原「定方向 / 备弹药 / 演练 / 诊弱点 / 定规划」带有游戏化与
  * 军事隐喻，与"专业评测工具"的定位不符，统一为职业发展领域的本行术语。
@@ -75,7 +75,7 @@ export const OVERVIEW_ITEM = { tab: 'home', label: '能力档案', shortLabel: '
 
 /** 旅程平铺（底部导航用：能力档案 + 五步主线顺序）
  *  v8.2: 独立的「首页」入口随 landing.html 下线，不再出现在 SPA 导航中。
- *  v8.3: 末尾的「账户」入口随认证一并下线（CHARTER DC-10）。 */
+ *  末尾的「账户」入口随认证一并下线。 */
 export const FLAT_ITEMS = [
   OVERVIEW_ITEM,
   ...JOURNEY_STEPS.flatMap((s) => s.children),

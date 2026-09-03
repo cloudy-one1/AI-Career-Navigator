@@ -9,7 +9,7 @@ market/analytics/interview_ws/profile），本文件只保留：
   - include_router（保持与拆分前相同的域注册顺序）；
   - 静态文件挂载。
 全局服务单例收敛在 routers/state.py。
-本系统为单用户本地工具，无认证层（v8.3 下线，见 CHARTER DC-10）。
+本系统为单用户本地工具，无认证层。
 """
 
 import logging
@@ -24,7 +24,7 @@ from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import logger as app_logger
-from .config import APP_VERSION, config
+from .config import config
 from .db import init_db
 from .market import store as market_store
 from . import weakness_memory
@@ -87,12 +87,12 @@ async def lifespan(app: FastAPI):
     await market_store.init_market_db()  # v3.0: 市场岗位库（幂等）
     # v6.5: 清理 30 天未再加重的历史薄弱点（启动即跑一次，失败不影响启动）
     await weakness_memory.prune_expired()
-    logger.info(f"AI 求职领航 v{APP_VERSION} 启动完成，当前后端: {config.AI_PROVIDER}")
+    logger.info(f"AI 求职领航 启动完成，当前后端: {config.AI_PROVIDER}")
     yield
 
 
 # ─── FastAPI 应用 ───
-app = FastAPI(title="AI 求职领航", version=APP_VERSION, lifespan=lifespan)
+app = FastAPI(title="AI 求职领航", lifespan=lifespan)
 
 # CORS 中间件（最先注册）
 app.add_middleware(

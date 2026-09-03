@@ -17,7 +17,7 @@ v4.2: 前端语音交互升级为"MiMo 云端优先 + 浏览器原生降级"双�
   - ASR 请求体: {model, messages:[{role:user, content:[{type:input_audio, input_audio:{data: data_url}}]}], asr_options:{language}}
   - ASR 响应:   choices[0].message.content（str 或 [{"text": ...}] 列表）
 
-分层归属：L2/L3 业务服务，禁止依赖 L4（main）。见 CHARTER.md 分层契约。
+分层归属：L2/L3 业务服务，禁止依赖 L4（main）。
 """
 
 import base64

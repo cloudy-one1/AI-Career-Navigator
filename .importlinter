@@ -1,6 +1,6 @@
-# import-linter 分层依赖契约（v3.2）
+# import-linter 分层依赖契约
 # 运行方式：python run.py lint  （等价于 PYTHONUTF8=1 python -m importlinter.cli lint）
-# 契约与 CHARTER.md「架构约束 2：分层依赖约束」保持同步。
+# 契约与 README 所述的 L1-L4 分层规则保持同步。
 # 注意：本文件为 INI 格式（configparser），缩进行表示多行值；
 # 每个 layer 一行，层内模块用 : 分隔（非独立层，允许同层互依赖）。
 # 注意：layers 顺序必须从最高层(L4)到最低层(L1)（import-linter 规定"higher to lower"），

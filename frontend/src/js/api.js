@@ -3,7 +3,7 @@
 // ===================================================
 
 // v8.3: 原先在这里静态 import getToken 并统一注入 Authorization 头，
-// 认证下线后（CHARTER DC-10）请求层不再需要感知身份，回归纯粹的 HTTP 封装。
+// 认证下线后请求层不再需要感知身份，回归纯粹的 HTTP 封装。
 
 const BASE = '';
 
@@ -336,8 +336,8 @@ export function createInterviewWS(sessionId, handlers) {
   const _maxDelay = 30000;  // 30s
 
   function _connect() {
-    // v8.3: 连接不再带 token query 参数（此前是因 WS API 不支持自定义请求头
-    // 而做的兜底，随认证一并下线，见 CHARTER DC-10）。
+    // 连接不再带 token query 参数（此前是因 WS API 不支持自定义请求头
+    // 而做的兜底，随认证一并下线）。
     ws = new WebSocket(baseUrl);
 
     ws.onopen = () => {

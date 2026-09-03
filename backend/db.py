@@ -173,7 +173,7 @@ async def init_db():
         """)
 
         # ===== v7.0: 简历/岗位库（可复用输入资产）=====
-        # v8.3: owner_id 列随认证下线一并移除（CHARTER DC-10），老库由
+        # owner_id 列随认证下线一并移除，老库由
         # _drop_auth_columns 迁移，新建库直接无此列。
         # 注意：不加 FOREIGN KEY —— 见 _ensure_session_columns 注释（SQLite ALTER 限制）。
         await db.execute("""
@@ -256,7 +256,7 @@ async def _ensure_session_columns(db) -> None:
             await db.execute(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
         logger.info(f"[db] sessions 迁移：新增 {col} 列")
 
-    # v7.5: 报告分享与招聘者收件箱已删除（CHARTER DC-08），老库中的 share_links
+    # 报告分享与招聘者收件箱已删除，老库中的 share_links
     # 表一并清掉——历史分享链接已无意义，避免残留数据形成"看得见改不了"的死角。
     await db.execute("DROP TABLE IF EXISTS share_links")
 
@@ -266,7 +266,7 @@ async def _drop_auth_columns(db) -> None:
 
     为什么是 DROP 而不是"留着不读写"：留一列永不读写的 owner_id 等于在 schema 层
     保留了一套已被废弃的身份模型，下次改动的人必须重新判断"这列还有没有用"。
-    删除的代价是一次不可逆迁移，收益是 schema 与代码语义一致（CHARTER DC-10）。
+    删除的代价是一次不可逆迁移，收益是 schema 与代码语义一致。
 
     为什么整段包 try/except：迁移失败不该让服务起不来。最坏情况是老库仍带着
     死列（代码已不读它，功能不受影响），下次启动会再试一次。
@@ -1068,7 +1068,7 @@ async def upsert_weakness_memory(dimension: str, state: dict,
 
 # ===== v7.0: 简历库 / 岗位库（可复用输入资产）=====
 #
-# v8.3: 归属过滤（owner_id）随认证下线一并移除，见 CHARTER DC-10。
+# 归属过滤（owner_id）随认证下线一并移除。
 # 列表类接口一律不返回大字段（raw_text / jd_text 可能上万字符），详情才返回 ——
 # 否则 N 条简历能把响应撑到几 MB。
 

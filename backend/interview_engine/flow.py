@@ -20,8 +20,7 @@ decide_next()。副作用（改状态、写库、发消息）仍然留在 Interv
 注意：本文件不替代既有方法。decide_next() 先用于"预演与可观测"，
 再由调用方逐步改为以它为准 —— 两者行为一致由 tests/test_flow.py 守护。
 
-需求文档：docs/week8_面试流程状态显式化_需求.md
-设计参照：docs/Gua-AI-interview-深度研读.md §2.2（节点只做动作，路由由条件边决定）
+设计参照：竞品 Gua-AI-interview 深度研读 §2.2（节点只做动作，路由由条件边决定）
 """
 
 from __future__ import annotations

@@ -1,8 +1,8 @@
 """路由层共用：上传白名单 + 「资源不存在」断言。
 
-v8.3 说明：本文件此前还承载认证依赖与归属断言（get_current_user /
-require_user / assert_session_owner / assert_owner）。认证整体下线后
-（CHARTER DC-10），只剩与身份无关的两样东西，故收缩到这一个文件里。
+本文件此前还承载认证依赖与归属断言（get_current_user /
+require_user / assert_session_owner / assert_owner）。认证整体下线后，
+只剩与身份无关的两样东西，故收缩到这一个文件里。
 """
 from fastapi import HTTPException
 

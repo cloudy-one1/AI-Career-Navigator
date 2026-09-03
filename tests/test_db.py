@@ -261,7 +261,7 @@ class TestJdWeightsCache:
 
 
 class TestAuthRemovalMigration:
-    """[v8.3] 认证下线的老库迁移（CHARTER DC-10）。
+    """认证下线的老库迁移。
 
     这是本轮唯一不可逆的改动：删 users 表、删三张表的 owner_id 列、
     把 journey_marks 从 (owner_id, step_key) 重建为 step_key 主键。

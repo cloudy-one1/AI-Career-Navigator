@@ -27,7 +27,7 @@ def lint_imports():
     if code == 0:
         log.info("分层依赖契约检查通过 ✓")
     else:
-        log.error("分层依赖契约检查失败，请修复越层依赖（详见 CHARTER.md 架构约束 2）")
+        log.error("分层依赖契约检查失败，请修复越层依赖（L2 不得 import L3/L4，L3 不得 import L4）")
     sys.exit(code)
 
 
@@ -73,13 +73,8 @@ def main():
     host = os.getenv("HOST", "0.0.0.0")
     port = os.getenv("PORT", "8000")
 
-    # v7.3.1: 版本号统一引用 backend.config.APP_VERSION，避免横幅版本漂移
-    try:
-        from backend.config import APP_VERSION
-    except Exception:
-        APP_VERSION = "?"
     log.info("=" * 50)
-    log.info("  AI 求职陪跑平台 v%s 本地开发模式", APP_VERSION)
+    log.info("  AI 求职领航 本地开发模式")
     log.info("  前端: http://localhost:%s", port)
     log.info("  API文档: http://localhost:%s/docs", port)
     log.info("=" * 50)

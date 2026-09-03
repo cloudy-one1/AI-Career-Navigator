@@ -29,7 +29,7 @@ export default defineConfig({
         landing: path.resolve(__dirname, 'landing.html'),
       },
     },
-    // v7.5: 报告分享与招聘端已删除，回归单入口 index.html（见 CHARTER DC-08）。
+    // 报告分享与招聘端已删除，回归单入口 index.html。
     // v8.0: 中国地图 GeoJSON（src/assets/china-geo.json，约 0.55MB）是数据资产而非代码，
     //       已通过动态 import() 拆成独立的懒加载 chunk，不进主包（仅在打开
     //       「数据分析」视图需要渲染地图时才拉取）。这里放宽告警阈值，避免它

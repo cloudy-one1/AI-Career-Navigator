@@ -17,8 +17,10 @@ docx 和一份竞品学习报告，全都"不违反任何一条黑名单"。黑�
 约定：AI 会话产生的临时脚本一律放根目录并用 `_` 前缀命名（如 _scratch.py），
 用完即删；确需长期保留的辅助脚本应给正式名字放进正式位置（如
 tests/fixtures/generate_golden_samples.py）。
-**文档一律进 docs/（见 docs/README.md 的四区分层），二进制产物进 docs/ 子目录
-并依赖 .gitignore 的扩展名规则，不得散落在仓库根。**
+**对外仓库不含文档目录**：docs/ 与根目录的 CHANGELOG / CHARTER / CODEBUDDY 均已
+停止跟踪（.gitignore 已排除，文件保留在本地）。对外说明只保留
+README.md，接口文档由运行时的 /docs（Swagger UI）承担；新文档一律不要 git add，
+也不要在 README 里链向这些未跟踪文件（第 5 条会拦）。
 """
 import os
 import re
@@ -38,9 +40,6 @@ ALLOWED_ROOT_FILES: set[str] = {
     ".gitattributes",     # 跨平台换行符统一为 LF
     ".gitignore",
     ".importlinter",      # 分层依赖契约（L1-L4）
-    "CHANGELOG.md",
-    "CHARTER.md",
-    "CODEBUDDY.md",
     "Dockerfile",
     "LICENSE",
     "README.md",
@@ -52,7 +51,7 @@ ALLOWED_ROOT_DIRS: set[str] = {
     ".github",    # CI 工作流
     "backend",    # 后端
     "data",       # 运行时数据（整体 gitignore，列此仅为语义完整）
-    "docs",       # 需求文档 / 设计稿 / 归档
+    "docs",       # 本地文档（整体 gitignore；留在白名单内是为了保住恢复跟踪这条路）
     "frontend",   # 前端
     "tests",      # 测试
 }
@@ -106,7 +105,7 @@ def test_root_directory_whitelist():
     bad = sorted(top_level - allowed)
     assert not bad, (
         f"根目录出现白名单外的跟踪条目: {bad}。"
-        "处理：文档进 docs/（见 docs/README.md），临时脚本用 `_` 前缀并尽快删除，"
+        "处理：对外仓库不收文档（README 之外一律不 git add）；临时脚本用 `_` 前缀并尽快删除，"
         "确属工程文件的在 tests/test_repo_hygiene.py 的 ALLOWED_ROOT_FILES / "
         "ALLOWED_ROOT_DIRS 登记并写明用途。v8.4 整理时根目录曾散落畸形文件、"
         "对话附件与两份文档——黑名单三条全不违反，正是补这条白名单的原因。"
@@ -116,7 +115,7 @@ def test_root_directory_whitelist():
 def test_markdown_links_point_to_tracked_files():
     """被跟踪的 Markdown 里，相对链接的目标必须也被跟踪——否则推到远端就是 404。
 
-    v8.3.2 背景：过程性资料（docs/archive/、docs/research/、答辩与演示材料）退出
+    背景：过程性资料（docs/archive/、docs/research/、演示材料）退出
     git 索引后**仍留在本地工作区**——链接到它们在本机一切正常，坏链接只在 GitHub
     上暴露，靠人眼看不出来。本条把"公开文档不得链到未公开文件"钉进 CI。
 

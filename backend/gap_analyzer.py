@@ -17,7 +17,7 @@
 [学术诚信披露，2026-08] market.db 中的岗位数据来自本人此前已完成并提交的采集项目
 （job-crawler）的 data.db，本次仅做管道整合（market/importer 字段映射 + store upsert），
 **不含数据采集工作量**。若评审基于"本次周期实际产出了什么"，此部分可辩护性较弱，
-已在此主动披露；详细口径见 CODEBUDDY.md「已知局限」与 README「已知局限」。
+已在此主动披露；详细口径见 README「已知局限」。
 """
 import asyncio
 import json

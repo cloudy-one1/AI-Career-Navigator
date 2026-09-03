@@ -9,7 +9,7 @@
 - career_planner.plan_career() → 纵向路径推理："从 A 到 B 该按什么顺序补什么"
 
 规划是"生成"任务，诊断/匹配是"分析"任务，二者分属不同模块，
-遵守 CHARTER.md「双 Agent 不可合并」的分离精神（不合并、不省调用）。
+遵守「双 Agent 不可合并」的分离精神（不合并、不省调用）。
 """
 
 import asyncio

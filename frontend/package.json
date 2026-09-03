@@ -1,6 +1,6 @@
 {
-  "name": "ai-interviewer-frontend",
-  "version": "4.0.0",
+  "name": "ai-career-navigator-frontend",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "AI 求职领航 — 前端（Vite + 原生 ES Module）",

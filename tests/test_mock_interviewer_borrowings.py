@@ -1,6 +1,6 @@
 """
 v6.3 借鉴 mock-interviewer 的能力落地测试
-（对应《docs/mock-interviewer-深度研读.md》第 10 节 P0 / P1 清单）：
+（对应竞品 mock-interviewer 深度研读第 10 节 P0 / P1 清单）：
 
   P0-1 面试官角色卡：perspective / followup_chain / never_ask 三字段 + 注入 prompt
   P0-2 追问范式绑定角色：问什么（薄弱维度）× 怎么问（角色追问链）

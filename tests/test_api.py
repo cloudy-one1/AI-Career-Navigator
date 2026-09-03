@@ -1,7 +1,7 @@
 """
 API 端点综合测试：核心 HTTP 路由，使用真实 FastAPI app + 内存 DB。
 
-v8.3: 删除 TestAuthIntegration（注册/登录/归属越权），认证整体下线（CHARTER DC-10）。
+删除 TestAuthIntegration（注册/登录/归属越权），认证整体下线。
 原先那条 test_disabled_matches_legacy_behavior 钉的是"认证关闭时行为与 v6.x 一致"，
 如今无认证是唯一状态，该承诺由 TestSessionRoutes 的基础用例直接覆盖。
 """
