@@ -11,7 +11,7 @@ python-docx>=1.1.0
 slowapi>=0.1.9
 httpx>=0.27.0                 # MiMo 云端语音代理（TTS/ASR）
 markdown>=3.5                 # 复盘报告 Markdown→HTML 导出（浏览器打印即 PDF）
-pyyaml>=6.0                   # 公司风格配置层（company_profiles/*.yaml，缺失时该层降级）
+pyyaml>=6.0.3                   # 公司风格配置层（company_profiles/*.yaml，缺失时该层降级）
 
 # 实时采集（内嵌 job-crawler 采集器）：需额外执行 playwright install chromium
 playwright>=1.40
