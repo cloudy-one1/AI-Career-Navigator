@@ -1,6 +1,6 @@
 # 项目宪章（CHARTER）
 
-> 本文档是 AI 求职陪跑平台项目的**不变宪章**：只记录不随版本变化的根基——产品命题、架构约束、决策记录、诚实局限。版本迭代叙事见 [CHANGELOG.md](CHANGELOG.md)，日常协作入口见 CODEBUDDY.md（AI 协作索引，本地文档，未入库）。
+> 本文档是 AI 求职陪跑平台项目的**不变宪章**：只记录不随版本变化的根基——产品命题、架构约束、决策记录、诚实局限。版本迭代叙事见 [CHANGELOG.md](CHANGELOG.md)（v7.5.0 及更早见 [docs/changelog-archive.md](docs/changelog-archive.md)），对外的贡献流程见 `.github/CONTRIBUTING.md`，代码地图与测试口径见 `docs/`；本机会话的协作索引见 CODEBUDDY.md（本地文档，未入库）。
 >
 > **变更原则**：本文档的每条内容都应当"少变、定根本"。修改架构约束/产品命题必须补写决策记录卡（见下）。
 

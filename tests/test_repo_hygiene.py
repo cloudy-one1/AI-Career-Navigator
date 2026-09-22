@@ -19,9 +19,15 @@ docx 和一份竞品学习报告，全都"不违反任何一条黑名单"。黑�
 tests/fixtures/generate_golden_samples.py）。
 **v8.8 对外文档范围调整**：CHANGELOG.md 与 CHARTER.md 已恢复跟踪——版本迭代叙事
 与架构/决策记录是标准开源仓库的对外要素；README.md 承担快速开始与对外说明。
-docs/（过程性资料）与 CODEBUDDY.md（AI 协作索引，只服务本机会话）仍停止跟踪
-（.gitignore 已排除，文件保留在本地）。因此第 5 条的链接检查对 CHANGELOG / CHARTER
-同样生效：它们不得链向未跟踪文件（涉及的 CODEBUDDY.md 已改为纯文本提及）。
+CODEBUDDY.md（AI 协作索引，只服务本机会话）仍停止跟踪（.gitignore 已排除，文件保留在本地）。
+因此第 5 条的链接检查对 CHANGELOG / CHARTER 同样生效：它们不得链向未跟踪文件
+（涉及的 CODEBUDDY.md 已改为纯文本提及）。
+
+**v8.9 docs 白名单化 + README 瘦身**：docs/ 从"整目录不跟踪"改为 `.gitignore` 里
+`docs/*` + `!docs/<公开文件>` 白名单（README 索引 / architecture / testing / API /
+LIMITATIONS / changelog-archive 六项入库），README 由 523 行压到 180 行左右，深度内容
+迁往上述公开文档；CHANGELOG 只留 v8.x，v7.5.0 及更早进 docs/changelog-archive.md。
+第 4 条白名单与第 5 条链接检查的语义不变——新入库的 Markdown 同样受链接检查约束。
 """
 import os
 import re
@@ -51,10 +57,10 @@ ALLOWED_ROOT_FILES: set[str] = {
     "run.py",             # 一键启动 + lint 子命令
 }
 ALLOWED_ROOT_DIRS: set[str] = {
-    ".github",    # CI 工作流
+    ".github",    # CI 工作流 / dependabot / 社区健康文件 / README 截图资源
     "backend",    # 后端
     "data",       # 运行时数据（整体 gitignore，列此仅为语义完整）
-    "docs",       # 本地文档（整体 gitignore；留在白名单内是为了保住恢复跟踪这条路）
+    "docs",       # 公开文档（v8.9 起白名单入库，其余过程性资料仍不跟踪）
     "frontend",   # 前端
     "tests",      # 测试
 }
@@ -108,7 +114,8 @@ def test_root_directory_whitelist():
     bad = sorted(top_level - allowed)
     assert not bad, (
         f"根目录出现白名单外的跟踪条目: {bad}。"
-        "处理：docs/ 与 CODEBUDDY.md 属本地资料，不得 git add；临时脚本用 `_` 前缀并尽快删除，"
+        "处理：docs/ 走 .gitignore 的白名单入库（`docs/*` + `!docs/xxx.md`），CODEBUDDY.md "
+        "属本地资料不得 git add；临时脚本用 `_` 前缀并尽快删除，"
         "确属工程文件的在 tests/test_repo_hygiene.py 的 ALLOWED_ROOT_FILES / "
         "ALLOWED_ROOT_DIRS 登记并写明用途。v8.4 整理时根目录曾散落畸形文件、"
         "对话附件与两份文档——黑名单三条全不违反，正是补这条白名单的原因。"

@@ -42,12 +42,20 @@ htmlcov/
 
 # === 过程性文档（本地保留，不入库）===
 # v8.8 调整：CHANGELOG.md 与 CHARTER.md 已恢复跟踪——版本叙事与架构/决策记录属于
-# 标准开源仓库的对外要素，见 CHANGELOG v8.8。docs/ 下的过程性资料（需求文档 /
-# 竞品研读 / 验收材料等）与 CODEBUDDY.md（AI 协作索引，只服务本机会话）仍**只停止
-# 跟踪、不删除**——需要重新入库时，删掉本节对应条目再 git add 即可。
-# 注意：CHANGELOG / CHARTER 入库后，tests/test_repo_hygiene.py 第 5 条会检查它们
-# 内部的相对链接，禁止再链向本节未跟踪的文件（CODEBUDDY.md 已改为纯文本提及）。
-docs/
+# 标准开源仓库的对外要素，见 CHANGELOG v8.8。
+# v8.9 调整：docs/ 由「整目录不跟踪」改为「默认不跟踪 + 公开文档白名单」——README 瘦身
+# 后深度内容要有对外的落点，故在此显式登记入库清单；未列出的（需求文档 / 竞品研读 /
+# 验收材料 / specs）依旧只停止跟踪、不删除，要公开时补一条 `!` 白名单即可。
+# CODEBUDDY.md（AI 协作索引，只服务本机会话）仍不入库。
+# 注意：入库的 Markdown 会被 tests/test_repo_hygiene.py 第 5 条检查相对链接，
+# 不得链向本节未跟踪的文件（CODEBUDDY.md 已改为纯文本提及）。
+docs/*
+!docs/README.md
+!docs/architecture.md
+!docs/testing.md
+!docs/API.md
+!docs/LIMITATIONS.md
+!docs/changelog-archive.md
 /CODEBUDDY.md
 
 # === 源码打包产物（不入库） ===

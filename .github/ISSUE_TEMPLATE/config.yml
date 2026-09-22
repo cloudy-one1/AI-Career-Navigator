@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: 文档与已知局限
+    url: https://github.com/cloudy-one1/AI-Career-Navigator/tree/master/docs
+    about: 先看看 docs/LIMITATIONS.md —— 无认证、护栏可绕过、语音半双工等都是已披露的刻意取舍
