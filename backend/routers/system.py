@@ -8,7 +8,7 @@ from fastapi import APIRouter, HTTPException, Request
 from ..config import config
 from ..db import list_sessions, lookup_jd_weights
 from ..llm_client import LLMClient, _api_key_issue
-from ..diagnosis_engine import DiagnosisEngine
+from ..diagnosis_engine import DiagnosisEngine, quote_stats
 from ..dimension_weights import analyze_jd_weights
 from ..schemas import ProviderSwitchRequest, ProviderListResponse, ProviderInfo
 from . import state
@@ -19,7 +19,9 @@ router = APIRouter()
 
 @router.get("/api/health")
 async def health():
-    return {"status": "ok", "provider": config.AI_PROVIDER}
+    # quote_stats：诊断"原话引用"的运行期可核率（v8.10）。挂在 health 上是为了让
+    # 这个质量指标可被外部读到，而不是只活在日志里；进程内累计，重启归零。
+    return {"status": "ok", "provider": config.AI_PROVIDER, "quote_stats": quote_stats()}
 
 
 @router.get("/api/providers", response_model=ProviderListResponse)

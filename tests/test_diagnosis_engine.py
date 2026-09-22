@@ -16,6 +16,8 @@ from backend.config import config
 from backend.diagnosis_engine import (
     normalize_result,
     normalize_reassessment,
+    quote_stats,
+    reset_quote_stats,
     run_diagnosis_streaming,
     run_reassessment_streaming,
     run_rewrite_streaming,
@@ -79,6 +81,70 @@ class TestQuoteEvidence:
         res = normalize_result(diag, {}, weights=None)
         assert res["dimension_details"]["logic_coherence"]["quote"] == ""
         assert res["dimension_details"]["job_relevance"]["quote"] == "123"
+
+
+class TestQuoteVerification:
+    """v8.10: quote 的运行期字面核对。
+
+    为什么必须有：产品承诺"每维度附候选人原话引用"，但引用由模型产出，模型可以把
+    "摘录"写成"概括"。此前运行期无人核对，唯一检查子串的黄金样本测试用 FakeLLM 回声
+    人工写好的引号，永远不可能红。这里才是真正钉住承诺的地方。
+    """
+
+    ANSWER = "我在双十一前把订单查询接口的 P99 从 800ms 降到 200ms，靠的是加了一层本地缓存。"
+
+    @pytest.fixture(autouse=True)
+    def _reset_counters(self):
+        reset_quote_stats()
+        yield
+        reset_quote_stats()
+
+    def _normalize(self, quote):
+        diag = _build_diagnosis(BASE_SCORES)
+        diag["quantification"]["quote"] = quote
+        return normalize_result(diag, {}, weights=None,
+                                question="讲一个你优化性能的例子", answer=self.ANSWER)
+
+    def test_literal_excerpt_is_verified(self):
+        res = self._normalize("把订单查询接口的 P99 从 800ms 降到 200ms")
+        assert res["dimension_details"]["quantification"]["quote_verified"] is True
+
+    def test_whitespace_only_difference_still_verified(self):
+        """模型常把换行/空格改动，空白归一后仍应判为可核。"""
+        res = self._normalize("把订单查询接口的\nP99 从 800ms 降到 200ms")
+        assert res["dimension_details"]["quantification"]["quote_verified"] is True
+
+    def test_paraphrase_is_flagged_but_not_deleted(self):
+        """概括性改写要标出未核对，但引用本身保留 —— 它是模型行为的证据，删了就查不到。"""
+        res = self._normalize("性能优化效果非常显著")
+        detail = res["dimension_details"]["quantification"]
+        assert detail["quote_verified"] is False
+        assert detail["quote"] == "性能优化效果非常显著"
+
+    def test_ellipsis_quote_requires_every_segment(self):
+        """带省略号的摘录：任一段不在原话里即判不可核（否则前半真后半编会被放过）。"""
+        ok = self._normalize("加了一层本地缓存…P99 从 800ms 降到 200ms")
+        assert ok["dimension_details"]["quantification"]["quote_verified"] is True
+        bad = self._normalize("加了一层本地缓存…重写了整个存储层")
+        assert bad["dimension_details"]["quantification"]["quote_verified"] is False
+
+    def test_empty_quote_not_counted(self):
+        """未给引用不计入可核率分母：无的可核 ≠ 核不过。"""
+        self._normalize("")
+        assert quote_stats() == {"cited": 0, "verified": 0, "verify_rate": None}
+
+    def test_stats_rate_and_reassessment_share_verdict(self):
+        """补评与首评共用同一套核对（同一口径，否则报告里两种可信度标准）。"""
+        self._normalize("性能优化效果非常显著")   # 不可核
+        self._normalize("本地缓存")               # 可核
+        assert quote_stats()["cited"] == 2
+        assert quote_stats()["verified"] == 1
+        assert quote_stats()["verify_rate"] == 0.5
+
+        diag = _build_diagnosis(BASE_SCORES)
+        diag["quantification"]["quote"] = "重写了整个存储层"
+        res = normalize_reassessment(diag, weights=None, question="q", answer=self.ANSWER)
+        assert res["dimension_details"]["quantification"]["quote_verified"] is False
 
 
 class TestWeakestCrossCheck:

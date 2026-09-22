@@ -13,12 +13,13 @@
 | ③ 内容与边界 | test_security | 注入拦截、恢复红线 | 护栏的可验证证据（护栏本身仍是启发式，见 [../.github/SECURITY.md](../.github/SECURITY.md)） |
 | ④ 黄金样本评测（eval） | test_diagnosis_golden | **诊断有效性**：最弱维度抓得对不对、加扣分命中没命中、证据引用是否原话 | AI 项目最该测、却最常被忽略——单测验证"工程正确性"，eval 验证"诊断准不准" |
 | ⑤ 仓库卫生 | test_repo_hygiene | 根目录白名单、临时文件、运行产物、公开 Markdown 的相对链接 | 误提交的脚本与推到 GitHub 才 404 的坏链，都在 push 阶段红灯 |
+| ⑥ 门禁自证 | test_layering_gate / test_dependencies / test_web_research::TestNoEventLoopBlocking | **反向验证**：故意越层的样本必须让分层门禁变红；backend 里每个非标准库 import 必须在 `requirements.txt` 有声明；同步 LLM 调用必须跑在非事件循环线程 | 前五层只能证明"我的断言是对的"，这一层证明"门禁本身会响"。v8.10 补设：此前 `run.py lint` 恒 0 退出、`parse_pdf` 依赖未声明的 PyPDF2 而唯一断言是 `isinstance(result, str)`——两者都是"绿灯没有信息量"（见 CHARTER DC-11） |
 
 > 测试已从"锁死 prompt 文案"重构为"从配置取追问链 / 收尾指令做行为断言"，因此
 > **频繁改写提示词不会误红**。
 
-当前规模：**1080 个 pytest 用例**（`pytest tests/ --collect-only -q` 实测，2026-09-22）
-+ 前端 3 个 vitest 套件。
+当前规模：**1098 个 pytest 用例**（`pytest tests/ --collect-only -q` 实测，2026-09-22，
+v8.10 起含门禁自证层）+ 前端 3 个 vitest 套件。
 
 ## 常用命令
 
@@ -58,8 +59,14 @@ npm run build   # 构建冒烟：导入/语法错误即红灯
 - **大改动**（跨模块重构、核心引擎 / DB 层 / 配置变更、发版前）：必须跑全量
   `pytest tests/ -q` + `python run.py lint`。
 
-> Windows 下无需额外操作：`run.py lint` 已内置 `PYTHONUTF8=1`，避免 grimp 按 GBK
-> 解析 UTF-8 源码导致漏检。
+> Windows 下无需额外操作：`run.py lint` 已内置 `PYTHONUTF8=1`，否则读 UTF-8 源码与
+> 带中文注释的 `.importlinter` 会按 GBK 解码直接崩（实测 `'gbk' codec can't decode byte 0xa1`）。
+>
+> ⚠️ **v8.10 纠正一处长期误解**：`run.py lint` 此前执行的是 `python -m importlinter.cli lint`，
+> 而该模块没有 `if __name__ == "__main__"` 守卫 —— 它只导入模块就以 0 退出，**从不执行检查**，
+> 所以本地与 CI 的这一步在 v3.2~v8.9 期间恒绿。现改为直接调用 click 命令对象
+> （等价于 console script `lint-imports`），并配 `tests/test_layering_gate.py` 反向自测；
+> 论证与代价见 [CHARTER.md](../CHARTER.md) 的 DC-11。
 
 ## CI
 

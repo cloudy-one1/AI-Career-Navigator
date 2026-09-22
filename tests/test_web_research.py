@@ -99,3 +99,39 @@ class TestEnrichFallback:
             jd_text="Python 后端工程师，熟悉 Django、FastAPI、MySQL、Redis、Docker",
         )
         assert len(result["key_skills"]) >= 1
+
+
+class TestNoEventLoopBlocking:
+    """v8.10：enrich_jd_with_research 里的同步 LLM 调用必须离开事件循环。
+
+    它是 create_session 这条最高频入口上唯一一处直连同步 chat_json 的地方
+    （同函数上文的 DDG 请求早已 await to_thread）——一次调用会把整个服务的事件
+    循环钉住，其他会话的流式推送全部停摆。断言方式：桩函数记录自己跑在哪个线程。
+    """
+
+    @pytest.mark.asyncio
+    async def test_chat_json_runs_off_the_event_loop(self, monkeypatch):
+        import threading
+
+        async def _fake_search(position, company=""):
+            return "搜索结果：Python 后端岗位要求 FastAPI / Redis"
+
+        seen = {}
+
+        class _FakeLLM:
+            def chat_json(self, **kwargs):
+                seen["thread"] = threading.current_thread()
+                return {
+                    "enriched_jd": "丰富后的 JD",
+                    "key_skills": ["FastAPI"],
+                    "hot_topics": ["异步"],
+                    "search_summary": "摘要",
+                }
+
+        monkeypatch.setattr(wr, "search_position_info", _fake_search)
+        out = await wr.enrich_jd_with_research(_FakeLLM(), "岗位：后端", position="后端")
+
+        assert out["key_skills"] == ["FastAPI"]
+        assert seen["thread"] is not None, "chat_json 未被调用，测试没有覆盖到该路径"
+        assert seen["thread"] is not threading.main_thread(), \
+            "同步 LLM 调用仍在事件循环线程上执行"

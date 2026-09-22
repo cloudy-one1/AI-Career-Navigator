@@ -1,10 +1,108 @@
 # 变更日志（CHANGELOG）
 
-> 记录 **v8.0 → v8.9** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
+> 记录 **v8.0 → v8.10** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
 > 历史见 [docs/changelog-archive.md](docs/changelog-archive.md)。不变的架构约束与决策记录见
 > [CHARTER.md](CHARTER.md)，贡献流程见 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的“AI 求职陪跑”为历史名称，保留不删。**
+
+---
+
+## v8.10 守护机制纠偏：门禁空转 / 依赖声明错位 / 引用无校验 / 事件循环阻塞（2026-09-22）
+
+> 起因是本轮外部审计提出的一个判断题：**"声称的守护"有没有在守护**。结论是四处没有，
+> 且它们的失效方式同构——绿灯本身不携带信息。本轮不改产品功能、不加模块，只把这四条
+> 从"看起来有"变成"确实有"，并为每一处补一条**反向自测**（论证与代价见 CHARTER DC-11）。
+
+### 1. 分层门禁 `run.py lint` 此前从不执行检查（v3.2~v8.9 恒绿）
+
+- `run.py` 执行的是 `python -m importlinter.cli lint`，而 `importlinter/cli.py` **没有
+  `if __name__ == "__main__"` 守卫**：`-m` 方式只导入模块即以 0 退出，连帮助都不打印。
+  于是本地打印"检查通过 ✓"只花 0.4 秒，CI 的同一步骤同样恒绿。旧注释里"裸
+  `-m importlinter.cli` 只打印帮助不执行检查"的说法也是错的（实测无任何输出）。
+- 改为直接调用 click 命令对象 `importlinter.cli.lint_imports_command`（等价 console script
+  `lint-imports`），实测分析 **59 文件 / 144 依赖 → KEPT**（结论未变，变的是它现在真的在查）。
+- 新增 `tests/test_layering_gate.py`：① 本仓库契约必须 KEPT 且输出含 `Analyzed`（防空转复发）；
+  ② **故意越层的临时包必须让门禁变红**——已实测对照：违规样本下旧命令 exit 0 无输出、新命令 exit 1
+  并打印 `not allowed to import`。
+- 顺带纠正 CHARTER 约束 2 的层级表与 `.importlinter` 的漂移：表内缺 `profile_service` /
+  `output_sanitizer` / `resume_anchors` / `score_adjustments` / `pressure_bank` 五个模块，
+  且把"同层互依赖"写成不允许（实际存在 `gap_analyzer → market.store` 等 L2→L2）。
+
+### 2. 干净环境里 PDF 简历必然解析失败，且失败被当成正文入库
+
+- `parse_pdf` 一直 `from PyPDF2 import PdfReader`，而 **PyPDF2 既不在 `requirements.txt`、
+  也不是任何声明包的传递依赖**（`pdfplumber` 依赖的是 pypdfium2）；同时 `requirements.txt`
+  声明的 `pdfplumber` 全仓无一处 import。按 README 步骤装出的环境（CI / Docker / 评委本机）
+  必然 ImportError。
+- 更糟的是失败处理方式：`except Exception` 把异常转成**非空**字符串 `[PDF 解析失败: ...]`，
+  于是路由的"提取不到文本"判断放过它 → `/api/resumes/upload` 返回 **201**、把这行错误文本
+  存进简历库并注入出题 prompt。实测复现：`char_count: 59`、`raw_text: "[PDF 解析失败: ...]"`。
+- 修复：解析层改用已声明的 **pdfplumber**（实测样例中文简历 1541 字，与原 PyPDF2 路径 1542 字
+  基本等价），提取不到文本一律返回**空串**；三个上传端点统一 `400 未能从文件中提取到文本…`。
+- 测试侧把永不可能红的 `assert isinstance(result, str)` 换成真断言（成功拼接 / 失败返回空串 /
+  路由 400 且不入库），并新增 `tests/test_dependencies.py`：backend 内每个非标准库 import
+  必须在 `requirements.txt` 有声明（别名与传递依赖显式登记），把这一整类问题挡在 CI。
+
+### 3. "原话引用可复核"这一承诺此前运行期无人核对
+
+- Prompt 要求每维度给 `quote`（候选人原话摘录），但 `normalize_result` 只是 `str(...)` 透传；
+  唯一检查字面子串的 `test_golden_quotes_are_literal_answer_substrings` 用 FakeLLM 回声人工
+  写好的引号——**它验不出模型把"摘录"写成"概括"**。
+- 现在 `_score_and_weakest`（首评与 v8.6 补评共用同一入口）做字面比对：空白归一、含省略号的
+  摘录按段全命中才算可核；不匹配标 `quote_verified=false`、报告页灰显并注"未在原话中核对到"，
+  **保留引用不删除**（删了就把模型行为证据一起抹掉）。
+- 可核率经 `/api/health` 的 `quote_stats` 暴露（进程内累计，重启归零），答辩/复盘可直接引用一个
+  数字而非"我们要求模型引用原话"。端点数不变（复用 health，未新增路由）。
+
+### 4. 事件循环阻塞与 LLM 无超时
+
+- `web_research.enrich_jd_with_research` 在 `async def` 里直连同步 `chat_json`——全项目 11 处
+  同步 LLM 调用里唯一漏网的（同函数上文的 DDG 请求已正确 `await to_thread`），且位于
+  `create_session` 这条最高频入口。改为 `await to_thread(...)`，并加
+  `test_web_research::TestNoEventLoopBlocking`（桩函数记录自身所在线程，断言不在主线程）。
+- 简历/JD 上传的解析（逐页 `extract_text()`，CPU 密集）同样从事件循环移入 `to_thread`。
+- 新增 `LLM_TIMEOUT`（默认 60s）并传给全部 6 处 `OpenAI/AsyncOpenAI` 构造点。此前不传即落到
+  SDK 默认 **600s**：上游挂起会把面试主循环钉死十分钟，而且 SDK 只在超时/报错后才换下一个
+  fallback 候选——"没有超时"实际等于"降级链一并失效"。`tests/test_llm_client.py` 钉住主候选与
+  fallback 候选都带有限超时。
+
+### 5. 文档与口径收口
+
+- `docs/答辩要点_测试与质量保障.md` 的"约 900 用例"（v7.x 遗留）统一为实测 **1098**；删掉已随
+  v7.5 下线的"分享脱敏"作为安全层证据；分层表由四层扩为六层（补 ⑤ 仓库卫生、⑥ 门禁自证）。
+  初验演示脚本/讲稿、`docs/源代码交付说明.md` 的用例数与版本号同步。
+- `docs/LIMITATIONS.md`：黄金样本"4 类典型回答"改为实测 **20 条人工标注样本**；新增 4 条本轮
+  相关局限（守护有效窗口、PDF 解析能力上限、引用可核不阻断、超时为统一上限）。
+- `docs/testing.md` 增补第 ⑥ 层与 `run.py lint` 的历史纠正；`docs/API.md` 记录 `/api/health`
+  新字段与上传端点的解析失败口径；`.env.example` 增加 `LLM_TIMEOUT` 说明。
+- CHARTER：新增 **DC-11 守护机制必须自证有效**；已知局限条目"50+ 用例"这类过期量级描述改为
+  以 `docs/testing.md` 实测值为准。
+
+### 验证（本机 Python 3.13.2 / zh-CN，2026-09-22）
+
+- `python run.py lint` → 分析 59 文件 / 144 依赖，**KEPT**（真实执行，非空转）。
+- `pytest tests -q` → **1097 passed, 1 skipped**（skipped 为默认关闭的 live-LLM 抽检），
+  `--collect-only` 计 **1098** 条，较上轮（1080 collected / 1079 passed）**+18**：
+  门禁自证 2、依赖声明 3、引用核对 6、LLM 超时 2、事件循环 offload 1、解析层单测净 +1、上传路由 3。
+  其中解析层净 +1 是因为删掉了两条永不可能红的 `isinstance(result, str)` 断言。
+- `pytest tests --cov=backend` → 覆盖率 **81%**（7483 statements）。
+- 干净环境对照：临时 venv 只装 `requirements.txt` → `import PyPDF2` ModuleNotFoundError、
+  `pdfplumber 0.11.10` 可用；样例 PDF 走新路径解析出 1541 字。
+- 前端 `npm run test` 与 `npm run build` 见下节；本轮未动依赖版本。
+
+### 范围纪律
+
+- 未新增功能模块、未新增 HTTP 端点、未改诊断五维与双 Agent 架构（约束 1/3 不变）。
+- 明确不做（课程口径）：认证/多租户、Postgres、向量 RAG、断点续答、按会话隔离 LLM 单例、
+  ruff 248 项全量治理、前端测试栈重写。
+- 遗留（登记不修）：`ws_interview` 498 行上帝函数与 `session.py` 1756 行/63 方法的拆分；
+  WS 非断连异常分支不落终态；`active_sessions` 无 TTL；导出 HTML 的 Markdown 未转义 raw HTML；
+  `api.js` 的 `token` 死参数与 `MARKET_CRAWL_TOKEN` 自锁；5 处引用未定义 CSS 变量；
+  **一次偶发的 `PytestUnhandledThreadExceptionWarning`**（把该警告提升为 error 后跑全量，
+  在 `tests/test_interview_ws.py::TestPingPong` 处命中 1 次；单跑该文件与 api+ws 组合各 8 次
+  均未复现，HEAD 全量 1 次亦未复现，故未定位到归属；现象为工作线程内 ResourceWarning 逃逸，
+  与本轮新增的 `to_thread` 调用点无确定因果关系，留待复现）。
 
 ---
 

@@ -69,3 +69,30 @@ class TestChatShortCircuit:
         data = json.loads(chunks[0])
         assert "error" in data
         assert "DEEPSEEK_API_KEY" in data["error"]
+
+
+class TestClientTimeout:
+    """v8.10：每个 OpenAI/AsyncOpenAI 客户端都必须带显式超时。
+
+    此前三处构造点都不传 timeout，落到 SDK 默认的 600s：上游挂起即把面试主循环
+    钉死十分钟，而且 SDK 只在超时/报错之后才会换下一个 fallback 候选 —— 也就是
+    说"没有超时"实际等于"降级链一起失效"。
+    """
+
+    def test_main_clients_have_bounded_timeout(self):
+        from backend.config import config
+        client = LLMClient()
+        assert config.LLM_TIMEOUT > 0
+        for cli in (client.client, client.async_client):
+            assert getattr(cli, "timeout", None) is not None, "客户端未设置超时"
+            assert float(cli.timeout) <= 120, f"超时过长：{cli.timeout}"
+
+    def test_fallback_candidates_inherit_timeout(self, monkeypatch):
+        """fallback 候选同样要有限时，否则降级到备用模型后又挂 600s。"""
+        monkeypatch.setenv("LLM_FALLBACK_CHAIN", "deepseek:deepseek-chat,qwen:qwen-plus")
+        monkeypatch.setenv("QWEN_API_KEY", "sk-qwen-test-key-abcdef")
+        client = LLMClient()
+        assert len(client._candidates) >= 2, "fallback 候选未被构造"
+        for cand in client._candidates:
+            assert float(cand.client.timeout) <= 120
+            assert float(cand.async_client.timeout) <= 120

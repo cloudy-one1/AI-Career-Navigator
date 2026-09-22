@@ -15,6 +15,7 @@ v6.0 新增（对标 career-copilot）：
 import asyncio
 import json
 import logging
+import re
 from typing import AsyncGenerator
 
 from .config import config
@@ -417,6 +418,53 @@ def _parse_diagnosis_fallback(raw_text: str) -> dict:
     }
 
 
+# ===== v8.10: 证据引用的运行期可核性 =====
+# 产品承诺"每维度附候选人原话引用，把主观打分锚定到可复核证据"。但 quote 是模型输出的，
+# 模型完全可能把"原话摘录"写成自己的概括。此前运行期从不核对，唯一检查字面子串的
+# test_golden_quotes_are_literal_answer_substrings 用的是 FakeLLM 回声人工写好的引号，
+# 永远不可能红 —— 即承诺没有守护。现按字面子串核对并计数（不删除引用，保留行为证据）。
+_QUOTE_COUNTERS = {"cited": 0, "verified": 0}
+
+
+def _quote_norm(text: str) -> str:
+    """去掉所有空白：模型摘录时常改动换行与空格，空白归一后再比对。"""
+    return re.sub(r"\s+", "", text or "")
+
+
+def _verify_quote(dim_key: str, quote: str, answer: str) -> bool:
+    """非空 quote 必须是回答中的字面片段（忽略空白）。
+
+    含省略号的摘录按省略号切段，每段都须命中——否则"前半真、后半编"的引用会被放过。
+    空 quote 表示模型未给引用，不计入可核率分母（无的可核 ≠ 核不过）。
+    """
+    q = quote.strip()
+    if not q:
+        return True
+    _QUOTE_COUNTERS["cited"] += 1
+    haystack = _quote_norm(answer)
+    segments = [s for s in re.split(r"\.{3,}|…", q) if s.strip()] or [q]
+    ok = all(_quote_norm(s) in haystack for s in segments)
+    if ok:
+        _QUOTE_COUNTERS["verified"] += 1
+    else:
+        logger.warning(f"维度 {dim_key} 的 quote 未在原回答中核对到（疑似概括而非摘录）: {q!r}")
+    return ok
+
+
+def quote_stats() -> dict:
+    """进程内引用可核率，经 `/api/health` 的 `quote_stats` 暴露（非持久化，重启归零）。"""
+    cited = _QUOTE_COUNTERS["cited"]
+    return {
+        "cited": cited,
+        "verified": _QUOTE_COUNTERS["verified"],
+        "verify_rate": round(_QUOTE_COUNTERS["verified"] / cited, 4) if cited else None,
+    }
+
+
+def reset_quote_stats() -> None:
+    _QUOTE_COUNTERS.update({"cited": 0, "verified": 0})
+
+
 def _score_and_weakest(diagnosis: dict, weights: dict | None,
                        question: str = "", answer: str = "") -> tuple:
     """
@@ -453,7 +501,8 @@ def _score_and_weakest(diagnosis: dict, weights: dict | None,
             comment = ""
             quote = ""
         dimensions[key] = score
-        details[key] = {"score": score, "comment": comment, "quote": quote}
+        details[key] = {"score": score, "comment": comment, "quote": quote,
+                        "quote_verified": _verify_quote(key, quote, answer)}
 
     # v6.3: 规则化加减分项 —— 在模型分之上叠加确定性行为信号修正。
     # 顺序：先修正维度分，再算加权总分，保证 overall 与最终 dimensions 口径一致。

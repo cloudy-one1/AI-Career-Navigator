@@ -219,7 +219,10 @@ async def enrich_jd_with_research(llm_client, jd_text: str, position: str = "",
 }}"""
 
     try:
-        result = llm_client.chat_json(
+        # chat_json 是同步调用：本函数是 async 且挂在 create_session 这条最高频入口上，
+        # 直连会把整个事件循环钉住（同函数上文的 DDG 请求已正确走 to_thread，这里是漏网的）。
+        result = await to_thread(
+            llm_client.chat_json,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             temperature=0.3,

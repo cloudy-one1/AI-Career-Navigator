@@ -1755,7 +1755,13 @@ function showDiagnosis(area, data) {
             isWeak ? el('span', { className: 'dim-weak-badge', textContent: '最弱项' }) : '',
             el('div', { className: 'dim-comment', textContent: dim.comment || '' }),
             // v7.3: 评分依据原话（DimensionScore.quote，v7.0 字段首次渲染）+ 黄铜扫描线
-            dim.quote ? el('div', { className: 'quote-evidence quote-scan', textContent: `「${dim.quote}」` }) : '',
+            // v8.10: quote_verified=false 表示该"原话"未能在候选人回答里字面核对到
+            dim.quote ? el('div', {
+              className: `quote-evidence quote-scan${dim.quote_verified === false ? ' quote-unverified' : ''}`,
+              textContent: dim.quote_verified === false
+                ? `「${dim.quote}」· 未在原话中核对到`
+                : `「${dim.quote}」`,
+            }) : '',
           );
         }),
       ),

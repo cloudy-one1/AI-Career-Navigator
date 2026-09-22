@@ -20,7 +20,7 @@
 
 | 方法 | 路径 | 说明 | 限流 |
 |---|---|---|---|
-| GET | `/api/health` | 健康检查（含 AI 后端连通状态） | 全局 |
+| GET | `/api/health` | 健康检查：`{status, provider, quote_stats}`。`quote_stats` 为诊断"原话引用"的进程内可核率（v8.10，重启归零） | 全局 |
 | GET | `/api/providers` | 列出全部 AI 后端及当前生效后端 | 全局 |
 | POST | `/api/switch-provider` | 切换 AI 后端（Key 无效时告警但仍允许切换） | 全局 |
 | POST | `/api/warmup` | 预热模型连接（避免首题冷启动延迟） | 1/minute |
@@ -61,6 +61,8 @@
 | DELETE | `/api/positions/{position_id}` | 删除岗位 | 全局 |
 
 > `/api/resumes/upload` 与 `/api/sessions/upload` 的区别是**历史遗留**：后者为兼容旧前端会静默截断到 5000 字，入库一律走前者。
+>
+> **解析失败口径（v8.10 变更）**：三个上传解析端点在**提取不到文本**时统一返回 `400 未能从文件中提取到文本，请确认文件内容与格式`。此前 `parse_pdf` 依赖未声明的 PyPDF2，在按 `requirements.txt` 装出的干净环境里必然 ImportError，而异常被转成**非空**字符串 `[PDF 解析失败: ...]` 返回——非空于是绕过"提取不到文本"的判断，`/api/resumes/upload` 照样 `201` 把这行错误文本当简历正文入库并注入出题 prompt。现解析层失败一律返回空串、由路由判 400；扫描版/加密 PDF 仍会走该分支（pdfplumber 无 OCR）。
 
 ## 5. 报告 `reports.py`
 

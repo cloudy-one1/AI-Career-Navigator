@@ -46,6 +46,21 @@ npm run build                      # ④ 构建冒烟（改动前端时）
 新增/重构模块前先看 [docs/architecture.md](../docs/architecture.md) 的分层表与代码地图，
 里面还列了三个踩过的反模式（L2 反向 import `main`、绝对 import 应改相对、循环 import）。
 
+## 门禁要能变红（v8.10 起的规矩）
+
+一条门禁只有在"它会为坏样本变红"被验证过之后，它的绿才有意义。本项目为此踩过两次：
+
+- `run.py lint` 在 v3.2~v8.9 期间执行的是 `python -m importlinter.cli lint`，该模块没有
+  `__main__` 守卫，**只导入即以 0 退出**——本地与 CI 的这一步恒绿了七个版本；
+- `parse_pdf` 依赖未声明的 PyPDF2，干净环境必然 ImportError，而当时唯一的断言是
+  `assert isinstance(result, str)`——该函数任何路径都返回 str，**永不可能红**，于是把
+  "错误文本被当简历正文入库"这个 P0 掩盖成了绿灯。
+
+因此：**新增任何门禁/断言（lint 步骤、契约检查、覆盖率阈值、CI job），同时补一条反向自测**，
+用一个已知坏样本证明它会失败。现成的样板见 `tests/test_layering_gate.py`（故意越层的临时包
+必须让门禁变红）与 `tests/test_dependencies.py`（每个非标准库 import 必须在
+`requirements.txt` 里有声明）。完整论证与"若错代价"见 [CHARTER.md](../CHARTER.md) 的 DC-11。
+
 ## Commit Message
 
 沿用 Conventional Commits，中文描述，带版本时写 scope：

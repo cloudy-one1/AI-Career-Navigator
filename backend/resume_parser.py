@@ -342,23 +342,30 @@ def _repair_pdf_text(text: str) -> str:
 
 
 def parse_pdf(file_bytes: bytes) -> str:
-    """解析 PDF 文件，提取纯文本（v6.5: 附带两阶段文本修复）。"""
+    """解析 PDF 提取纯文本（v6.5 两阶段修复；v8.10 改用已声明的 pdfplumber）。
+
+    此前 import 的是 **未声明** 的 PyPDF2：按 README 步骤 `pip install -r
+    requirements.txt` 装出来的干净环境（含 CI/Docker）里必然 ImportError，而异常被
+    转成 `[PDF 解析失败: ...]` 字符串返回——非空，于是路由的"提取不到文本"判断放过它，
+    错误文本被当简历正文入库并注入出题 prompt，HTTP 仍返回 201。现改为：用已声明且实测
+    能解析中文简历的 pdfplumber，失败一律返回空串，由调用方决定 4xx。
+    """
     try:
-        from PyPDF2 import PdfReader
-        reader = PdfReader(io.BytesIO(file_bytes))
+        import pdfplumber
         text_parts = []
-        for page in reader.pages:
-            t = page.extract_text()
-            if t:
-                text_parts.append(t)
-        return _repair_pdf_text("\n".join(text_parts))
+        with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+            for page in pdf.pages:
+                t = page.extract_text()
+                if t:
+                    text_parts.append(t)
+        return _repair_pdf_text("\n".join(text_parts)).strip()
     except Exception as e:
         logger.error(f"PDF 解析失败: {e}")
-        return f"[PDF 解析失败: {e}]"
+        return ""
 
 
 def parse_docx(file_bytes: bytes) -> str:
-    """解析 DOCX 文件，提取纯文本。"""
+    """解析 DOCX 文件，提取纯文本；失败返回空串（口径同 parse_pdf）。"""
     try:
         from docx import Document
         doc = Document(io.BytesIO(file_bytes))
@@ -369,13 +376,15 @@ def parse_docx(file_bytes: bytes) -> str:
         return "\n".join(text_parts).strip()
     except Exception as e:
         logger.error(f"DOCX 解析失败: {e}")
-        return f"[DOCX 解析失败: {e}]"
+        return ""
 
 
 def parse_resume(file_bytes: bytes | str, filename: str) -> str:
     """
     根据文件扩展名分派解析器。
-    返回解析出的纯文本，解析失败则返回错误信息。
+
+    契约（v8.10 起）：**提取不到文本一律返回空串**，不返回"[解析失败]"之类的占位文本——
+    占位文本非空，会被调用方误判为解析成功并存库。调用方须把空串当作 4xx 处理。
     """
     # 内联文本模式（已是 str），直接返回
     if isinstance(file_bytes, str):
@@ -390,4 +399,5 @@ def parse_resume(file_bytes: bytes | str, filename: str) -> str:
     elif ext == "txt":
         return file_bytes.decode("utf-8", errors="replace").strip()
     else:
-        return f"[不支持的文件格式: {ext}]"
+        logger.error(f"不支持的文件格式: {ext}")
+        return ""

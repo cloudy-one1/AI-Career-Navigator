@@ -2,6 +2,9 @@
 resume_parser.py 测试：parse_resume / parse_pdf / parse_docx。
 """
 
+import sys
+import types
+
 import pytest
 from backend import resume_parser
 
@@ -56,17 +59,57 @@ class TestParseResume:
 
 
 class TestPDFDetection:
-    """parse_resume PDF 分支（传入 bytes）"""
+    """parse_pdf / parse_resume 的 PDF 分支。
 
-    def test_pdf_bytes_header(self):
-        """PDF 以 %PDF- 开头"""
-        fake_pdf = b"%PDF-1.4\nsome content here"
-        result = resume_parser.parse_resume(fake_pdf, "resume.pdf")
-        # PDF 二进制解析会提取文本或返回空
-        assert isinstance(result, str)
+    v8.10 重写：原断言是 `assert isinstance(result, str)` —— parse_pdf 任何路径
+    （成功、异常、依赖缺失）都返回 str，该断言永不可能红，正好把"干净环境缺 PyPDF2、
+    错误文本被当简历入库"这个缺陷掩盖成绿灯。现按真实行为断言。
+    """
+
+    def _stub_pdfplumber(self, monkeypatch, pages, raises=None):
+        """注入 pdfplumber 桩：pages 为每页文本列表；raises 为打开时抛出的异常。"""
+        class _Page:
+            def __init__(self, text):
+                self._text = text
+
+            def extract_text(self):
+                return self._text
+
+        class _PDF:
+            def __init__(self):
+                self.pages = [_Page(t) for t in pages]
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+        def _open(_fileobj):
+            if raises is not None:
+                raise raises
+            return _PDF()
+
+        stub = types.ModuleType("pdfplumber")
+        stub.open = _open
+        monkeypatch.setitem(sys.modules, "pdfplumber", stub)
+        return stub
+
+    def test_parse_pdf_joins_page_texts(self, monkeypatch):
+        """成功路径：逐页提取并拼接（走的是 requirements 里声明的 pdfplumber）。"""
+        self._stub_pdfplumber(monkeypatch, ["张三\nPython 后端", "期望城市：深圳"])
+        result = resume_parser.parse_pdf(b"%PDF-1.4 fake")
+        assert "张三" in result and "期望城市：深圳" in result
+
+    def test_parse_pdf_failure_returns_empty_not_placeholder(self, monkeypatch):
+        """失败必须是空串：占位文本非空，会被调用方当成有效简历存库。"""
+        self._stub_pdfplumber(monkeypatch, [], raises=ValueError("损坏的 PDF"))
+        result = resume_parser.parse_pdf(b"%PDF-1.4 broken")
+        assert result == ""
+        assert "解析失败" not in result
 
     def test_binary_not_pdf_not_docx(self):
-        """非 PDF/DOCX 的二进制默认当文本处理"""
+        """非 PDF/DOCX 的二进制默认当文本处理（扩展名白名单在路由层，不在解析层）。"""
         result = resume_parser.parse_resume(b"\x01\x02\x03\x04", "data.bin")
         assert isinstance(result, str)
 
@@ -74,11 +117,10 @@ class TestPDFDetection:
 class TestDOCXDetection:
     """parse_resume DOCX 分支（传入 bytes）"""
 
-    def test_docx_bytes_header(self):
-        """DOCX 以 PK 开头（ZIP）"""
-        fake_docx = b"PK\x03\x04some zip content"
-        result = resume_parser.parse_resume(fake_docx, "resume.docx")
-        assert isinstance(result, str)
+    def test_docx_failure_returns_empty(self, tmp_path):
+        """损坏/legacy .doc 走异常路径 → 空串（口径与 PDF 一致，不再返回占位文本）。"""
+        result = resume_parser.parse_resume(b"PK\x03\x04not a docx", "resume.docx")
+        assert result == ""
 
 
 # ===== v6.5: PDF 文本两阶段修复（借鉴 interviewerAgent internal/extract/pdf.go）=====

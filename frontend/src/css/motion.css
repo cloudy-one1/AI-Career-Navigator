@@ -279,6 +279,16 @@
   position: relative;
   overflow: hidden;
 }
+/* v8.10: 引用未能在候选人原话中核对到 —— 保留展示（它是模型行为的证据），
+   但去掉扫描动效并改为警示描边，避免与"已核实"的证据块看起来同等可信 */
+.quote-unverified {
+  border-left-style: dashed;
+  border-left-color: var(--danger);
+  color: var(--text-muted);
+}
+.quote-unverified.quote-scan::after {
+  display: none;
+}
 .quote-scan::after {
   content: '';
   position: absolute;

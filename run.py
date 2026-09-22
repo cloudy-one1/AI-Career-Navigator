@@ -11,11 +11,17 @@ log = logging.getLogger("run")
 
 
 def lint_imports():
-    """运行 import-linter 分层依赖契约检查（v3.2）。
+    """运行 import-linter 分层依赖契约检查（v3.2；v8.10 修正为真跑）。
 
-    注意两点：
-    1. import-linter 必须走 `lint` 子命令才真正执行检查（裸 `-m importlinter.cli` 只打印帮助）。
-    2. Windows 下源码为 UTF-8，须设置 PYTHONUTF8=1，否则 grimp 按 GBK 解析会崩溃或漏检。
+    踩过的坑：`python -m importlinter.cli lint` **不会执行任何检查**。
+    importlinter/cli.py 没有 `if __name__ == "__main__"` 守卫，`-m` 方式只导入模块
+    即以 0 退出（连帮助都不打印），于是本函数在 0.4 秒后打印"通过 ✓"，CI 同一条命令
+    永远绿灯——分层契约实际从未被机器验证过。正确入口是 console script `lint-imports`，
+    它由 click 命令 `lint_imports_command` 实现；这里直接调用该命令对象，避免依赖
+    Scripts/bin 目录下的可执行文件位置（跨 Windows/Linux 一致）。
+    另：Windows 下源码与 .importlinter 为 UTF-8，须 PYTHONUTF8=1，否则 grimp/配置读取
+    按 GBK 解析会崩溃（实测报 `'gbk' codec can't decode byte 0xa1`）。
+    守护有效性由 tests/test_layering_gate.py 反向钉住（故意越层的样本必须让门禁变红）。
     """
     root = os.path.dirname(os.path.abspath(__file__))
     os.chdir(root)
@@ -23,7 +29,11 @@ def lint_imports():
     python = [sys.executable] if sys.executable else ["python"]
     env = dict(os.environ)
     env["PYTHONUTF8"] = "1"
-    code = subprocess.run(python + ["-m", "importlinter.cli", "lint"], env=env).returncode
+    entry = (
+        "from importlinter.cli import lint_imports_command;"
+        "lint_imports_command.main(prog_name='lint-imports')"
+    )
+    code = subprocess.run(python + ["-c", entry], env=env).returncode
     if code == 0:
         log.info("分层依赖契约检查通过 ✓")
     else:

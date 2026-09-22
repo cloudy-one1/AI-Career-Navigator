@@ -35,6 +35,10 @@
 | **L3 业务逻辑** | 出题、诊断、面试引擎、规划、档案聚合 | `question_gen.py` `diagnosis_engine.py` `interview_engine/*` `career_planner.py` `profile_service.py` `interview_skills.py` |
 | **L4 应用入口** | 应用装配与路由 | `main.py` `routers/*` |
 
+> 上表列的是**代表模块**，逐模块的权威登记以仓库根的 `.importlinter` 为准（该文件是
+> 契约的唯一真相源，`run.py lint` 读它；v8.10 起该命令才真正执行检查，见 CHARTER DC-11）。
+> 同层模块之间允许互相依赖（如 L2 内 `gap_analyzer → market.store`）。
+
 ## 代码地图
 
 ```

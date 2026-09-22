@@ -249,8 +249,11 @@ class LLMClient:
         self.model = config.LLM_MODEL
 
         # 主客户端（兼容 self.client / self.async_client 直连用法）
-        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
-        self.async_client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
+        # timeout：SDK 默认 600s 会让一次挂起把面试主循环钉死十分钟，见 config.LLM_TIMEOUT
+        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url,
+                             timeout=config.LLM_TIMEOUT)
+        self.async_client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url,
+                                        timeout=config.LLM_TIMEOUT)
 
         # 候选池：主候选始终首位；LLM_FALLBACK_CHAIN 解析出的备用候选追加其后（去重）
         chain = config.LLM_FALLBACK_CHAIN
@@ -285,8 +288,10 @@ class LLMClient:
             self._candidates.append(_Candidate(
                 provider=c["provider"],
                 model=c["model"],
-                client=OpenAI(api_key=c["api_key"], base_url=c["base_url"]),
-                async_client=AsyncOpenAI(api_key=c["api_key"], base_url=c["base_url"]),
+                client=OpenAI(api_key=c["api_key"], base_url=c["base_url"],
+                              timeout=config.LLM_TIMEOUT),
+                async_client=AsyncOpenAI(api_key=c["api_key"], base_url=c["base_url"],
+                                         timeout=config.LLM_TIMEOUT),
             ))
 
         provider_info = config.AI_PROVIDERS.get(self.provider, {})
@@ -325,8 +330,10 @@ class LLMClient:
         if cached is None:
             cached = _Candidate(
                 provider, model,
-                OpenAI(api_key=binding["api_key"], base_url=binding["base_url"]),
-                AsyncOpenAI(api_key=binding["api_key"], base_url=binding["base_url"]),
+                OpenAI(api_key=binding["api_key"], base_url=binding["base_url"],
+                       timeout=config.LLM_TIMEOUT),
+                AsyncOpenAI(api_key=binding["api_key"], base_url=binding["base_url"],
+                            timeout=config.LLM_TIMEOUT),
             )
             self._task_candidate_cache[key] = cached
         return cached

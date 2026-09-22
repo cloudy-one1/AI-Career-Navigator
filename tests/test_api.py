@@ -190,3 +190,36 @@ class TestJdUpload:
         resp = client.post("/api/upload-jd",
                            files={"file": ("jd.txt", b"", "text/plain")})
         assert resp.status_code == 400
+
+
+class TestUploadParseFailure:
+    """v8.10：解析不出文本时必须 4xx，不得把占位错误文本当正文入库。
+
+    回归背景：parse_pdf 曾 import 未声明的 PyPDF2，干净环境必然 ImportError，
+    异常被转成非空字符串 `[PDF 解析失败: ...]`，于是 /api/resumes/upload 返回 201
+    并把这行错误文本存进简历库、注入出题 prompt —— 用户看不到任何异常。
+    """
+
+    def test_resume_upload_unparsable_pdf_is_400_not_stored(self, client: TestClient):
+        resp = client.post(
+            "/api/resumes/upload",
+            files={"file": ("broken.pdf", b"%PDF-1.4 truncated", "application/pdf")},
+        )
+        assert resp.status_code == 400
+        listed = client.get("/api/resumes").json()["resumes"]
+        assert all(r["title"] != "broken" for r in listed)
+
+    def test_session_upload_unparsable_pdf_is_400(self, client: TestClient):
+        """该路由此前连"提取不到文本"的判断都没有，直接 200 回传占位文本。"""
+        resp = client.post(
+            "/api/sessions/upload",
+            files={"file": ("broken.pdf", b"%PDF-1.4 truncated", "application/pdf")},
+        )
+        assert resp.status_code == 400
+
+    def test_jd_upload_unparsable_pdf_is_400(self, client: TestClient):
+        resp = client.post(
+            "/api/upload-jd",
+            files={"file": ("broken.pdf", b"%PDF-1.4 truncated", "application/pdf")},
+        )
+        assert resp.status_code == 400

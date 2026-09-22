@@ -170,6 +170,20 @@ class Config:
         except ValueError:
             return 3
 
+    @property
+    def LLM_TIMEOUT(self) -> float:
+        """单次 LLM 请求超时（秒），v8.10 新增。
+
+        此前所有 OpenAI/AsyncOpenAI 客户端都不传 timeout，落到 SDK 默认的 600s：
+        上游一旦挂起，面试主循环里的"正在诊断"可以卡十分钟不返回，也不触发 fallback
+        （SDK 只在超时/错误后才换下一个候选）。60s 是"面试对话可接受的等待上限"，
+        慢任务（报告/职业规划）如需更久可单独调大该值。
+        """
+        try:
+            return float(os.getenv("LLM_TIMEOUT", "60"))
+        except ValueError:
+            return 60.0
+
     # ===== v6.2: 任务级模型绑定（借鉴 GrillMind 的「按任务独立绑定模型」）=====
     # 不同任务对延迟/推理深度的要求不同：出题与追问要快，报告与职业规划可以慢而深。
     # 单一 LLM_MODEL 会让"想用强模型写报告"和"想用快模型上面试对话"互相妥协。

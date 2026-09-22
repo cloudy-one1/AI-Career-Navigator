@@ -204,7 +204,9 @@ async def upload_resume(request: Request, file: UploadFile = File(...)):
     if f".{ext}" not in ALLOWED_UPLOAD_EXT:
         raise HTTPException(400, f"不支持的文件格式: {ext}。支持 {ALLOWED_UPLOAD_EXT}")
 
-    text = parse_resume(content, filename=file.filename)
+    text = await asyncio.to_thread(parse_resume, content, filename=file.filename)
+    if not text:
+        raise HTTPException(400, "未能从文件中提取到文本，请确认文件内容与格式")
     return {"filename": file.filename, "text": text[:5000], "length": len(text)}
 
 
@@ -226,9 +228,9 @@ async def upload_jd(request: Request, file: UploadFile = File(...)):
     if f".{ext}" not in ALLOWED_UPLOAD_EXT:
         raise HTTPException(400, f"不支持的文件格式: {ext}。支持 {ALLOWED_UPLOAD_EXT}")
 
-    text = parse_resume(content, filename=file.filename)
-    if not text or not text.strip():
-        raise HTTPException(400, "未能从文件中提取到文本，请确认文件内容")
+    text = await asyncio.to_thread(parse_resume, content, filename=file.filename)
+    if not text:
+        raise HTTPException(400, "未能从文件中提取到文本，请确认文件内容与格式")
     return {"filename": file.filename, "text": text[:20000], "length": len(text)}
 
 

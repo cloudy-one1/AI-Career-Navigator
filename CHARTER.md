@@ -37,18 +37,28 @@ Diagnostician + Rewriter 是两个独立 Agent，**禁止合并为单一 Agent**
 | 层级 | 模块 | 允许依赖 |
 |---|---|---|
 | L1 基础设施 | `config.py` `logger.py` `llm_client.py` `db.py` | 仅标准库 / 三方库，**无项目内 import**（config 除外） |
-| L2 领域模型/数据 | `schemas.py` `security.py` `resume_parser.py` `resume_retriever.py`（v5.0） `dimension_weights.py` `gap_analyzer.py` `knowledge_store.py`（v6.0） `voice_service.py`（v4.2） `market/*` `company_profiles.py`（v6.5） `weakness_memory.py`（v6.6） `difficulty.py`（v6.6） | 仅 L1（`from .config import ...` `from .db import ...`） |
-| L3 业务逻辑 | `question_gen.py` `diagnosis_engine.py` `interview_engine/*` `web_research.py` `question_bank.py` `data_support.py` `career_planner.py` `interview_skills.py`（v6.6） | L1 + L2，禁止 import L4 |
+| L2 领域模型/数据 | `schemas.py` `security.py` `resume_parser.py`（v5.0）`resume_retriever.py` `dimension_weights.py` `gap_analyzer.py` `knowledge_store.py`（v6.0）`voice_service.py`（v4.2）`market/*`（含 v4.1 `crawler/`）`output_sanitizer.py`（v6.2）`resume_anchors.py`（v6.3）`score_adjustments.py`（v6.3）`pressure_bank.py`（v6.3）`company_profiles.py`（v6.5）`weakness_memory.py`（v6.6）`difficulty.py`（v6.6） | L1 + 同层（v8.10 据实修正：`gap_analyzer → market.store/service`、`knowledge_store → resume_retriever` 均为 L2→L2，旧表"仅 L1"与代码不符） |
+| L3 业务逻辑 | `question_gen.py` `diagnosis_engine.py` `interview_engine/*` `web_research.py` `question_bank.py` `data_support.py` `career_planner.py` `interview_skills.py`（v6.6）`profile_service.py`（v8.0） | L1 + L2 + 同层，禁止 import L4 |
 | L4 应用入口 | `main.py`（应用装配：中间件/startup/挂载）+ `routers/*`（v7.2.2 域拆分：state 单例 / deps 依赖 / 域路由 / WS） | 所有层 |
 
-> 说明：`market/*` 从 v3.1 的 L3 调整为 L2，因为 `gap_analyzer`（L2）实际已依赖 `market`（v3.1 市场基准注入），若不调整即构成 L2→L3 越层。分层按"代码现状 + 语义（数据访问）"双校准。
+> 说明一：`market/*` 从 v3.1 的 L3 调整为 L2，因为 `gap_analyzer`（L2）实际已依赖 `market`（v3.1 市场基准注入），若不调整即构成 L2→L3 越层。分层按"代码现状 + 语义（数据访问）"双校准。
+> 说明二：本表与 `.importlinter` 的 `layers` 必须逐模块一致。v8.10 之前两者已漂移（表内缺 `profile_service`、`output_sanitizer`、`resume_anchors`、`score_adjustments`、`pressure_bank` 五个模块，而契约里已登记），且旧表把"同层互依赖"写成不允许——实际存在 L2→L2。契约文件是唯一真相源，本表随其同步。
 
 **反模式**（必须避免）：
 - L2 模块 `from .main import ...` — 绝对禁止
 - L3 模块 `from backend.config import ...` — 应改为相对 import `from .config import ...`
 - 循环 import：`session.py` ↔ `main.py` 通过函数参数注入打破循环（v2.6 踩过此坑）
 
-**强制检查**（v3.2 起，取代"随机抽查"）：`.importlinter` 契约文件 + `python run.py lint` 一键执行（等价于 `PYTHONUTF8=1 python -m importlinter.cli lint`；注意裸 `python -m importlinter` 只打印帮助不执行检查，Windows 下不设 PYTHONUTF8 会导致 grimp 按 GBK 解析 UTF-8 源码而误判）。任何新增/重构模块后必须跑通契约。
+**强制检查**（v3.2 起，取代"随机抽查"；v8.10 修正执行方式）：`.importlinter` 契约文件 + `python run.py lint` 一键执行。
+
+> ⚠️ **v8.10 实测纠正**：此前 `run.py` 里跑的 `python -m importlinter.cli lint` **从不执行检查**
+> —— `importlinter/cli.py` 没有 `if __name__ == "__main__"` 守卫，`-m` 方式只导入模块即以 0 退出
+> （连帮助都不打印，旧注释里"裸 `-m importlinter.cli` 只打印帮助"的说法也是错的）。因此
+> v3.2~v8.9 期间本地与 CI 的那一步都是常绿灯，"契约被强制"这一说法在效果上不成立。现改为直接调用
+> click 命令对象 `importlinter.cli.lint_imports_command`（等价于 console script `lint-imports`），
+> 实测分析 59 文件 / 144 依赖并输出 KEPT。守护命令的有效性由
+> `tests/test_layering_gate.py` **反向钉住**：先断言一个故意越层的样本会让门禁变红，
+> 才有资格说本仓库的绿是有效的绿。Windows 仍需 `PYTHONUTF8=1`（不设则读 UTF-8 源码/配置按 GBK 崩）。
 
 ### 约束 3：诊断五维度
 
@@ -151,6 +161,19 @@ Diagnostician + Rewriter 是两个独立 Agent，**禁止合并为单一 Agent**
 
 ---
 
+### DC-11 守护机制必须自证有效（2026-09-22，v8.10）
+
+- **决策**：凡是"用来兜住某类错误的门禁/断言"，都必须配一条**反向自测**——用一个已知坏样本证明该门禁会变红；否则不认为它在起作用。本轮落地三处：① `tests/test_layering_gate.py`（故意越层样本必须让 `run.py lint` 变红）；② `tests/test_dependencies.py`（backend 里每个非标准库 import 必须在 `requirements.txt` 有声明，别名与传递依赖显式登记）；③ `tests/test_web_research.py::TestNoEventLoopBlocking`（同步 LLM 调用必须跑在非事件循环线程，用桩记录当前线程）。
+- **放弃的替代方案**：(a) 只把这三处 bug 修掉、不加反向自测——修完即止，同类问题下次照样静默通过；(b) 引入 ruff/mypy 全量治理（实测 ruff 248 项，其中 69 处盲捕异常），把"验证闭环"变成"风格大扫除"，超出课程项目范围；(c) 靠人工 review 或"文档里写清楚"——正是这次失效的机制。
+- **判断依据**：本轮外部审计发现的三个缺陷**同构**，都不是"缺功能"而是"声称的守护没有守护"：
+  1. `run.py lint` 与 CI 的契约步从不执行检查（`-m importlinter.cli` 无 `__main__` 守卫，恒 0 退出），而 CHARTER 称其"强制检查"；
+  2. `parse_pdf` import 未声明的 PyPDF2，干净环境必 ImportError，异常被转成**非空**字符串 `[PDF 解析失败: ...]`，绕过路由的"提取不到文本"判断，HTTP 201 入库并注入出题 prompt；而 `test_resume_parser` 当时只断言 `isinstance(result, str)`——该函数任何路径都返回 str，**永不可能红**；
+  3. 承诺"每维度附候选人原话引用"，运行期从不核对，唯一的子串检查用 FakeLLM 回声人工写好的引号。
+  三处的共同点是**绿灯本身没有任何信息量**。修 bug 只消一次，把"门禁要能变红"变成断言才能挡住下一轮。
+- **若错代价**：反向自测增加约 1.5s 测试时长与少量维护成本（新增传递依赖要登记别名）。若某条自测本身写错（例如坏样本不再被判红），它会以"自测失败"的形式暴露，而不是静默失效——这正是我们要的性质。何时推翻：若某门禁被更强的机制（如 mypy strict + 类型化依赖注入）取代，可删除对应的反向自测并在本卡追加说明。
+
+---
+
 ## 已知局限（诚实披露）
 
 > 本系统定位为**课程项目**。以下局限是已知且刻意的取舍，不是待修复的 bug；自 2026-08 起，README 与本文档不再使用"生产级加固""5 层安全体系"等夸大定性。
@@ -161,7 +184,10 @@ Diagnostician + Rewriter 是两个独立 Agent，**禁止合并为单一 Agent**
 - **双 Agent 成本**：Diagnostician + Rewriter 每题至少 2 次 LLM 调用，流式下延迟与 token 成本翻倍；"优于单 Agent + 结构化输出"缺乏量化对比实验，属先验架构偏好而非被验证的选择（见 DC-01）。
 - **SQLite 扩展性**：单文件库；多 Worker 下 WebSocket 需 sticky session，水平扩展受限。
 - **内容护栏可被绕过**：正则过滤防不住认真攻击者（换说法/错别字/同义/中英混杂/编码均可绕过）。
-- **测试偏纯函数**：50+ 用例覆盖权重计算/Schema 校验等确定性逻辑；但诊断准确性、追问是否抓最弱维度、评分稳定性依赖 LLM 输出，单测难以验证。"用例通过"≠"核心功能被验证"——核心诊断质量依赖 LLM，当前套件验证的是**工程正确性**而非**诊断有效性**。
+- **测试偏纯函数**：千余条确定性用例覆盖权重计算/Schema 校验/状态机等脚手架逻辑；但诊断准确性、追问是否抓最弱维度、评分稳定性依赖 LLM 输出，单测难以验证。"用例通过"≠"核心功能被验证"——核心诊断质量依赖 LLM，当前套件验证的是**工程正确性**而非**诊断有效性**。（旧版本此处写"50+ 用例"，是 v6.x 时期的数字长期未随套件增长更新，v8.10 据实改为量级描述，具体条数以 `docs/testing.md` 的实测值为准。）
+- **证据引用可核但不强制（v8.10 起可观测）**：模型给出的 `quote` 现在会与候选人原回答做字面比对（空白归一、省略号分段全命中才算可核），不匹配只在详情里标 `quote_verified=false`、报告页灰显，**不删除引用**——删掉就把模型"把摘录写成概括"这一行为证据也抹了。可核率经 `/api/health` 的 `quote_stats` 暴露，但它是**进程内累计**（重启归零），跨会话的历史可核率需从落库报告的 `dimension_details` 统计，当前未做该离线汇总。
+- **LLM 超时是"整体上限"而非"分级预算"（v8.10）**：`LLM_TIMEOUT`（默认 60s）对同步/异步/流式与全部 fallback 候选统一生效，报告与职业规划这类慢任务如需更长只能整体调大；流式场景该超时约束的是单次请求生命周期，不覆盖"多轮往返累加"的总时长。
+- **解析失败改为"空串 + 4xx"，但仍是能力上限**：PDF/DOCX 提取不到文本时不再返回 `[解析失败]` 占位文本，而是空串并由路由返回 400。这消除了"错误文本被当简历入库"的静默降级，但**不提升解析能力本身**——扫描版/图片型 PDF、加密 PDF、复杂排版仍会走 400 分支（pdfplumber 无 OCR）。
 - **市场基准数据来源（学术诚信披露，2026-08 修订 v4.1）**：v3.0~v3.2 的市场基准数据来自 job-crawler 的 `data.db` 导入（仅管道整合、不含采集工作量，见 DC-02）；v4.1 起新增 B 档内嵌的 Playwright 实时采集（`backend/market/crawler/`，见 DC-04），可直接产出新数据回灌 market.db，该局限已**部分缓解**。但实时采集依赖 playwright+chromium 本机安装（未安装时路由返回明确指引、任务标记 failed），且 51job 反爬可能拦截导致采集为空；导入管道仍作为兜底并存。
 - **权重注入 prompt 因果未验证（2026-08）**：Diagnostician prompt 中嵌入"维度权重"描述，但权重真正生效处在 `weighted_score()` 的纯数学加权平均；prompt 是否改变模型打分分布未经 A/B 实验验证。现已将 prompt 措辞改为中性（"权重仅用于加权总分，请一致评分"），避免制造"权重已影响评分"的假象——即承认此前那句"评分更审慎"属无因果依据的噪声。
 - **LLM 权重稳定性未测（2026-08）**：`dimension_weights.analyze_jd_weights()` 用 LLM 判 JD 权重，`temperature=0.2` 非完全确定；"千岗千面动态评估"卖点的权重在同 JD 下的方差从未测过，稳定性无可辩护证据。

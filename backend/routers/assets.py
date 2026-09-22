@@ -3,6 +3,7 @@
 这两个实体的意义在"跨会话复用"：同一份简历想练第二场不用重新上传、重新解析
 （解析要调 LLM）。岗位同理——JD 不必每次粘贴。
 """
+import asyncio
 import uuid
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
@@ -49,9 +50,9 @@ async def upload_resume_to_library(file: UploadFile = File(...),
     if f".{ext}" not in ALLOWED_UPLOAD_EXT:
         raise HTTPException(400, f"不支持的文件格式: {ext}。支持 {ALLOWED_UPLOAD_EXT}")
 
-    raw_text = parse_resume(content, filename=file.filename)
-    if not raw_text or not raw_text.strip():
-        raise HTTPException(400, "未能从文件中提取到文本，请确认文件内容")
+    raw_text = await asyncio.to_thread(parse_resume, content, filename=file.filename)
+    if not raw_text:
+        raise HTTPException(400, "未能从文件中提取到文本，请确认文件内容与格式")
     resume_id = uuid.uuid4().hex[:12]
     title = file.filename.rsplit(".", 1)[0] or "未命名简历"
     await save_resume(resume_id, title=title, raw_text=raw_text,
