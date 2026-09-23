@@ -94,3 +94,6 @@ npm run build   # 构建冒烟：导入/语法错误即红灯
 - 前端更新 PR 会同时改 `package.json` 与 lockfile，两者不同步会让 `npm ci` 红灯；
 - `openai`（后端调用入口）与 `vite` / `vitest`（构建与测试链）的 **major 升级已冻结**，
   需人工在本机 + CI 双验证后再手动抬下限。
+- **但"冻结"只挡 PR，不挡首次安装**：`requirements.txt` 只有下限（`>=`）本身就允许任意高
+  版本，实测干净环境今天装到 openai 3.18.0。要真正锁住版本需要上限（`<4`）或锁定文件，
+  已登记为局限（见 [LIMITATIONS.md](LIMITATIONS.md) 的"依赖冻结只挡 PR"条）。

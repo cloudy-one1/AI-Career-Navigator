@@ -1,10 +1,36 @@
 # 变更日志（CHANGELOG）
 
-> 记录 **v8.0 → v8.10** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
+> 记录 **v8.0 → v8.10.1** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
 > 历史见 [docs/changelog-archive.md](docs/changelog-archive.md)。不变的架构约束与决策记录见
 > [CHARTER.md](CHARTER.md)，贡献流程见 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的“AI 求职陪跑”为历史名称，保留不删。**
+
+---
+
+## v8.10.1 依赖维护：处置悬挂 19 天的 5 条 dependabot PR（2026-09-23）
+
+> v8.8 接入 dependabot 时写的口径是"每周自动维护依赖"，但接入后 5 条 PR 一直挂着没人处置
+> （09-03 两条、09-07 两条、09-14 一条）——对外承诺与实际状态相反。本轮把 5 条全部落地。
+
+- **pip**：`openai>=1.30.0 → >=1.109.1`（#8）、`aiosqlite>=0.20.0 → >=0.22.1`（#4）。
+- **npm**：`three ^0.185.1 → ^0.186.0`（#11）、`eslint ^10.9.1 → ^10.10.0`（#10，lockfile 实际解析到 10.11.0，仍在 `^10.10.0` 区间内）、`globals ^17.11.0 → ^17.12.0`（#9）；`package-lock.json` 随改动一并更新（`npm ci` 要求两者同步）。
+- 同等改动落地后 GitHub 会自动关闭这 5 条 PR，无需逐个点 Merge。
+- **顺带发现一处口径与机制的偏差（登记为局限，不在本轮修）**：v8.8 用 `ignore: semver-major`
+  "冻结 openai 跨 major"，理由是"抬高下限会让所有新装环境直装新版"。但 `requirements.txt`
+  只写下限这一件事本身就已允许任意高版本——实测只装 requirements 的干净环境今天解析到
+  **openai 3.18.0**（本机 dev 2.38.0，CI 同为 3.x），冻结只挡住了 PR，没挡住首次安装。
+  全量用例在 3.18.0 下通过说明当前代码兼容，但这是运气不是机制；要真正控制风险需要上限
+  或锁定文件（见 `docs/LIMITATIONS.md` 新增条目）。
+
+### 验证（本机 Python 3.13.2 / zh-CN，2026-09-23）
+
+- 干净 venv 只装新 `requirements.txt`：解析到 openai 3.18.0 / aiosqlite 0.22.1 /
+  pdfplumber 0.11.10 / playwright 1.63.0 → `pytest tests -q` **1097 passed, 1 skipped**。
+  （同一套用例在干净 venv 34s 跑完、本机 dev 环境约 240s，差异未归因，不影响通过判定。）
+- 前端 `npm run test` **77 passed**；`npm run build` 通过（three 0.186 的 async chunk
+  746.94 kB，仍只在 landing 页）；`npm run lint` 0 error / 25 warning（与本轮前持平）；
+  `npm audit --omit=dev` **0 漏洞**（余下告警全在 dev 链，即被冻结的 vite / vitest）。
 
 ---
 

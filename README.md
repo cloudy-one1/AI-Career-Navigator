@@ -177,7 +177,7 @@ cd frontend && npm run test && npm run build
 
 ## 已知局限（诚实披露）
 
-以下不是待修的 bug，而是**单用户本地工具**定位下的刻意取舍，全文 27 条见
+以下不是待修的 bug，而是**单用户本地工具**定位下的刻意取舍，全文 28 条见
 [docs/LIMITATIONS.md](docs/LIMITATIONS.md)：
 
 - **无认证 / 无身份校验**：v7.0 曾引入，v8.3 经决策卡 DC-10 整体下线；数据全存本机
