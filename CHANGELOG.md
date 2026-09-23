@@ -8,26 +8,30 @@
 
 ---
 
-## v8.10.1 依赖维护：处置悬挂 19 天的 5 条 dependabot PR（2026-09-23）
+## v8.10.1 依赖维护：清空 8 条悬挂的 dependabot PR（2026-09-23）
 
-> v8.8 接入 dependabot 时写的口径是"每周自动维护依赖"，但接入后 5 条 PR 一直挂着没人处置
-> （09-03 两条、09-07 两条、09-14 一条）——对外承诺与实际状态相反。本轮把 5 条全部落地。
+> v8.8 接入 dependabot 时写的口径是"每周自动维护依赖"，但接入后 PR 一直挂着没人处置：09-03 那批
+> 5 条（#1/#2/#3/#4/#8）+ 后续两条 npm（#9/#10）+ 一条 three（#11），共 8 条、最长悬挂 20 天
+> ——对外承诺与实际状态相反。本轮全部本地复验后落地，队列清零。
 
-- **pip**：`openai>=1.30.0 → >=1.109.1`（#8）、`aiosqlite>=0.20.0 → >=0.22.1`（#4）。
+- **pip**：`openai>=1.30.0 → >=1.109.1`（#8）、`aiosqlite>=0.20.0 → >=0.22.1`（#4）；
+  同批再清掉更早的三条同主线下限提升——`pydantic>=2.6.0 → >=2.13.5`（#3）、
+  `playwright>=1.40 → >=1.62.0`（#2）、`pyyaml>=6.0 → >=6.0.3`（#1）。
 - **npm**：`three ^0.185.1 → ^0.186.0`（#11）、`eslint ^10.9.1 → ^10.10.0`（#10，lockfile 实际解析到 10.11.0，仍在 `^10.10.0` 区间内）、`globals ^17.11.0 → ^17.12.0`（#9）；`package-lock.json` 随改动一并更新（`npm ci` 要求两者同步）。
-- 同等改动落地后 GitHub 会自动关闭这 5 条 PR，无需逐个点 Merge。
+- 同等改动落地后 GitHub 会自动关闭这些 PR，无需逐个点 Merge（前 5 条实测已在推送后自动关闭）。
 - **顺带发现一处口径与机制的偏差（登记为局限，不在本轮修）**：v8.8 用 `ignore: semver-major`
   "冻结 openai 跨 major"，理由是"抬高下限会让所有新装环境直装新版"。但 `requirements.txt`
   只写下限这一件事本身就已允许任意高版本——实测只装 requirements 的干净环境今天解析到
-  **openai 3.18.0**（本机 dev 2.38.0，CI 同为 3.x），冻结只挡住了 PR，没挡住首次安装。
-  全量用例在 3.18.0 下通过说明当前代码兼容，但这是运气不是机制；要真正控制风险需要上限
-  或锁定文件（见 `docs/LIMITATIONS.md` 新增条目）。
+  **openai 3.18.0**，两次复验的第二天再装已到 **3.19.0**（本机 dev 仍是 2.38.0，CI 为 3.x），
+  冻结只挡住了 PR，没挡住首次安装，也没挡住版本每天在漂。全量用例在 3.18/3.19 下通过说明
+  当前代码兼容，但这是运气不是机制；要真正控制风险需要上限或锁定文件（见 `docs/LIMITATIONS.md` 新增条目）。
 
 ### 验证（本机 Python 3.13.2 / zh-CN，2026-09-23）
 
-- 干净 venv 只装新 `requirements.txt`：解析到 openai 3.18.0 / aiosqlite 0.22.1 /
-  pdfplumber 0.11.10 / playwright 1.63.0 → `pytest tests -q` **1097 passed, 1 skipped**。
-  （同一套用例在干净 venv 34s 跑完、本机 dev 环境约 240s，差异未归因，不影响通过判定。）
+- 干净 venv 只装新 `requirements.txt`：解析到 pydantic 2.13.5 / playwright 1.63.0 /
+  pyyaml 6.0.3 / openai 3.19.0 / aiosqlite 0.22.1 / pdfplumber 0.11.10 →
+  `pytest tests -q` **1097 passed, 1 skipped**，`run.py lint` 在同一 venv 内 **KEPT**。
+  （同一套用例在干净 venv 42s 跑完、本机 dev 环境约 240s，差异未归因，不影响通过判定。）
 - 前端 `npm run test` **77 passed**；`npm run build` 通过（three 0.186 的 async chunk
   746.94 kB，仍只在 landing 页）；`npm run lint` 0 error / 25 warning（与本轮前持平）；
   `npm audit --omit=dev` **0 漏洞**（余下告警全在 dev 链，即被冻结的 vite / vitest）。
