@@ -27,8 +27,11 @@ jobs:
           python-version: "3.12"
           cache: pip
 
-      - name: 安装依赖
-        run: pip install -r requirements.txt
+      - name: 安装依赖（constraints.txt 锁定解析结果，版本组合 = 被评审过的决定）
+        run: pip install -r requirements.txt -c constraints.txt
+
+      - name: 记录解析结果（与本机 constraints.txt 对比，漂移即暴露）
+        run: python -m pip freeze
 
       - name: 分层依赖契约检查（import-linter）
         run: python run.py lint

@@ -107,3 +107,43 @@ def test_pdfplumber_is_importable():
     """声明了就要能装能 import：CI 只装 requirements，这条即等价于干净环境自检。"""
     pytest.importorskip("pdfplumber")
     import pdfplumber  # noqa: F401
+
+
+def _constraints() -> dict[str, str]:
+    pins = {}
+    for line in (ROOT / "constraints.txt").read_text(encoding="utf-8").splitlines():
+        line = line.split("#")[0].strip()
+        if not line or "==" not in line:
+            continue
+        name, _, version = line.partition("==")
+        pins[_norm(name)] = version.strip()
+    return pins
+
+
+def test_constraints_cover_every_declared_package():
+    """v8.13：requirements 声明的每个包都必须被 constraints.txt 钉住。
+
+    存在理由：constraints 的全部意义是"装到什么版本 = 被评审过的决定"——
+    requirements 新增声明而忘记同步 constraints 时，新包的版本回到每天在漂的
+    状态，锁定静默失效。删掉 constraints 里任何一条被声明包的本测试即变红。
+    """
+    pins = _constraints()
+    assert pins, "constraints.txt 为空或格式损坏（应全部为 name==version）"
+    missing = sorted(_declared() - set(pins))
+    assert not missing, (
+        "以下 requirements.txt 声明的包没有被 constraints.txt 钉住，"
+        f"新装环境的版本将脱离评审: {missing}"
+    )
+
+
+def test_constraints_are_exact_pins():
+    """必须是 == 精确钉版：范围约束（>= / >=,<）会让解析结果继续漂，锁定名存实亡。"""
+    for line in (ROOT / "constraints.txt").read_text(encoding="utf-8").splitlines():
+        line = line.split("#")[0].strip()
+        if not line:
+            continue
+        assert "==" in line, f"constraints.txt 中出现非精确钉版行: {line!r}"
+        version_part = line.split("==", 1)[1]
+        assert not any(op in version_part for op in (">", "<", ",", "*")), (
+            f"constraints.txt 的钉版行带了范围或通配后缀: {line!r}"
+        )

@@ -1,0 +1,82 @@
+# ============================================================
+# 依赖锁定（constraints.txt，v8.13 引入）
+#
+# 为什么存在：requirements.txt 只写下限（>=），"装到什么版本"此前每天在漂——
+# v8.10.1 实测干净环境解析到 openai 3.x 而本机 dev 是 2.x，兼容性靠运气不是机制。
+# 本文件把"当前被验证过的版本组合"钉成被评审过的决定。
+#
+# 用法：pip install -r requirements.txt -c constraints.txt
+#   -c 只约束解析、不强制安装（未列入 requirements 的传递依赖不会被装上）；
+#   与 requirements.txt 的差集是纯传递依赖，升级 requirements 后本文件随之更新。
+#
+# 升级流程（改版本 = 被评审的决定，不允许"顺手漂"）：
+#   1. 改 requirements.txt 的下限；
+#   2. 干净 venv 只装 requirements.txt 重新解析；
+#   3. 用新的解析结果整体重生成本文件；
+#   4. 干净 venv 按 requirements + constraints 复装，跑全量 pytest + run.py lint；
+#   5. CHANGELOG 记录本轮解析到的关键版本。
+# 前端已有 package-lock.json（npm ci），本文件只管 Python 侧。
+# ============================================================
+
+aiosqlite==0.22.1
+annotated-doc==0.0.5
+annotated-types==0.8.0
+anyio==4.15.1
+certifi==2026.7.22
+cffi==2.1.1
+charset-normalizer==3.5.1
+click==8.5.0
+colorama==0.4.6
+coverage==7.16.1
+cryptography==50.0.1
+Deprecated==3.0.0
+fastapi==0.141.1
+greenlet==3.5.6
+grimp==3.17
+h11==0.16.0
+httpcore==1.0.9
+httpcore2==2.13.1
+httptools==0.8.0
+httpx==0.28.1
+httpx2==2.13.1
+idna==3.20
+import-linter==2.15
+iniconfig==2.3.0
+jiter==0.17.0
+limits==5.8.0
+lxml==6.1.3
+Markdown==3.11
+markdown-it-py==4.2.0
+mdurl==0.1.2
+openai==3.19.2
+packaging==26.3
+pdfminer.six==20260107
+pdfplumber==0.11.10
+pillow==12.3.0
+playwright==1.63.0
+playwright-stealth==2.0.3
+pluggy==1.6.0
+pycparser==3.0
+pydantic==2.13.5
+pydantic_core==2.46.5
+pyee==13.0.1
+Pygments==2.21.0
+pypdfium2==5.13.0
+PyYAML==6.0.3
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+python-docx==1.2.0
+python-dotenv==1.2.3
+python-multipart==0.0.32
+rich==15.0.0
+slowapi==0.1.10
+sniffio==1.3.1
+starlette==1.7.0
+truststore==0.10.4
+typing-inspection==0.4.4
+typing_extensions==4.16.0
+uvicorn==0.54.0
+watchfiles==1.3.0
+websockets==17.1
+wrapt==2.4.1

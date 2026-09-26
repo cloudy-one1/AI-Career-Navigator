@@ -85,7 +85,7 @@ cd AI-Career-Navigator
 
 python -m venv .venv
 source .venv/bin/activate        # Windows: .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.txt -c constraints.txt   # constraints 锁定"被验证过的版本组合"
 
 python -m playwright install chromium   # 可选：市场数据实时采集需要
 cp .env.example .env                    # 填入至少一个 AI 后端的 Key

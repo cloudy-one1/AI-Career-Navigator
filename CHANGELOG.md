@@ -1,10 +1,52 @@
 # 变更日志（CHANGELOG）
 
-> 记录 **v8.0 → v8.12** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
+> 记录 **v8.0 → v8.13** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
 > 历史见 [docs/changelog-archive.md](docs/changelog-archive.md)。不变的架构约束与决策记录见
 > [CHARTER.md](CHARTER.md)，贡献流程见 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的“AI 求职陪跑”为历史名称，保留不删。**
+
+---
+
+## v8.13 依赖锁定收口：constraints.txt 让"装到什么版本"成为被评审的决定（2026-09-26）
+
+> v8.10.1 登记的"冻结只挡 PR、不挡首次安装"补齐工程一半（openai 上限已在 v8.12）。
+> 前端早有 package-lock.json（npm ci），本轮补的是 Python 侧：requirements 只写下限
+> 时，解析结果每天在漂——v8.10.1 实测干净环境 openai 3.x 而本机 dev 2.x，兼容靠运气。
+
+### 做法
+
+- **`constraints.txt`（62 项 `==` 精确钉版，覆盖全部传递依赖）**：干净 venv 只装
+  requirements.txt 自由解析生成。`pip install -r requirements.txt -c constraints.txt`
+  ——`-c` 只约束解析、不强制安装，与 requirements 的差集是纯传递依赖。
+- **升级流程写进文件头**：改 requirements 下限 → 干净 venv 重新解析 → 重生成
+  constraints → 干净环境复装跑全量 → CHANGELOG 记录关键版本。改版本 = 被评审的
+  决定，不允许"顺手漂"。
+- **CI**：安装步改 `-r requirements.txt -c constraints.txt`，紧跟 `pip freeze` 一步
+  记录实际解析结果——与本文件不一致即暴露在构建日志里。
+- **门禁两条**（`tests/test_dependencies.py`）：requirements 声明的每个包必须被
+  constraints 钉住（requirements 新增声明而漏更 constraints 时锁定静默失效，删掉
+  任何一条被声明包的钉版本测试即变红——已实测证伪）；constraints 必须是 `==`
+  精确钉版（范围或通配后缀会让解析继续漂，锁定名存实亡）。
+
+### 本轮解析到的关键版本（2026-09-26，干净 venv，Python 3.13.2）
+
+openai 3.19.2（v8.12 上限 `<4` 内）、fastapi 0.141.1 / pydantic 2.13.5 /
+anyio 4.15.1 / uvicorn 0.54.0 / aiosqlite 0.22.1 / pdfplumber 0.11.10 /
+playwright 1.63.0 / httpx 0.28.1 / slowapi 0.1.10 / import-linter 2.15 /
+pytest 9.1.1。全量 62 项见 `constraints.txt`。
+
+### 验证
+
+- **解析确定性**：第二个干净 venv 按 requirements + constraints 复装，`pip freeze`
+  与首个 venv 逐行一致（62/62）。
+- **锁定组合下全量**：干净 venv `pytest -q -W error::pytest.PytestUnhandledThreadExceptionWarning`
+  → 1124 passed / 1 skipped；`run.py lint` KEPT。
+- **dev 环境对齐**：主环境升到锁定版本（openai 2.38.0 → 3.19.2，顺手清掉全局环境
+  里 pillow 新旧双份共存），复跑全量（含 2 条新门禁）→ 1126 passed / 1 skipped。
+  从此"本机绿"与"干净环境绿"是同一个版本组合的绿。
+- **门禁证伪**：删掉 constraints 里 `PyYAML` 一行 →
+  `test_constraints_cover_every_declared_package` 即红；恢复后全绿。
 
 ---
 
