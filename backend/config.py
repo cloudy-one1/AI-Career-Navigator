@@ -176,13 +176,58 @@ class Config:
 
         此前所有 OpenAI/AsyncOpenAI 客户端都不传 timeout，落到 SDK 默认的 600s：
         上游一旦挂起，面试主循环里的"正在诊断"可以卡十分钟不返回，也不触发 fallback
-        （SDK 只在超时/错误后才换下一个候选）。60s 是"面试对话可接受的等待上限"，
-        慢任务（报告/职业规划）如需更久可单独调大该值。
+        （SDK 只在超时/错误后才换下一个候选）。60s 是"面试对话可接受的等待上限"。
+        v8.15 起慢任务（报告/职业规划）不必整体调大该值——用 LLM_TASK_TIMEOUTS 分级。
         """
         try:
             return float(os.getenv("LLM_TIMEOUT", "60"))
         except ValueError:
             return 60.0
+
+    # ===== v8.15: 任务分级超时（与 v6.2 任务级模型绑定同构）=====
+    # LLM_TIMEOUT 是全局上限：报告/职业规划这类慢任务（长 prompt、长输出）60s 常常
+    # 不够，此前只能整体调大——等于给实时链路也放开了等待上限。分级超时让慢任务
+    # 单独放宽，实时链路维持紧超时（挂起更快触发 fallback）。
+
+    # 环境变量 LLM_TASK_TIMEOUTS，JSON 对象，值为秒数（int/float）：
+    #   LLM_TASK_TIMEOUTS={"report":180,"career":180}
+    # 未配置的任务沿用 LLM_TIMEOUT（向后兼容，不配即无变化）。
+
+    @property
+    def LLM_TASK_TIMEOUTS(self) -> dict:
+        """解析 LLM_TASK_TIMEOUTS 为 {task: float秒}。
+
+        未配置 / 解析失败一律返回空 dict —— 所有任务沿用 LLM_TIMEOUT，向后兼容。
+        未知任务名、非正数与非数值会被跳过并告警，不影响其它任务。
+        """
+        raw = os.getenv("LLM_TASK_TIMEOUTS", "").strip()
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"LLM_TASK_TIMEOUTS 不是合法 JSON，已忽略: {e}")
+            return {}
+        if not isinstance(data, dict):
+            logger.warning("LLM_TASK_TIMEOUTS 应为 JSON 对象，已忽略")
+            return {}
+
+        result: dict = {}
+        for task, seconds in data.items():
+            task = str(task).strip()
+            if task not in self.LLM_TASKS:
+                logger.warning(f"LLM_TASK_TIMEOUTS 含未知任务 {task!r}，已跳过")
+                continue
+            try:
+                seconds = float(seconds)
+            except (TypeError, ValueError):
+                logger.warning(f"LLM_TASK_TIMEOUTS[{task}] 不是数值 {seconds!r}，已跳过")
+                continue
+            if seconds <= 0:
+                logger.warning(f"LLM_TASK_TIMEOUTS[{task}] 必须为正数（{seconds}），已跳过")
+                continue
+            result[task] = seconds
+        return result
 
     # ===== v6.2: 任务级模型绑定（借鉴 GrillMind 的「按任务独立绑定模型」）=====
     # 不同任务对延迟/推理深度的要求不同：出题与追问要快，报告与职业规划可以慢而深。

@@ -374,6 +374,20 @@ class LLMClient:
         cands = self.task_candidates(task)
         return cands[0].model if cands else self.model
 
+    # ===== v8.15: 任务分级超时 =====
+
+    def resolve_task_timeout(self, task: str | None) -> float:
+        """返回指定任务实际生效的单请求超时（秒）。
+
+        LLM_TASK_TIMEOUTS[task] 优先，未配置的任务沿用 LLM_TIMEOUT。
+        与任务级模型绑定同构：绑定换的是"用哪个模型"，分级超时换的是"等多久"。
+        """
+        if task:
+            override = config.LLM_TASK_TIMEOUTS.get(task)
+            if override:
+                return override
+        return config.LLM_TIMEOUT
+
     # ===== v4.3: fallback 内部机制 =====
     @staticmethod
     def _is_error_content(content: str | None) -> bool:
@@ -402,19 +416,22 @@ class LLMClient:
 
     def _call_with_fallback(self, *, messages, temperature, max_tokens,
                             response_format=None, success_pred=None,
-                            candidates=None) -> str:
+                            candidates=None, task: str | None = None) -> str:
         """非流式调用，按候选池顺序尝试直至 success_pred 判定成功或穷尽。
 
         success_pred(content) -> bool: 返回 True 表示该候选结果可用（默认：非 error 软失败）。
         异常型失败一律降级；软失败（success_pred=False）也降级；候选数天然限制防无限循环。
 
         v6.2: candidates 用于任务级模型绑定（None 表示沿用全局候选池）。
+        v8.15: timeout 按任务分级（LLM_TASK_TIMEOUTS[task] 优先，否则 LLM_TIMEOUT），
+               经每次 create() 的按请求参数下发——客户端构造时烤死的全局值只作缺省。
         """
         if success_pred is None:
             def success_pred(c):
                 return not self._is_error_content(c)
 
         pool = candidates if candidates is not None else self._candidates
+        timeout = self.resolve_task_timeout(task)
         last_err = None
         for idx, cand in enumerate(pool):
             try:
@@ -423,6 +440,7 @@ class LLMClient:
                     "messages": messages,
                     "temperature": temperature,
                     "max_tokens": max_tokens,
+                    "timeout": timeout,
                 }
                 if response_format:
                     kwargs["response_format"] = response_format
@@ -444,7 +462,7 @@ class LLMClient:
         return json.dumps({"error": f"所有模型均调用失败: {last_err}"})
 
     async def _stream_with_fallback(self, *, messages, temperature, max_tokens,
-                                    candidates=None):
+                                    candidates=None, task: str | None = None):
         """异步流式调用，逐候选尝试（_call_with_fallback 的异步生成器版本）。
 
         - 候选在「尚未产出任何 chunk 即抛异常」时无缝切换下一候选。
@@ -452,8 +470,11 @@ class LLMClient:
         - 软失败（内容本身为 error JSON）在流式下无预知能力，按正常内容推送（与现有行为一致）。
 
         v6.2: candidates 用于任务级模型绑定（None 表示沿用全局候选池）。
+        v8.15: timeout 按任务分级（见 _call_with_fallback）——流式下该值约束本次
+               请求生命周期（read 超时按 chunk 间隔计）。
         """
         pool = candidates if candidates is not None else self._candidates
+        timeout = self.resolve_task_timeout(task)
         last_err = None
         for idx, cand in enumerate(pool):
             yielded = False
@@ -464,6 +485,7 @@ class LLMClient:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     stream=True,
+                    timeout=timeout,
                 )
                 async for chunk in stream:
                     delta = chunk.choices[0].delta
@@ -550,6 +572,7 @@ class LLMClient:
             max_tokens=max_tokens,
             response_format=response_format,
             candidates=self.task_candidates(task),
+            task=task,
         )
 
     def chat_json(self, system_prompt: str, user_prompt: str,
@@ -576,6 +599,7 @@ class LLMClient:
             response_format={"type": "json_object"},
             success_pred=_is_valid_json,
             candidates=self.task_candidates(task),
+            task=task,
         )
         data = safe_json_extract(raw)
         if isinstance(data, dict):
@@ -603,6 +627,7 @@ class LLMClient:
         ]
 
         pool = self.task_candidates(task)
+        timeout = self.resolve_task_timeout(task)
         last_err = None
         for idx, cand in enumerate(pool):
             yielded = False
@@ -613,6 +638,7 @@ class LLMClient:
                     temperature=temperature,
                     max_tokens=max_tokens,
                     stream=True,
+                    timeout=timeout,
                 )
                 for chunk in stream:
                     delta = chunk.choices[0].delta
@@ -653,6 +679,7 @@ class LLMClient:
             temperature=temperature,
             max_tokens=max_tokens,
             candidates=self.task_candidates(task),
+            task=task,
         ):
             yield chunk
 

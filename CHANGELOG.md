@@ -1,10 +1,44 @@
 # 变更日志（CHANGELOG）
 
-> 记录 **v8.0 → v8.14** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
+> 记录 **v8.0 → v8.15** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
 > 历史见 [docs/changelog-archive.md](docs/changelog-archive.md)。不变的架构约束与决策记录见
 > [CHARTER.md](CHARTER.md)，贡献流程见 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的“AI 求职陪跑”为历史名称，保留不删。**
+
+---
+
+## v8.15 任务分级超时：慢任务不必拖累实时链路（2026-09-27）
+
+> v8.10 的 `LLM_TIMEOUT` 是全局上限——报告/职业规划这类长 prompt + 长输出的慢任务
+> 60s 常常不够，此前只能整体调大，等于给实时链路也放开了等待上限（挂起更久才触发
+> fallback）。本轮按 LIMITATIONS 登记的演进方向，复用 v6.2 任务级模型绑定的注册表
+> 思路补上分级超时。
+
+### 改动
+
+- **`config.LLM_TASK_TIMEOUTS`**（`LLM_TASK_TIMEOUTS`，JSON 对象，值为秒数）：
+  `{"report":180,"career":180}`。解析口径与 `LLM_TASK_MODELS` 同构——未知任务名、
+  非数值、非正数跳过并告警，坏 JSON 整体忽略；未配置的任务沿用 `LLM_TIMEOUT`
+  （向后兼容，不配即无变化）。
+- **`llm_client.resolve_task_timeout(task)`**：任务覆盖优先，否则全局 `LLM_TIMEOUT`。
+  与模型绑定的关系一句话说清：绑定换的是"用哪个模型"，分级超时换的是"等多久"。
+- **按请求下发，而非重建客户端**：OpenAI SDK 支持在每次 `create()` 上覆盖客户端
+  缺省 timeout——四条调用链（同步/JSON/同步流式/异步流式）全部在 fallback 循环里
+  按当前任务的分级值传参。构造时烤死的全局值只作缺省，无需为超时重建或缓存任何
+  客户端。
+- 测试 13 条（tests/test_task_timeouts.py）：解析验证 7（未知任务/非数值/非正数/
+  坏 JSON/非对象）、resolve 2、端到端 4——直接断言 `create()` 收到的 `timeout`
+  值，并带证伪锚点（改 env 里任务超时，落到 SDK 的值必须跟着变；若有人把按请求
+  下发改回"只在构造时设置"，本文件即红）。
+- `.env.example` 补分级超时说明（紧跟 LLM_TIMEOUT 与任务绑定两节之间）。
+
+### 验证（2026-09-27，本机 Python 3.13.2）
+
+- 新增 13 条全绿；全量 `pytest -q -W error::pytest.PytestUnhandledThreadExceptionWarning`
+  → 1147 passed / 1 skipped；`run.py lint` KEPT；ruff 与基线持平（369，零新增）。
+- 范围说明：LIMITATIONS 同行登记的"WS 侧单轮总预算"（多次模型往返的累计上限）
+  仍未做——它约束的是一轮对话的总时长，与本轮的单请求超时是两层，保持独立登记。
 
 ---
 
