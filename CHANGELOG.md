@@ -1,10 +1,40 @@
 # 变更日志（CHANGELOG）
 
-> 记录 **v8.0 → v8.15** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
+> 记录 **v8.0 → v8.16** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
 > 历史见 [docs/changelog-archive.md](docs/changelog-archive.md)。不变的架构约束与决策记录见
 > [CHARTER.md](CHARTER.md)，贡献流程见 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的“AI 求职陪跑”为历史名称，保留不删。**
+
+---
+
+## v8.16 报告 Tab 补齐两块渲染：引用证据灰显 + 参考答案背诵面板（2026-09-27）
+
+> v8.14 把每题 dimension_details（含 quote / quote_verified）落进了报告，但报告页
+> 没有任何消费——引用灰显只在实时答题视图生效，背诵材料（detailed_qa 的改写答案）
+> 只进 Markdown 导出。本轮把 v8.10 起登记的两个前端演进方向一并落地（纯前端改动）。
+
+### 改动（frontend/src/js/report.js）
+
+- **引用证据块**：`qa_breakdown` 每题卡片渲染评分依据原话（非空 quote），与实时
+  诊断视图同一套样式（黄铜左边条 + 扫描线）；`quote_verified=false` 的引用
+  保留展示但灰显加警示边并标注"未在原话中核对到"——与 v8.10 的"可核不删除"
+  披露口径一致。空 quote 不渲染（与可核率分母口径一致）。
+- **参考答案背诵面板**：报告 Tab 每题卡片新增可展开的"📖 参考答案（背诵材料）"
+  （`<details>` 默认收起），内容为 detailed_qa 的改写答案 + 改写要点。此前
+  "✍️ 含改写示范"徽标点了没有东西看。背诵材料仅存在于本人报告视图（v7.5 起
+  分享页已删除，无对外输出路径）。
+- **可测性**：渲染逻辑中的数据变换抽成导出的纯函数——`quoteEvidenceList`
+  （只取非空 quote、维度名映射、verified 缺省视为已核）与 `buildRewriteMap`
+  （题干 → 背诵材料，同题干取首条），前端 vitest 新增 6 条（含畸形输入退化）。
+
+### 验证（2026-09-27）
+
+- vitest 83 passed（77 + 6）；`npm run build` 通过；eslint 0 error / 25 warning
+  （与本轮前持平）；后端无改动（本轮全量在 v8.15 提交前已 1147 passed）。
+- CI 结论核实：v8.13（a962fe3）与 v8.15（7afee88）两次 CI 失败均为根目录白名单
+  门禁的**正确拦截**（前者 constraints.txt 入库未登记、后者误提交临时文件），
+  0cad1a0 修正后转绿；本地 4/4 轮模拟 CI 环境（PYTHONUTF8=1）全量绿，排除 flaky。
 
 ---
 

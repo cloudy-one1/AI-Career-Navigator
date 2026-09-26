@@ -308,7 +308,7 @@ function renderReport(report) {
         style: 'font-size:.8rem;color:var(--text-secondary);margin-bottom:8px;',
         textContent: statLine,
       }),
-      ...report.qa_breakdown.map(renderQaItem),
+      ...report.qa_breakdown.map(qa => renderQaItem(qa, buildRewriteMap(report.detailed_qa))),
     ));
   }
 
@@ -322,6 +322,34 @@ function renderReport(report) {
 
 // ——— v6.2: 逐题拆解渲染 ———
 
+/** v8.16: 引用证据数据抽取 —— 只取非空 quote（与后端可核率分母口径一致）。
+ *  维度顺序跟随 DIM_NAMES（与实时诊断视图一致），verified 缺省视为已核（空值不灰显）。 */
+export function quoteEvidenceList(details) {
+  if (!details || typeof details !== 'object') return [];
+  return Object.entries(DIM_NAMES)
+    .map(([key, name]) => {
+      const d = details[key];
+      const quote = typeof d?.quote === 'string' ? d.quote.trim() : '';
+      if (!quote) return null;
+      return { key, name, quote, verified: d.quote_verified !== false };
+    })
+    .filter(Boolean);
+}
+
+/** v8.16: detailed_qa → 背诵材料映射（题干 → {rewritten_answer, key_changes}）。
+ *  detailed_qa 只沉淀有改写答案的题；同题干取首条，避免重复题干互相覆盖。 */
+export function buildRewriteMap(detailedQa) {
+  const map = new Map();
+  for (const item of detailedQa || []) {
+    const q = (item?.question || '').trim();
+    const a = (item?.rewritten_answer || '').trim();
+    if (q && a && !map.has(q)) {
+      map.set(q, { rewritten_answer: a, key_changes: item.key_changes || [] });
+    }
+  }
+  return map;
+}
+
 /** 简历追问点列表（深挖点 / 模糊点共用） */
 function renderPointList(title, items) {
   if (!items?.length) return '';
@@ -334,7 +362,7 @@ function renderPointList(title, items) {
 }
 
 /** 单题拆解卡片：分数 + 薄弱维度 + 思考时长 + 真实面试影响 */
-function renderQaItem(qa) {
+function renderQaItem(qa, rewrites = new Map()) {
   const score = Number(qa.overall_score) || 0;
   const scoreColor = score >= 4 ? '#16A34A' : (score >= 3 ? 'var(--warning)' : 'var(--indigo-800)');
   const children = [
@@ -371,6 +399,40 @@ function renderQaItem(qa) {
       style: 'margin-top:6px;font-size:.8rem;color:var(--indigo-800);line-height:1.6;',
       textContent: `⚠️ ${qa.risk_points.join('；')}`,
     }));
+  }
+  // v8.16: 评分依据原话引用（v8.14 起随报告落库）——与实时诊断视图同一套样式；
+  // quote_verified=false 的引用保留展示但灰显加警示边（它是模型行为的证据，不删除）
+  const quotes = quoteEvidenceList(qa.dimension_details);
+  if (quotes.length) {
+    children.push(el('div', { style: 'margin-top:8px;' },
+      el('div', {
+        style: 'font-size:.74rem;font-weight:600;color:var(--text-secondary);margin-bottom:4px;',
+        textContent: '📌 评分依据（模型摘录的原话）',
+      }),
+      ...quotes.map(q => el('div', {
+        className: `quote-evidence quote-scan${q.verified ? '' : ' quote-unverified'}`,
+        textContent: `【${q.name}】「${q.quote}」${q.verified ? '' : ' · 未在原话中核对到'}`,
+      })),
+    ));
+  }
+  // v8.16: 参考答案背诵面板 —— detailed_qa 里的改写答案此前只进 Markdown 导出，
+  // 报告 Tab 只有"✍️ 含改写示范"徽标；现在可展开背诵（默认收起，学习材料不喧宾夺主）
+  const rewrite = rewrites.get(qa.question);
+  if (rewrite?.rewritten_answer) {
+    children.push(el('details', { style: 'margin-top:8px;' },
+      el('summary', {
+        style: 'cursor:pointer;font-size:.78rem;font-weight:600;color:var(--indigo-700,#4338ca);user-select:none;',
+        textContent: '📖 参考答案（背诵材料，点击展开）',
+      }),
+      el('div', {
+        style: 'margin-top:6px;padding:8px 10px;background:var(--green-50,#f0fdf4);border-radius:8px;font-size:.84rem;line-height:1.7;',
+        textContent: rewrite.rewritten_answer,
+      }),
+      rewrite.key_changes?.length ? el('div', {
+        style: 'margin-top:4px;padding:0 10px;font-size:.78rem;color:var(--text-secondary);line-height:1.6;',
+        textContent: `改写要点：${rewrite.key_changes.join('；')}`,
+      }) : '',
+    ));
   }
   // v8.x: 本题下的追问（面试官追问 + 候选人补充回答），还原真实面试的追问环节
   const followUps = qa.follow_ups || [];
