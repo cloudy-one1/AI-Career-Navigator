@@ -49,6 +49,7 @@ ALLOWED_ROOT_FILES: set[str] = {
     ".importlinter",      # 分层依赖契约（L1-L4）
     "CHANGELOG.md",       # [v8.8] 版本迭代叙事（对外可见，标准开源要素）
     "CHARTER.md",         # [v8.8] 不变宪章：产品命题 / 架构约束 / 决策记录 / 已知局限
+    "constraints.txt",    # [v8.13] Python 依赖锁定（== 钉版，CI 安装步带 -c）
     "Dockerfile",
     "LICENSE",
     "README.md",

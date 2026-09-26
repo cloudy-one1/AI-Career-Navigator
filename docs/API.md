@@ -20,7 +20,7 @@
 
 | 方法 | 路径 | 说明 | 限流 |
 |---|---|---|---|
-| GET | `/api/health` | 健康检查：`{status, provider, quote_stats}`。`quote_stats` 为诊断"原话引用"的进程内可核率（v8.10，重启归零） | 全局 |
+| GET | `/api/health` | 健康检查：`{status, provider, quote_stats}`。`quote_stats` 含两个口径——进程内可核率（v8.10，重启归零）与 `all_time`（v8.14，从落库报告反查的全历史可核率，含 `reports_scanned` / `cited` / `verified` / `verify_rate`，老报告无引用数据不进分母） | 全局 |
 | GET | `/api/providers` | 列出全部 AI 后端及当前生效后端 | 全局 |
 | POST | `/api/switch-provider` | 切换 AI 后端（Key 无效时告警但仍允许切换） | 全局 |
 | POST | `/api/warmup` | 预热模型连接（避免首题冷启动延迟） | 1/minute |

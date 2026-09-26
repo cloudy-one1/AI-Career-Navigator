@@ -198,3 +198,65 @@ async def list_recent_reports(limit: int = 10) -> list[dict]:
             return [dict(row) for row in await cur.fetchall()]
     finally:
         await db.close()
+
+
+async def get_quote_verification_stats() -> dict:
+    """从落库报告反查全历史"引用可核率"（v8.14）。
+
+    v8.10 的进程内累计随重启归零，只反映本进程；v8.14 起 qa_breakdown 每题
+    落库 dimension_details（含 quote / quote_verified），全历史可核率从报告
+    JSON 反查。口径与 diagnosis_engine._verify_quote 一致：空 quote 不进分母
+    （没有引用 ≠ 引用核不过）。
+
+    v8.14 之前的报告没有该字段，按 reports_with_quote_data 单独计数、不进
+    分母——用旧数据零充数。报告 JSON 解析失败计入 parse_errors，不中断整批
+    （与市场数据聚合的脏行口径一致：结构漂移不该静默，也不该拖垮 health）。
+    """
+    db = await get_db()
+    try:
+        async with db.execute("SELECT report_json FROM reports") as cur:
+            rows = await cur.fetchall()
+    finally:
+        await db.close()
+
+    cited = 0
+    verified = 0
+    reports_with_quote_data = 0
+    parse_errors = 0
+    for (report_json,) in rows:
+        try:
+            report = json.loads(report_json or "{}")
+        except (json.JSONDecodeError, TypeError) as e:
+            parse_errors += 1
+            logger.debug("报告 JSON 解析失败，跳过可核率统计: %s", e)
+            continue
+        if not isinstance(report, dict):
+            parse_errors += 1
+            continue
+        found = False
+        for qa in report.get("qa_breakdown") or []:
+            if not isinstance(qa, dict):
+                continue
+            details = qa.get("dimension_details")
+            if not isinstance(details, dict):
+                continue
+            for detail in details.values():
+                if not isinstance(detail, dict):
+                    continue
+                if not str(detail.get("quote", "") or "").strip():
+                    continue  # 空 quote：与 _verify_quote 同口径，不进分母
+                found = True
+                cited += 1
+                if detail.get("quote_verified") is True:
+                    verified += 1
+        if found:
+            reports_with_quote_data += 1
+
+    return {
+        "reports_scanned": len(rows),
+        "reports_with_quote_data": reports_with_quote_data,
+        "cited": cited,
+        "verified": verified,
+        "verify_rate": round(verified / cited, 4) if cited else None,
+        "parse_errors": parse_errors,
+    }

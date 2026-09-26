@@ -6,7 +6,7 @@ import os
 from fastapi import APIRouter, HTTPException, Request
 
 from ..config import config
-from ..db import list_sessions, lookup_jd_weights
+from ..db import get_quote_verification_stats, list_sessions, lookup_jd_weights
 from ..llm_client import LLMClient, _api_key_issue
 from ..diagnosis_engine import DiagnosisEngine, quote_stats
 from ..dimension_weights import analyze_jd_weights
@@ -19,9 +19,27 @@ router = APIRouter()
 
 @router.get("/api/health")
 async def health():
-    # quote_stats：诊断"原话引用"的运行期可核率（v8.10）。挂在 health 上是为了让
-    # 这个质量指标可被外部读到，而不是只活在日志里；进程内累计，重启归零。
-    return {"status": "ok", "provider": config.AI_PROVIDER, "quote_stats": quote_stats()}
+    # quote_stats：诊断"原话引用"的可核率，两个口径并列——
+    #   进程内（v8.10）：本进程自启动起累计，重启归零，反映"当前运行期"；
+    #   all_time（v8.14）：从落库报告的 qa_breakdown[].dimension_details 反查的
+    #   全历史口径，重启不丢（老报告无该字段，不进分母，见 db.sessions 的聚合函数）。
+    # 挂在 health 上是为了让质量指标可被外部读到，而不是只活在日志里。
+    try:
+        all_time = await get_quote_verification_stats()
+    except Exception as e:  # noqa: BLE001
+        # 读不出历史可核率不能拖垮 health——按无数据降级并留痕，
+        # 否则 DB 故障会被读成"从来没有过引用"。
+        logger.warning("全历史引用可核率统计失败，按无数据返回: %s", e)
+        all_time = {
+            "reports_scanned": 0, "reports_with_quote_data": 0,
+            "cited": 0, "verified": 0, "verify_rate": None,
+            "parse_errors": 0, "error": str(e),
+        }
+    return {
+        "status": "ok",
+        "provider": config.AI_PROVIDER,
+        "quote_stats": {**quote_stats(), "all_time": all_time},
+    }
 
 
 @router.get("/api/providers", response_model=ProviderListResponse)

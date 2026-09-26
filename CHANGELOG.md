@@ -1,10 +1,49 @@
 # 变更日志（CHANGELOG）
 
-> 记录 **v8.0 → v8.13** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
+> 记录 **v8.0 → v8.14** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
 > 历史见 [docs/changelog-archive.md](docs/changelog-archive.md)。不变的架构约束与决策记录见
 > [CHARTER.md](CHARTER.md)，贡献流程见 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的“AI 求职陪跑”为历史名称，保留不删。**
+
+---
+
+## v8.14 引用可核率持久化：全历史口径落库可查（2026-09-27）
+
+> v8.10 让模型输出的"原话引用"可与候选人回答字面比对，但可核率只有进程内累计——
+> 重启归零，历史无从查起。LIMITATIONS 当时写的补救路径（"从落库报告的 dimension_details
+> 离线汇总"）动手指核时发现并不成立：**报告里根本没有这个字段**。本轮先修数据源头，
+> 再补汇总口径。
+
+### 发现：LIMITATIONS 的补救路径对不上现状
+
+`dimension_details`（每题五维明细，含 quote / quote_verified）只活在 session 内存里，
+`build_report` 产出的报告从未包含它——v8.4 修"薄弱点画像恒空"时留下的注释就点过
+"旧代码读取的 dimension_details 字段在报告中不存在"。前端的引用灰显（v8.10）也因此
+只在实时答题视图生效，报告页无此数据。
+
+### 改动
+
+- **报告落库即自带验证结果**：`build_report` 的 `qa_breakdown` 每题内嵌
+  `dimension_details`（跟随追问补评更新，落库定格）。报告 JSON 自此自携带
+  每题的 quote / quote_verified——后续报告页灰显、Markdown 导出引用节都可直接取用。
+- **全历史聚合**：`db.sessions.get_quote_verification_stats()` 扫描 reports 表反查，
+  口径与 `_verify_quote` 一致（空 quote 不进分母）；v8.14 之前的老报告无该字段，
+  按 `reports_with_quote_data` 单独计数、不进分母——老数据零充数。坏 JSON 计入
+  `parse_errors` 不中断整批（与市场数据聚合的脏行口径一致）。
+- **`/api/health` 并列两个口径**：`quote_stats` 现含进程内（v8.10，重启归零）+
+  `all_time`（v8.14，落库反查，重启不丢）；DB 读不出时按无数据降级并留痕，
+  不拖垮 health。
+- 测试 8 条（tests/test_quote_history.py）：build_report 持久化契约 2、聚合口径
+  （含"翻转一条 quote_verified 统计必跟着动"的证伪锚点、坏 JSON、空库）4、
+  health 集成 2。
+
+### 验证（2026-09-27，本机 Python 3.13.2）
+
+- 新增 8 条全绿；全量 `pytest -q -W error::pytest.PytestUnhandledThreadExceptionWarning`
+  → 1134 passed / 1 skipped；`run.py lint` KEPT；ruff 与基线持平（369，零新增）。
+- 范围说明：本条只补可观测性。LIMITATIONS 同行登记的演进方向"对不可核引用计入
+  诊断置信度折扣"是评分行为变更，仍保持不做。
 
 ---
 

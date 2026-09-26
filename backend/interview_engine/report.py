@@ -222,6 +222,10 @@ def build_report(session) -> dict:
             "question": q_text,
             "overall_score": round(float(score or 0), 2),
             "dimensions": {k: dims.get(k, 0) for k in DIM_KEYS},
+            # v8.14: 落库每题的五维明细（含 quote / quote_verified）。此前该结构只活在
+            # session 内存里，报告里没有——"历史引用可核率"无处可查（v8.10 的进程内
+            # 累计重启归零）。跟随补评更新（session 重评会刷新本题明细），落库即定格。
+            "dimension_details": d.get("dimension_details", {}) or {},
             "weakest_dimension": d.get("weakest_dimension", ""),
             "weakest_dimension_name": d.get("weakest_dimension_name", ""),
             "overall_comment": d.get("overall_comment", ""),

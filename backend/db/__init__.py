@@ -46,6 +46,7 @@ from .schema import (
     init_db,
 )
 from .sessions import (
+    get_quote_verification_stats,
     get_report,
     get_session,
     get_session_qas,
@@ -91,6 +92,7 @@ __all__ = [
     "get_latest_risk_points",
     "get_position",
     "get_question",
+    "get_quote_verification_stats",
     "get_report",
     "get_resume",
     "get_session",
