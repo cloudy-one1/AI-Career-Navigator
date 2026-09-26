@@ -321,6 +321,13 @@ class Config:
     MIMO_TIMEOUT = int(os.getenv("MIMO_TIMEOUT", "60"))
     RATE_LIMIT_VOICE = os.getenv("RATE_LIMIT_VOICE", "20/minute")
 
+    # ===== v8.12: 活跃会话表 TTL =====
+    # POST /api/sessions 创建的会话若一直没被 WS 提走（页面刷新后重开一场、
+    # 或前端拿到 session_id 后放弃连接），条目将永久滞留 active_sessions。
+    # 创建超过该秒数仍未进入 WS 主循环的条目，在下次创建会话时被清出。
+    # 已被 WS 接管的会话不受影响（WS 结束时对称注销；两小时对一场面试足够宽裕）。
+    SESSION_TTL_SECONDS = int(os.getenv("SESSION_TTL_SECONDS", "7200"))
+
     # ===== v6.3: 压力题注入（借鉴 mock-interviewer 的压力题库）=====
     # 之前的"压力"只在语气层（pressure 风格 / hardcore 模式），题目仍全来自简历与 JD；
     # 压力题补的是**内容层面的不可预测性**——真实面试的压力很多来自被问到没准备过的题。

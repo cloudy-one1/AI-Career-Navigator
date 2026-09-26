@@ -1,7 +1,9 @@
 fastapi>=0.110.0
 uvicorn[standard]>=0.29.0
 python-dotenv>=1.0.0
-openai>=1.109.1
+# <4 上限：SDK 跨 major 的 breaking 不在验证范围内，无上限时"装到什么版本"每天在漂
+# （v8.10.1 实测干净环境解析到 3.x 而 dev 是 2.x）。跨 major 升级走 dependabot + 全量验证。
+openai>=1.109.1,<4
 aiosqlite>=0.22.1
 pydantic>=2.13.5
 python-multipart>=0.0.9

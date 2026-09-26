@@ -1,10 +1,78 @@
 # 变更日志（CHANGELOG）
 
-> 记录 **v8.0 → v8.11** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
+> 记录 **v8.0 → v8.12** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
 > 历史见 [docs/changelog-archive.md](docs/changelog-archive.md)。不变的架构约束与决策记录见
 > [CHARTER.md](CHARTER.md)，贡献流程见 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的“AI 求职陪跑”为历史名称，保留不删。**
+
+---
+
+## v8.12 WS 断连泄漏根因修复 + 会话表 TTL + openai 上限（2026-09-26）
+
+> v8.11 登记"只定位不修"的三件同根问题本轮一并落地：连接泄漏、异常分支不落终态、
+> `active_sessions` 无 TTL。动手前先用仪器化全量复现钉住机制——比 v8.11 的假设深一层；
+> 修复后以 CI 新门禁（`-W error`）多轮全量验证。
+
+### flaky 的根因：anyio 的重复取消语义 × aiosqlite 的 worker 线程
+
+- 现象同 v8.11：全量约每 4 次 1 次 `PytestUnhandledThreadExceptionWarning`，线程恒为
+  `_connection_worker_thread`，底层恒为 `Event loop is closed`。但**落点随时序漂移**：
+  v8.11 记录的 TestPingPong 是巧合——本轮两次独立复现分别落在 test_json_utils 与
+  WS 用例区间。与具体用例无关，是拆除时序的竞态。
+- 源码级机制（anyio 4.13 / starlette 1.2 / aiosqlite 0.22.1）：TestClient 的每个 WS
+  会话跑在独立 portal 循环里；测试退出时 starlette 依次执行 `close(1000)` →
+  `cs.cancel()` → 等待 handler 收尾。anyio 的 CancelScope 一旦取消，作用域内任务的
+  **每个 await 都会被立即再次取消**——`cs.cancel()` 若恰好落在某个 db 调用半途：
+  1. `finally: await db.close()` 是取消路径上的新 await，在第一个检查点再次被打断，
+     close 永远完不成；
+  2. 更隐蔽的一半：cancel 落在 `await get_db()` 内部（PRAGMA await）时，**连接已建、
+     调用方却永远拿不到它**——没人会对它调 close()；
+  3. 两条路都留下"带着在途 future 的连接"。任务组 join 完、portal 循环一关，aiosqlite
+     worker 处理队列项时向已关闭的 loop `call_soon_threadsafe` → RuntimeError →
+     except 分支的 `set_exception` 同样失败 → 线程未捕获异常。
+- 修复（`backend/db/connection.py` 一处收口）：
+  - `_CancelSafeConnection`（aiosqlite.Connection 子类）：close() 仅当
+    `Task.cancelling() > 0` 时退化为同步 `stop()+join(5s)`——worker 关掉 sqlite、
+    结算完所有在途 future 后退出，全程无 await、无检查点，取消打不断它；
+    正常路径（cancelling()==0）与原生 close 完全一致。
+  - `open_sqlite()` 统一工厂：打开半途被取消同样就地同步收干净
+    （`except BaseException: _sync_shutdown; raise`）。interview / market 两库与
+    importer 的只读连接全部改走工厂，生产代码不再有裸 `aiosqlite.connect`。
+  - 如实披露残留风险：join 依赖 aiosqlite 的 `_thread` 内部属性（getattr 防御，
+    缺失时退化为仅 stop()）；aiosqlite 跨版本升级后需回归（已记入 LIMITATIONS）。
+
+### 同根两症状
+
+- **异常分支落终态**：`ws_interview` 的 `except Exception` 现以 `status="error"` 落库——
+  此前停在 active，历史列表把一场实际已炸的面试永远显示成进行中。
+- **`active_sessions` TTL**：register / unregister / sweep 三件套（`routers/state.py`）。
+  唯一泄漏窗口是"创建后 WS 从未接管"（页面刷新重开一场、拿到 session_id 后放弃连接）——
+  超过 `SESSION_TTL_SECONDS`（默认 7200，`.env` 可调）的条目在下次创建会话时清出；
+  WS 结束走对称注销、不依赖 TTL。sweep 只动登记过创建时刻的条目，直接注入
+  `active_sessions` 的外来条目（含既有测试的注入方式）绝不会被误杀——
+  `tests/test_session_ttl.py` 5 条用例逐条钉住。
+
+### CI 把 flaky 变门禁 + 依赖上限
+
+- `ci.yml` 测试步加 `-W error::pytest.PytestUnhandledThreadExceptionWarning`：
+  该告警正是本类泄漏的标志性症状，从偶发噪声升级为红灯。
+- `openai>=1.109.1` → `>=1.109.1,<4`：SDK 跨 major 的 breaking 不在验证范围内，
+  无上限时"装到什么版本"每天在漂（v8.10.1 实测干净环境解析到 3.x 而 dev 是 2.x）。
+
+### 验证（2026-09-26，本机 Python 3.13.2 / anyio 4.13.0 / aiosqlite 0.22.1）
+
+- 修复前仪器化复现：全量约 10 轮命中 2 轮（每轮 1~2 次线程死亡，创建栈因连接已被
+  GC 而缺失一轮，机制以 anyio/aiosqlite/starlette 源码级推演闭环）。
+- 中间态证据：仅落 close 修复（未清"打开半途"窗口）时，`-W error` 下 2/2 轮即命中——
+  证实 cancel 落在 `get_db()` 内部的窗口是独立源头，打开路径的清理不是多余防御。
+- 修复后：4 轮全量 `pytest -q -W error::pytest.PytestUnhandledThreadExceptionWarning`
+  全绿（每轮 1124 passed / 1 skipped，仪器快照会话结束 0 残留连接、0 线程死亡）；
+  `run.py lint` KEPT（Analyzed 69 files, 166 dependencies，+2 为 market→db.connection
+  的合法 L2→L1 边）；ruff 全仓告警数与 v8.11 基线持平（369，本轮改动 0 新增）。
+- 新增回归用例：`tests/test_db_connection_cancel.py` 2 条（对旧行为可证伪——raw 连接
+  在已取消任务里调 close 必收 CancelledError，实测 raw 行为 interrupted=True）+
+  `tests/test_session_ttl.py` 5 条。
 
 ---
 

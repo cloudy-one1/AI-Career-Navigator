@@ -17,6 +17,7 @@ from typing import Optional
 
 import aiosqlite
 
+from ..db.connection import open_sqlite
 from .cleaner import parse_experience
 
 logger = logging.getLogger(__name__)
@@ -41,7 +42,9 @@ async def import_from_crawler_db(
     """
     jobs: list[dict] = []
     try:
-        db = await aiosqlite.connect(f"file:{crawler_db_path}?mode=ro", uri=True)
+        # v8.12: 改走统一连接工厂——只读连接不开 WAL/外键，但拿到取消安全的 close()
+        db = await open_sqlite(f"file:{crawler_db_path}?mode=ro",
+                               enable_wal=False, uri=True)
         db.row_factory = aiosqlite.Row
     except Exception as e:
         logger.error(f"无法打开 job-crawler 数据库 {crawler_db_path}: {e}")

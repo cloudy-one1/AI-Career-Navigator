@@ -33,8 +33,10 @@ jobs:
       - name: 分层依赖契约检查（import-linter）
         run: python run.py lint
 
-      - name: 全量测试（约 1000 用例，live-LLM 抽检默认跳过）
-        run: python -m pytest tests -q
+      - name: 全量测试（约 1100 用例，live-LLM 抽检默认跳过）
+        # -W error 把线程未捕获异常（aiosqlite 连接被取消路径遗留的标志性症状）
+        # 从偶发噪声升级为门禁：v8.12 已在取消路径上保证连接必关，这里钉住不复发
+        run: python -m pytest tests -q -W error::pytest.PytestUnhandledThreadExceptionWarning
         env:
           PYTHONUTF8: "1"
 

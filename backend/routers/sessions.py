@@ -165,8 +165,11 @@ async def create_session(req: SessionCreateRequest, request: Request = None):
         jd_gaps=jd_gaps,   # v6.3: JD 匹配缺口（出题优先级链第一环）
         company_profile=company_profile,   # v6.5: 目标公司风格（None = 不启用）
     )
-    async with state.session_lock:
-        state.active_sessions[session_id] = session
+    # v8.12: 登记含创建时刻（TTL 依据）；顺手清掉创建后从未被 WS 接管的过期条目
+    await state.register_session(session_id, session)
+    swept = await state.sweep_stale_sessions()
+    if swept:
+        logger.info(f"已清理过期未接管的会话条目: {[s[:8] for s in swept]}")
 
     # 根据模式返回不同的轮次列表
     rounds_source = (config.TRADITIONAL_ROUNDS if session.mode == "traditional"

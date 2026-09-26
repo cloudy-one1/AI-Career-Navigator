@@ -13,6 +13,7 @@ from typing import Optional
 import aiosqlite
 
 from ..config import config
+from ..db.connection import open_sqlite
 from .cleaner import extract_city
 
 logger = logging.getLogger(__name__)
@@ -20,10 +21,8 @@ logger = logging.getLogger(__name__)
 
 async def get_db() -> aiosqlite.Connection:
     os.makedirs(os.path.dirname(config.MARKET_DB_PATH), exist_ok=True)
-    db = await aiosqlite.connect(config.MARKET_DB_PATH)
-    db.row_factory = aiosqlite.Row
-    await db.execute("PRAGMA journal_mode=WAL")
-    return db
+    # 与面试库同一工厂：拿到取消安全的 close()（v8.12，见 backend/db/connection.py）
+    return await open_sqlite(config.MARKET_DB_PATH)
 
 
 async def init_market_db() -> None:

@@ -589,6 +589,12 @@ async def ws_interview(websocket: WebSocket, session_id: str):
 
     except Exception as e:
         logger.exception(f"面试会话 {session_id} 异常")
+        # v8.12: 非断连异常也要落终态 —— 此前这里只回 error 消息，DB 里 status
+        # 停在 active/in_progress，历史列表会把一场"实际已炸"的面试永远显示成进行中
+        try:
+            await update_session_status(session_id, "error")
+        except Exception as log_err:  # noqa: BLE001 - 终态落库失败不能掩盖原始异常
+            logger.warning("会话 %s 异常终态落库失败: %s", session_id, log_err)
         try:
             await websocket.send_json({"type": "error", "data": {"message": str(e)}})
         except Exception:
@@ -596,5 +602,5 @@ async def ws_interview(websocket: WebSocket, session_id: str):
 
     finally:
         # v3.1 整改：WS 结束（正常完成/断开/异常）一律清理会话引用，避免 active_sessions 内存泄漏
-        async with state.session_lock:
-            state.active_sessions.pop(session_id, None)
+        # v8.12: 连同创建时刻一并对称注销（TTL 记录不留悬挂条目）
+        await state.unregister_session(session_id)
