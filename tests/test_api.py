@@ -14,14 +14,12 @@ def client(tmp_path):
     """创建 TestClient（使用临时文件 DB，避免 :memory: 连接隔离问题）"""
     import asyncio
     from backend.config import config
-    import backend.db as db_mod
 
     # 使用临时文件 DB（':memory:' 每个连接独立，不适合多连接的 FastAPI 测试）
     db_file = str(tmp_path / "test_interview.db")
     market_file = str(tmp_path / "test_market.db")
     config.DB_PATH = db_file
     config.MARKET_DB_PATH = market_file
-    db_mod._db = None
 
     from backend.db import init_db
     from backend.market.store import init_market_db

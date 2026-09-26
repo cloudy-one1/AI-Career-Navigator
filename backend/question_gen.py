@@ -160,8 +160,8 @@ async def _build_market_context_block(jd_text: str) -> str:
         companies = list(set(j.get("company", "") for j in jobs.get("items", []) if j.get("company")))
         if companies:
             parts.append(f"- 招聘公司类型：{', '.join(companies[:10])}")
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001 - 该节缺失不影响出题，但静默掉会以为"市场数据没接上"
+        logger.debug("注入招聘公司类型失败，跳过该节: %s", e)
 
     # 学历分布
     edu = stats.get("education_distribution", [])

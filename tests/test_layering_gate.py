@@ -5,6 +5,7 @@
 若干版本却全程绿灯。这类"配置写了 = 已强制"的缺口无法靠契约本身暴露，只能反向钉：
 先证明一个已知越层的样本会让门禁变红，才有资格说本仓库的绿是有效的绿。
 """
+import os
 import subprocess
 import sys
 import textwrap
@@ -23,9 +24,16 @@ LINT_ENTRY = (
 
 
 def _run_lint(cwd: str) -> subprocess.CompletedProcess:
+    """必须与 run.py:lint_imports 走同一条路：PYTHONUTF8=1。
+
+    `.importlinter` 里的契约名是中文，import-linter 用平台默认编码读它——中文 Windows
+    上即 GBK，读到 `L1-L4 逻辑分层依赖契约` 直接解码失败、退出码 1。少了这个环境变量，
+    本自测测的就不是门禁本身，而是"我的子进程恰好用了什么编码"。
+    """
     return subprocess.run(
         [sys.executable, "-c", LINT_ENTRY],
         cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env=dict(os.environ, PYTHONUTF8="1"),
     )
 
 

@@ -149,15 +149,12 @@ class TestIsExpired:
 @pytest_asyncio.fixture
 async def fresh_db(tmp_path):
     """每个用例一份独立的临时 DB（避免 :memory: 的连接隔离问题）"""
-    import backend.db as db_mod
     from backend.config import config
     from backend.db import init_db
 
     config.DB_PATH = str(tmp_path / "weakness_ema.db")
-    db_mod._db = None
     await init_db()
     yield
-    db_mod._db = None
 
 
 class TestRecordObservation:

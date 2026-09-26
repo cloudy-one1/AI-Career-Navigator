@@ -49,7 +49,9 @@ async def find_relevant_snapshot(text: str) -> Optional[dict]:
         return None
     try:
         keywords = await store.list_keywords()
-    except Exception:
+    except Exception as e:  # noqa: BLE001
+        # 返回 None 同时表示"库里没关键词"和"查询失败"，两者对使用者完全不同，必须留痕
+        logger.warning("市场关键词查询失败，本次不注入定量数据: %s", e)
         return None
     for kw in keywords:
         if kw and kw in text:

@@ -36,7 +36,7 @@ Diagnostician + Rewriter 是两个独立 Agent，**禁止合并为单一 Agent**
 
 | 层级 | 模块 | 允许依赖 |
 |---|---|---|
-| L1 基础设施 | `config.py` `logger.py` `llm_client.py` `db.py` | 仅标准库 / 三方库，**无项目内 import**（config 除外） |
+| L1 基础设施 | `config.py` `logger.py` `llm_client.py` `db/` | 仅标准库 / 三方库，**无项目内 import**（config 除外） |
 | L2 领域模型/数据 | `schemas.py` `security.py` `resume_parser.py`（v5.0）`resume_retriever.py` `dimension_weights.py` `gap_analyzer.py` `knowledge_store.py`（v6.0）`voice_service.py`（v4.2）`market/*`（含 v4.1 `crawler/`）`output_sanitizer.py`（v6.2）`resume_anchors.py`（v6.3）`score_adjustments.py`（v6.3）`pressure_bank.py`（v6.3）`company_profiles.py`（v6.5）`weakness_memory.py`（v6.6）`difficulty.py`（v6.6） | L1 + 同层（v8.10 据实修正：`gap_analyzer → market.store/service`、`knowledge_store → resume_retriever` 均为 L2→L2，旧表"仅 L1"与代码不符） |
 | L3 业务逻辑 | `question_gen.py` `diagnosis_engine.py` `interview_engine/*` `web_research.py` `question_bank.py` `data_support.py` `career_planner.py` `interview_skills.py`（v6.6）`profile_service.py`（v8.0） | L1 + L2 + 同层，禁止 import L4 |
 | L4 应用入口 | `main.py`（应用装配：中间件/startup/挂载）+ `routers/*`（v7.2.2 域拆分：state 单例 / deps 依赖 / 域路由 / WS） | 所有层 |

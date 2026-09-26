@@ -30,13 +30,11 @@ async def fresh_db(tmp_path):
     original_market = config.MARKET_DB_PATH
     config.DB_PATH = str(tmp_path / f"p{uuid.uuid4().hex}.db")
     config.MARKET_DB_PATH = str(tmp_path / f"m{uuid.uuid4().hex}.db")
-    db_mod._db = None
     await db_mod.init_db()
     profile_service.invalidate_profile_cache()   # 缓存是模块级字典，用例间必须隔离
     yield
     config.DB_PATH = original_db
     config.MARKET_DB_PATH = original_market
-    db_mod._db = None
     profile_service.invalidate_profile_cache()
 
 

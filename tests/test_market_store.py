@@ -221,3 +221,26 @@ class TestGetStatsContract:
         assert set(stats["education_distribution"][0]) == {"education", "cnt"}
         assert stats["salary_distribution"]
         assert set(stats["salary_distribution"][0]) == {"bucket", "cnt"}
+
+    @pytest.mark.asyncio
+    async def test_dirty_tags_skipped_in_top_skills(self):
+        """top_skills 聚合遇到脏 tags 应跳过该行、保留其余。
+
+        store 与 analytics 各写了一份同样的 tags 聚合，两边都从 `except Exception`
+        收窄到了 (JSONDecodeError, TypeError)——收窄后必须两侧都有用例钉住，
+        否则将来一侧放宽回去不会有任何测试变红。
+        """
+        await store.upsert_jobs([_job("d1", tags=["Python"]), _job("d2", tags=["Go"]),
+                                 _job("d3", tags=["Rust"])])
+        db = await store.get_db()
+        try:
+            await db.execute(
+                "UPDATE job_postings SET tags = 'not-a-json' WHERE source_id = 'd1'")
+            # 合法 JSON 但反序列化成标量 -> 迭代它抛 TypeError，不是 JSONDecodeError
+            await db.execute("UPDATE job_postings SET tags = '12345' WHERE source_id = 'd3'")
+            await db.commit()
+        finally:
+            await db.close()
+
+        skills = {s["skill"] for s in (await store.get_stats())["top_skills"]}
+        assert skills == {"Go"}, "脏行（两种异常）都跳过，正常行保留"

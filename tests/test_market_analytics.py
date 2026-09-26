@@ -215,3 +215,24 @@ async def test_dirty_tags_do_not_break_aggregation():
     charts = await analytics.get_charts()
     assert charts["total"] == 2
     assert any(s["skill"] == "Python" for s in charts["skill"]), "其余正常记录仍应统计"
+
+
+@pytest.mark.asyncio
+async def test_non_iterable_tags_do_not_break_aggregation():
+    """tags 存成合法 JSON 但不是数组时（json.loads 出标量）也要跳过，不是崩在迭代上。
+
+    这条钉的是把 `except Exception` 收窄成 (JSONDecodeError, TypeError) 之后
+    TypeError 那一支仍在——收窄不等于放宽，标量脏数据当年是被宽捕盖住的。
+    """
+    await store.upsert_jobs([_job("t1"), _job("t2")])
+
+    db = await store.get_db()
+    try:
+        await db.execute("UPDATE job_postings SET tags = '12345' WHERE source_id = 't1'")
+        await db.commit()
+    finally:
+        await db.close()
+
+    charts = await analytics.get_charts()
+    assert charts["total"] == 2
+    assert any(s["skill"] == "Python" for s in charts["skill"])

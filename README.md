@@ -113,6 +113,11 @@ docker compose up -d      # 日志：docker compose logs -f；停止：docker co
 
 `./data/` 挂载到容器，面试记录、题库、上传文件存宿主机，容器销毁不丢数据。
 
+> ⚠️ 全站免登录（[CHARTER DC-10](CHARTER.md)），所以 Compose 默认只把端口发布到宿主机
+> `127.0.0.1`——仅本机可访问。要让同网段设备打开页面，在 `.env` 设 `BIND_ADDR=0.0.0.0`
+> 并自行限源；这一步等于把全部简历与面试数据开放给整个局域网，别在公网机器上做。
+> 详见 `docker-compose.yml` 文件头的「部署边界」。
+
 ### 配置
 
 全部可选项集中在 [`.env.example`](.env.example)（含逐项注释），最小配置只有两行：

@@ -30,7 +30,7 @@
 
 | 层级 | 职责 | 代表模块 |
 |---|---|---|
-| **L1 基础设施** | 配置 / 日志 / LLM 客户端 / DB，无项目内向上依赖 | `config.py` `logger.py` `llm_client.py` `db.py` |
+| **L1 基础设施** | 配置 / 日志 / LLM 客户端 / DB，无项目内向上依赖 | `config.py` `logger.py` `llm_client.py` `db/` |
 | **L2 领域模型与数据** | Schema、解析、检索、权重、Gap、市场数据、语音、记忆 | `schemas.py` `security.py` `resume_parser.py` `resume_retriever.py` `dimension_weights.py` `gap_analyzer.py` `knowledge_store.py` `voice_service.py` `market/*` `weakness_memory.py` `difficulty.py` |
 | **L3 业务逻辑** | 出题、诊断、面试引擎、规划、档案聚合 | `question_gen.py` `diagnosis_engine.py` `interview_engine/*` `career_planner.py` `profile_service.py` `interview_skills.py` |
 | **L4 应用入口** | 应用装配与路由 | `main.py` `routers/*` |
@@ -63,7 +63,10 @@ AI求职领航/
 │   ├── config.py                 # 配置 + 面试官风格 + 轮次定义
 │   ├── logger.py                 # 集中日志配置（RotatingFileHandler）
 │   ├── llm_client.py             # 多 AI 后端客户端（含流式）
-│   ├── db.py                     # SQLite 多表操作（aiosqlite）+ JD 权重缓存表
+│   ├── db/                       # SQLite 多表操作（aiosqlite）+ JD 权重缓存表。按领域拆成
+│   │                             #   connection / schema / sessions / questions / feedback /
+│   │                             #   weakness / weakness_state / resources / jd_weights 九个子模块，
+│   │                             #   __init__ 全量 re-export，`from backend.db import X` 写法不变
 │   ├── schemas.py                # Pydantic 数据模型（含跨岗位对比）
 │   ├── security.py               # 启发式内容检查
 │   ├── diagnosis_engine.py       # 双 Agent 诊断引擎

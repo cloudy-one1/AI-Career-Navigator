@@ -173,11 +173,9 @@ class TestReportHtmlExport:
     def client(self, tmp_path):
         import asyncio
         from backend.config import config as cfg
-        import backend.db as db_mod
 
         cfg.DB_PATH = str(tmp_path / "test_interview.db")
         cfg.MARKET_DB_PATH = str(tmp_path / "test_market.db")
-        db_mod._db = None
 
         from backend.db import init_db
         from backend.market.store import init_market_db

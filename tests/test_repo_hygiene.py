@@ -156,3 +156,24 @@ def test_markdown_links_point_to_tracked_files():
         "处理：目标属过程性资料的，改用纯文本写文件名并注明「本地文档，未入库」；"
         "确需公开的，把对应路径从 .gitignore 移除并 git add。"
     )
+
+
+def test_compose_publishes_port_to_loopback_by_default():
+    """docker-compose 的端口发布必须带默认回环地址——全站免登录下的唯一网络边界。
+
+    背景：本系统按 DC-10 无任何认证，`docker compose up` 之后谁能连上端口就能读写
+    ./data 全部数据、并匿名刷 /api/voice/* 的付费额度。此前 compose 写的是裸
+    `"${PORT:-8000}:8000"`，等价于发布到 0.0.0.0，即开箱即向整个局域网开放。
+    现在默认值收在 `BIND_ADDR:-127.0.0.1`，本条断言的就是这个默认值不被悄悄改回去
+    （改回裸端口写法同样会红）。
+    """
+    text = (ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    published = re.findall(r'^\s*-\s*"([^"]*:[^"]*:[^"]*)"\s*$', text, re.MULTILINE)
+    assert published, "docker-compose.yml 里找不到 ports 映射，检查是否被改写"
+    for mapping in published:
+        host_addr = mapping.rsplit(":", 2)[0]
+        assert "127.0.0.1" in host_addr, (
+            f"端口映射 {mapping!r} 的宿主机地址不是回环默认值。"
+            "处理：保留 `${BIND_ADDR:-127.0.0.1}` 形式，让局域网开放成为显式opt-in"
+            "（.env 里设 BIND_ADDR=0.0.0.0 + 防火墙限源），而不是默认行为。"
+        )

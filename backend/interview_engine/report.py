@@ -389,7 +389,9 @@ def _difficulty_summary(session) -> dict:
         return {"enabled": False}
     try:
         return sched.summary()
-    except Exception:  # noqa: BLE001
+    except Exception as e:  # noqa: BLE001
+        # 与"未启用"返回同一个形状，报告分不出两者；不留痕就会把 bug 读成"这场没开难度调度"
+        logger.warning("难度调度摘要生成失败，报告按未启用处理: %s", e)
         return {"enabled": False}
 
 

@@ -38,7 +38,6 @@ def event_loop():
 @pytest_asyncio.fixture
 async def app(tmp_path):
     """创建 FastAPI app 实例（临时文件 DB，避免 :memory: 连接隔离）"""
-    import backend.db as db_mod
     from backend.config import config
     from backend.db import init_db
 
@@ -46,7 +45,6 @@ async def app(tmp_path):
     market_file = str(tmp_path / "test_market.db")
     config.DB_PATH = db_file
     config.MARKET_DB_PATH = market_file
-    db_mod._db = None
     from backend.market.store import init_market_db
     await init_db()
     await init_market_db()

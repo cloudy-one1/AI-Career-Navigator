@@ -272,7 +272,10 @@ async def get_stats(keyword: Optional[str] = None) -> dict:
                 try:
                     for t in json.loads(tags_json or "[]"):
                         counter[t] += 1
-                except Exception:
+                except (json.JSONDecodeError, TypeError) as e:
+                    # 脏数据跳过即可；TypeError 覆盖 tags 是非 JSON 标量或元素不可哈希。
+                    # 只 catch 这两类，列名/结构漂了应当炸出来。
+                    logger.debug("技能聚合跳过脏 tags: %s", e)
                     continue
         top_skills = [{"skill": k, "count": c} for k, c in counter.most_common(20)]
 

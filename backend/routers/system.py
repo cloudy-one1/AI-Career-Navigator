@@ -78,7 +78,10 @@ async def warmup(request: Request):
     try:
         sessions_data = await list_sessions()
         sessions = sessions_data.get("sessions", []) if isinstance(sessions_data, dict) else []
-    except Exception:
+    except Exception as e:  # noqa: BLE001
+        # 读不出历史会话时按"没有会话"返回是错的结论，必须留痕：
+        # 否则 DB 故障会被看成"用户还没面过试"。
+        logger.warning("预热读取历史会话失败，按无会话处理: %s", e)
         sessions = []
 
     if not sessions:
@@ -112,8 +115,9 @@ async def warmup(request: Request):
             if existing:
                 skipped += 1
                 continue
-        except Exception:
-            pass
+        except Exception as e:  # noqa: BLE001
+            # 查缓存失败会被当成"未命中"，于是白花一次 LLM 调用——要留痕
+            logger.warning("查询 JD 权重缓存失败，按未命中处理: %s", e)
 
         # 缓存未命中，调用 LLM 并写入缓存
         try:

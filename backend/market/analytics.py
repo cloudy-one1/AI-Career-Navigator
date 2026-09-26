@@ -143,6 +143,7 @@ async def get_charts(keyword: Optional[str] = None) -> dict:
     finally:
         await db.close()
 
+    bad_tags = 0
     for r in rows:
         total += 1
         kw_counter[str(r["keyword"] or "未分类")] += 1
@@ -169,10 +170,14 @@ async def get_charts(keyword: Optional[str] = None) -> dict:
                 t = str(t).strip()
                 if t:
                     skill_counter[t] += 1
-        except Exception:  # noqa: BLE001 - 单条脏 tags 不应中断整批聚合
-            continue
+        except (json.JSONDecodeError, TypeError) as e:
+            # 单条脏 tags 跳过，不中断整批聚合；但只 catch 解析类异常——
+            # KeyError 之类说明 SELECT 列名漂了，必须炸出来而不是静默少一列。
+            bad_tags += 1
+            logger.debug("跳过脏 tags 行: %s", e)
 
-    logger.info("图表数据聚合完成: keyword=%s, rows=%d", keyword or "(全部)", total)
+    logger.info("图表数据聚合完成: keyword=%s, rows=%d, 脏tags跳过=%d",
+                keyword or "(全部)", total, bad_tags)
 
     return {
         "total": total,

@@ -1,10 +1,133 @@
 # 变更日志（CHANGELOG）
 
-> 记录 **v8.0 → v8.10.1** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
+> 记录 **v8.0 → v8.11** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
 > 历史见 [docs/changelog-archive.md](docs/changelog-archive.md)。不变的架构约束与决策记录见
 > [CHARTER.md](CHARTER.md)，贡献流程见 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的“AI 求职陪跑”为历史名称，保留不删。**
+
+---
+
+## v8.11 部署安全收口 + 巨型文件按「可验证性」取舍（2026-09-24）
+
+> 起因是一份外部给出的风险清单。动手前先把它的 15 条量化结论在 HEAD（`d405cee`）上重测一遍：
+> **9 条成立、6 条不成立，且 6 条错的方向完全一致——全部低估**（`session.py` 写 1531 行实为
+> 1756、`db.py` 写 1120 实为 1370、`interview.js` 写 1717 实为 2029、`except Exception` 写 60 处
+> 实为 105 处、ruff 写 248 项实为 380 项）。这些数字在近 5 个提交里一个都对不上，不是测量过期，
+> 是从没测过。本轮一切以下表实测值为准。
+
+### P0 部署安全：把「默认暴露」改成「默认本机」
+
+清单把问题写成"`HOST=0.0.0.0` + 全站免登录"，但**容器内的 `HOST=0.0.0.0` 是必需的**——改成
+`127.0.0.1` 只会让宿主机端口映射直接打不通。真正的暴露面是端口**发布到宿主机的哪个地址**，
+而 `docker-compose.yml` 原来写的是裸 `"${PORT:-8000}:8000"`，等价于发布到 `0.0.0.0`：
+开箱即向整个局域网开放 `./data` 下全部简历与面试数据（免登录，见 DC-10）。
+
+- 改为 `"${BIND_ADDR:-127.0.0.1}:${PORT:-8000}:8000"`。`docker compose config` 实测默认解析出
+  `host_ip: 127.0.0.1`；设 `BIND_ADDR=0.0.0.0` 时正确放开——扩大访问面成为显式 opt-in。
+- 文件头补「部署边界」警告块，含免登录后果、局域网/公网两条正确扩面路径，以及
+  "`HOST=0.0.0.0` 不要改"的反向说明（防止下一个读到清单的人去改错的那一处）。
+- 新增 `test_compose_publishes_port_to_loopback_by_default` 钉住默认值，并按 DC-11 证伪：
+  改回裸端口写法该测试即变红。
+
+### 门禁自测与真实门禁走了两条路（中文 Windows 上必红）
+
+`run.py:31` 给 import-linter 子进程设了 `PYTHONUTF8=1`，而 `tests/test_layering_gate.py` 的
+`_run_lint` 没设。`.importlinter` 里契约名是中文，import-linter 按平台默认编码读它，在 zh-CN
+Windows 上即 GBK → `'gbk' codec can't decode` → 两个反向自测**确定性失败**。也就是说这套
+"证明门禁会响"的自测，测的其实是"子进程恰好用了什么编码"。已补 `env=dict(os.environ,
+PYTHONUTF8="1")`，2 passed。该失败在本轮改动前就存在。
+
+### 清掉 9 处「重置连接」的死写
+
+`tests/` 里 9 处 `db_mod._db = None` 意在"换库前丢掉缓存连接"，但 `get_db()` 每次调用都新开
+一条 aiosqlite 连接，**全仓库没有任何地方读 `_db`**。删除全部 9 处后全量仍绿，等于反向证明了
+它们是假的。这类写法的害处不在冗余，而在让读者以为存在一个可以重置的连接缓存。
+
+### 巨型文件：按「拆了能不能验证」筛，而不是按行数排
+
+| 目标 | 覆盖率 | 判定 | 依据 |
+|---|---|---|---|
+| `backend/db.py` 1370 行 | 高 | **拆** | 57 个平铺函数、唯一公共依赖 `get_db`、仅 1 处跨域调用、0 个 mock 目标 |
+| `python_job_scraper.py` 1249 行 | 20% | **拆数据 + 提纯函数** | 817 行是城市码表；`scrape_jobs` 函数体覆盖 **0%** |
+| `session.py` 1756 行 | **94%** | **不拆** | 8 个候选分组共 1141 行、共享 **72 个 `self` 属性**（同一个 130 行 `__init__` 定义） |
+| `interview.js` 2029 行 | 薄 | **不拆** | 64 个函数共享 27 个模块级 `let`，仅导出 2 个 |
+| `ws_interview` 498 行 | 58% | **不拆** | 未覆盖的 107 行正是最深的分支（技能动作/追问/补评），且是 `send_json` 串起来的顺序 IO |
+
+后三者的共同点：拆出来不是分解而是**搬家**——把同一份共享状态和同一段顺序 IO 挪到另一个文件，
+复杂度不减、可读性反降，而且要在没有测试的地方动实时面试主链路。DC-11 的口径是"绿灯要能被
+证伪"，同理：**重构要能被验证**。
+
+- `backend/db.py` → `backend/db/` 包（10 个文件，最大 `schema.py` 382 行）。57 个函数
+  **AST 逐字等价**；`__init__.py` 显式 re-export，`from backend.db import X` 与 `backend.db.X`
+  两种写法均不受影响；9 个私有名不外露（包外引用实测 0 处）。ruff 16 项 vs 原文件 17 项。
+  门禁 KEPT，且验证过子模块不是盲区：临时让 `backend/db/schema.py` 向上 import，门禁准确报出
+  `backend.db is not allowed to import backend.interview_engine` 并指到具体行。
+- 码表外置为 `backend/market/crawler/job_site_dicts.py`（`CITY_CODES` 388 项 / `CITY_PINYIN`
+  388 项 / `PROVINCE_MAP` 33 项 / `JS_FETCH_API` 1121 字符，**逐项值相等校验通过**），
+  `python_job_scraper.py` 1249 → **437 行**。
+- `scrape_jobs` 310 → 258 行：把内联的纯数据变换提成 `build_search_url` / `_job_address` /
+  `_job_content` / `to_job_record`，并补 17 个用例。这一步的意义不是缩短函数，而是**在没有
+  安全网的地方造出安全网**——那段逻辑原先藏在 0% 覆盖的函数体里，提成模块级函数后才能被测。
+  该文件覆盖率 20% → 30%，剩余缺口正好只剩 `scrape_jobs` 的浏览器流程本身。
+  两处重复的搜索页 URL f-string 合并为一个函数。
+
+### 异常处理：105 处分类后，只动「连日志都不留」的那 14 处
+
+按处理策略实测分布：记日志后落到后续流程 48、记日志+返回降级值 24、记录后重抛 17、
+**静默 `pass` 8**、记日志+continue 2、**不记日志直接返回降级值 3**、**不记日志改默认值 3**。
+
+宽捕 + 记日志 + 降级对一个 LLM 驱动的应用是合理设计，不是债；**静默吞掉才是**——它让 bug
+以"数据本来就少"的形式消失。所以本轮：
+
+- 7 处静默降级补上留痕，每处都写清为什么这个降级值得记录：`system.py` 读不出历史会话会被
+  返回成"没有历史会话可预热"（把 DB 故障说成用户没面过试）、查缓存失败会被当成未命中于是
+  **白花一次 LLM 调用**、`report.py` 难度摘要抛异常与"未启用"返回同一形状（把 bug 读成配置）；
+  `question_gen.py` / `market/service.py` 同类。
+- 2 处 `json.loads` 聚合从 `except Exception` 收窄到 `(JSONDecodeError, TypeError)`：
+  `KeyError` 之类意味着 SELECT 列名漂了，应当炸出来而不是静默少一列。两侧各补一条用例，
+  并逐条证伪（把 `TypeError` 从元组里去掉，对应用例即变红）。
+- 5 处 scraper 的 `except Exception: pass` **保留**——装饰性滚动、关闭已死页面、WAF 探测轮询，
+  这些逐轮打日志只会刷屏。但 WAF 超时告警现在会带上末次探测异常，否则分不清"被拦"和"浏览器挂了"。
+- 结果：`except Exception` 站点 105 → 103，ruff BLE001 69 → 64（其中 2 处是真收窄，
+  5 处是按仓库既有约定加 `# noqa: BLE001` 并写明理由）。其余 91 处本就是"记日志 + 降级"的
+  既有设计，本轮未动——把它们一律改成精确类型是产品化阶段的活，收益低于风险。
+
+### 更正本文档自己的两处过期数字
+
+- 上节「范围纪律」写的 **ruff 248 项**：HEAD 实测 **380 项**，248 从未成立。
+- 上节「遗留」写的 **`session.py` 1756 行/63 方法**：1756 行正确，方法数实为 **65**。
+
+### 把「未定位归属」的 flaky 定位到了
+
+上节登记的"一次偶发 `PytestUnhandledThreadExceptionWarning`"本轮**独立复现并归因**：
+12 次全量（5 次默认 + 7 次以 `-W error::pytest.PytestUnhandledThreadExceptionWarning` 跑）中
+命中 **4 次 ≈ 1/3**，且 4 次落点完全一致——`tests/test_interview_ws.py::TestPingPong::
+test_ping_replies_pong_and_keeps_round_running`，线程名 `_connection_worker_thread`
+（aiosqlite 每条连接自带的工作线程），底层 `RuntimeError: Event loop is closed`，
+且 `args = (<Future pending>, RuntimeError(...))`。
+
+机制已可解释：`tests/conftest.py:30` 的 `event_loop` 是 **session 级**，整场共用一个循环、
+会话结束才 `loop.close()`；报错是某条 aiosqlite 连接的工作线程在循环已关闭后仍想往它调度回调。
+也就是说**有连接没被 close 掉**——最可能是 WebSocket 被 abrupt 断开时 `finally: await db.close()`
+未跑完，而 `TestPingPong` 正是突然断开连接的那条用例。这与同节另一条遗留
+"WS 非断连异常分支不落终态 / `active_sessions` 无 TTL"是同一根线上的两个症状。
+
+本轮**只登记不修**：确保"取消路径上连接必关"是对 WS 主链路的行为变更，风险高于本轮口径。
+已写入 `docs/LIMITATIONS.md`。复现命令与命中概率（约 1/4 全量）一并记录，避免下一个人从头再找。
+
+### 验证（本机 Python 3.13.2 / zh-CN / cp936，2026-09-24）
+
+- 后端全量 `pytest -q`：**1117 passed, 1 skipped**（用例数 1098 → 1118，本轮新增 20 条：
+  采集器纯函数 17、tags 收窄两侧各 1、compose 门禁 1；本轮起点 HEAD 在本机为
+  1095 passed + 2 failed + 1 skipped）。
+- `python run.py lint`：**KEPT**（Analyzed 69 files, 164 dependencies）。
+- `docker compose config`：默认 `host_ip: 127.0.0.1`；`BIND_ADDR=0.0.0.0 PORT=8001` →
+  `host_ip: 0.0.0.0, published: 8001`。
+- ruff 全仓 380 → 369；新增/改动的每个测试都做过反向证伪（compose 门禁、两处 tags 收窄、
+  分层门禁的编码修复）。
+- 未做：前端两个巨型文件、`ws_interview`、`session.py` 的拆分（理由见上表）；
+  余下 91 处宽捕站点属"记日志+降级"的既有设计，不在本轮动。
 
 ---
 
