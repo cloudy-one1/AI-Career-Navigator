@@ -111,6 +111,16 @@
 | POST | `/api/cross-job-compare` | 一份简历 vs 多个岗位，输出排名与择岗建议 | 5/minute |
 | POST | `/api/career-plan` | 职业路径规划（时间轴多阶段；可注入 `weakness_context` / `skill_gap_context`；成功时给「发展路径」打点） | 10/minute |
 
+## 8.5 知识库 `knowledge.py`（v8.17）
+
+| 方法 | 路径 | 说明 | 限流 |
+|---|---|---|---|
+| POST | `/api/knowledge` | 向命名空间录入文档（自动分块）：`{namespace, source, text}`。命名空间白名单 `interview / career / resume`（`rag:` 前缀全写亦可）；正文 ≤50_000 字符（超长截断并在响应标注 `truncated`） | 会话级 |
+| GET | `/api/knowledge` | 各命名空间统计（块数 / 来源数；空命名空间不列出） | 全局 |
+
+注入路径：`rag:interview` → 轮次出题（会话级指纹跨轮去重）、`rag:career` → 职业规划。
+**知识库为进程内存态，重启即清空**，文档需每次运行后重新录入。
+
 ## 9. 题库 `question_bank.py`
 
 | 方法 | 路径 | 说明 |

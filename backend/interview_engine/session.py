@@ -257,6 +257,10 @@ class InterviewSession:
         # 生命周期 = 会话，随 InterviewSession 一起释放，无跨会话泄漏。
         self._injected_hashes: set[str] = set()
 
+        # v8.17 知识库注入去重：与 _injected_hashes 同机制，作用于 rag:interview
+        # 命名空间（generate_round_questions 注入时原地更新本集合）。
+        self._kb_hashes: set[str] = set()
+
         # v6.3 备选题/换题：本次会话已问过的题目（文本 + 指纹）。
         # 出题时作为【已问题目清单·严禁重复】负向约束传给 question_gen，
         # 换题时才能真正给出新题，而不是换汤不换药的重复题。
@@ -1584,6 +1588,7 @@ class InterviewSession:
             avoid_questions=self.avoid_questions_payload(),   # v6.3 已问题目负向约束
             memory_points=self.long_term_memory_for_prompt(),  # v6.3 历史薄弱点回注入
             jd_gaps=self.jd_gaps,                             # v6.3 JD 匹配缺口优先考察
+            kb_hashes=self._kb_hashes,                        # v8.17 知识库跨轮去重
         )
         # v2.7: 教练模式——每轮开头插入知识点讲解
         if self.mode == "coach":
@@ -1682,6 +1687,7 @@ class InterviewSession:
             type_mix=self.question_type_mix,
             closing_instruction=self.closing_instruction(),
             avoid_questions=avoid,   # v6.3: 换题必须给出新题
+            kb_hashes=self._kb_hashes,   # v8.17 知识库跨轮去重
         )
         # v6.3 备选题兜底：模型若无视【严禁重复】约束又吐出一道已问过的题，
         # 就把这道重复题本身追加进排除清单再要一次——给出具体反例比反复强调规则有效。
@@ -1702,6 +1708,7 @@ class InterviewSession:
                 type_mix=self.question_type_mix,
                 closing_instruction=self.closing_instruction(),
                 avoid_questions=avoid + [repeated],
+                kb_hashes=self._kb_hashes,   # v8.17 知识库跨轮去重
             )
             if retried and not self._is_duplicate_question(str(retried[0].get("question", ""))):
                 questions = retried

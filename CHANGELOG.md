@@ -1,10 +1,49 @@
 # 变更日志（CHANGELOG）
 
-> 记录 **v8.0 → v8.16** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
+> 记录 **v8.0 → v8.17** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
 > 历史见 [docs/changelog-archive.md](docs/changelog-archive.md)。不变的架构约束与决策记录见
 > [CHARTER.md](CHARTER.md)，贡献流程见 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的“AI 求职陪跑”为历史名称，保留不删。**
+
+---
+
+## v8.17 知识库接通业务流：从"建成即休眠"到出题/职业规划注入（2026-09-27）
+
+> knowledge_store 自 v6.0 就有完整的检索与 Prompt 增强能力（v6.4 还补了跨轮注入
+> 去重），但生产代码对它的引用为**零**——LIMITATIONS 登记的"未接入业务流"本轮落地：
+> 补入库 API + 两处注入调用方。零新增依赖，激活的全部是既有已测代码。
+
+### 改动
+
+- **入库侧（backend/routers/knowledge.py 新增）**：
+  - `POST /api/knowledge`：向命名空间录入文档（自动分块）。命名空间白名单
+    `interview / career / resume`（全写 `rag:` 前缀亦可接受）；来源标签 ≤120 字符、
+    正文 ≤50_000 字符（超长截断并在响应中标注 `truncated`）；空正文 400。
+  - `GET /api/knowledge`：各命名空间块数 / 来源数统计。
+  - 明确口径：知识库是**进程内存态**（零托管依赖宪章下的关键词检索），重启即清空，
+    文档需每次运行后重新录入——模块头与 API 文档均已写明，不做假持久化。
+- **注入侧（两个调用方）**：
+  - `question_gen.generate_round_questions`：system prompt 经
+    `augment_prompt_tracked` 注入 `rag:interview` 命名空间内容（查询串 = JD + 简历
+    前缀），新增 `kb_hashes` 参数——会话层（InterviewSession）持指纹集合原地更新，
+    同一段知识跨轮不重复注入（与 v6.3 简历证据的 `_injected_hashes` 同机制）；
+    轮次出题 / 追加定向题 / 换题重试三处调用点全部传入。检索为空、知识库为空、
+    知识库抛异常三种情况都零行为变化（注入是增强项，不拖垮出题）。
+  - `career_planner.plan_career`：planner system prompt 注入 `rag:career`
+    （查询串 = 目标岗位 + JD）；一次性请求，无跨轮去重问题。
+- **测试 11 条**（tests/test_knowledge_wiring.py）：出题注入 4（种子注入进
+  system prompt + 反幻觉约束随行 / 指纹跨轮去重的证伪锚点 / 空库零变化 /
+  知识库抛异常时出题照常）、职业规划注入 2、入库 API 5（录入+统计 / 全写前缀 /
+  未知命名空间 400 / 空正文 400 / 超长截断）。
+
+### 验证（2026-09-27，本机 Python 3.13.2）
+
+- 新增 11 条全绿；全量 `pytest -q -W error::...` → 1158 passed / 1 skipped；
+  `run.py lint` KEPT（分层不变：knowledge 路由 L4、knowledge_store L2）；
+  ruff 与基线持平（369，零新增）。
+- 范围说明：未做前端管理界面（curl / API 文档即可操作）；resume 命名空间保持
+  预留（简历证据仍走 ResumeRetriever 一线，不重复建设）。
 
 ---
 

@@ -32,6 +32,7 @@ from .routers import state
 from .routers import (
     system, voice, sessions, assets, reports,
     question_bank, diagnostics, market, analytics, interview_ws, profile,
+    knowledge,
 )
 
 # ─── 集中日志 ───
@@ -128,6 +129,7 @@ app.include_router(diagnostics.router)     # v2.5 反馈 + v2.7 薄弱点（/poi
 app.include_router(market.router)          # v3.0/v3.3 市场数据 + 实时采集 + 岗位研究
 app.include_router(analytics.router)       # v3.1 Gap 分析 + 跨岗位对比 + v3.2 职业规划
 app.include_router(profile.router)         # v8.0 求职档案（能力档案首屏数据源）
+app.include_router(knowledge.router)       # v8.17 命名空间知识库（入库 + 统计）
 app.include_router(interview_ws.router)    # WebSocket 面试主循环
 
 

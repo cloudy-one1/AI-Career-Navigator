@@ -9,6 +9,7 @@ import asyncio
 import json
 import logging
 
+from .knowledge_store import NAMESPACE_INTERVIEW, get_knowledge_store
 from .output_sanitizer import OUTPUT_CONSTRAINTS, sanitize_spoken_text
 from .resume_anchors import build_anchors_block, merge_anchor_sources
 
@@ -292,7 +293,8 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
                                    avoid_questions: list[str] | None = None,
                                    memory_points: list[dict] | None = None,
                                    jd_gaps: list[str] | None = None,
-                                   difficulty_instruction: str = "") -> list[dict]:
+                                   difficulty_instruction: str = "",
+                                   kb_hashes: set[str] | None = None) -> list[dict]:
     """
     为指定轮次生成问题。
     不同轮次使用不同的聚焦角度（v2.2 扩展为 6 阶段，v2.4 支持双模式）。
@@ -453,6 +455,23 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
             )
 
     system_prompt = get_question_gen_system_prompt()
+
+    # v8.17: 知识库注入（rag:interview）——knowledge_store 自 v6.0 建成、v8.17 才有
+    # 生产入口（POST /api/knowledge）与业务调用方。会话层持指纹集合跨轮去重（原地
+    # 更新），同一段知识不会反复挤占上下文预算；空库时零行为变化。
+    if kb_hashes is not None:
+        try:
+            kb = get_knowledge_store()
+            if kb.has_content(NAMESPACE_INTERVIEW):
+                system_prompt, kb_new = kb.augment_prompt_tracked(
+                    system_prompt, NAMESPACE_INTERVIEW,
+                    query=f"{jd_text or ''}\n{(resume_text or '')[:500]}",
+                    exclude_hashes=kb_hashes or None,
+                )
+                kb_hashes.update(kb_new)
+        except Exception as e:  # noqa: BLE001 - 知识注入是增强项，不该让出题失败
+            logger.debug(f"知识库注入跳过: {e}")
+
     user_prompt = f"""请根据以下信息，生成 {count} 道{round_name}问题。
 
 【候选人简历】

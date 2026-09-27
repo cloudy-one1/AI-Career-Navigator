@@ -19,6 +19,7 @@ from typing import Optional
 
 from .schemas import CareerPlanRequest, CareerPlanResponse, CareerStage
 from .llm_client import LLMClient
+from .knowledge_store import NAMESPACE_CAREER, get_knowledge_store
 from . import gap_analyzer
 
 logger = logging.getLogger(__name__)
@@ -249,10 +250,23 @@ async def plan_career(
     # 2. LLM 路径推理（同步 chat_json 经 asyncio.to_thread，避免阻塞事件循环）
     if llm_client is not None:
         try:
+            system_prompt = _PLANNER_SYSTEM_PROMPT
+            # v8.17: 知识库注入（rag:career）——行业路径/岗位序列等参考背景。
+            # 职业规划是一次性请求，无跨轮去重问题；空库时零行为变化。
+            try:
+                kb = get_knowledge_store()
+                if kb.has_content(NAMESPACE_CAREER):
+                    system_prompt = kb.augment_prompt(
+                        system_prompt, NAMESPACE_CAREER,
+                        query=f"{req.target_role} {req.jd_text or ''}".strip(),
+                    )
+            except Exception as e:  # noqa: BLE001 - 知识注入是增强项，不该让规划失败
+                logger.debug(f"职业规划知识库注入跳过: {e}")
+
             user_prompt = _build_user_prompt(req, baseline)
             raw = await asyncio.to_thread(
                 llm_client.chat_json,
-                _PLANNER_SYSTEM_PROMPT,
+                system_prompt,
                 user_prompt,
                 0.4,
                 4096,
