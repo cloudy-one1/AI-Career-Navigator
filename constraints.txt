@@ -59,7 +59,7 @@ pluggy==1.6.0
 pycparser==3.0
 pydantic==2.13.5
 pydantic_core==2.46.5
-pyee==13.0.1
+pyee==14.0.0
 Pygments==2.21.0
 pypdfium2==5.13.0
 PyYAML==6.0.3
