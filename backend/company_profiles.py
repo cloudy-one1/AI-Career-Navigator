@@ -88,7 +88,7 @@ def _normalize_profile(data: dict, source: str) -> dict | None:
         "role_description": role_description,
         "rounds": rounds,
         "evaluation_rubric": rubric,
-        # 轮次指令是否命中过（会话运行期填充，避免重复判断）
+        # 来源文件名（调试/日志定位用）
         "_source_file": os.path.basename(source),
     }
 
@@ -140,19 +140,50 @@ def load_profiles(directory: str | None = None) -> dict[str, dict]:
     return profiles
 
 
-# 模块级注册表：import 时加载一次；YAML 增删后调用 reload() 热更新
+# 模块级注册表：import 时加载一次；mtime 变化时自动热更新（v8.20 接线）
+# 此前 reload() 是无人调用的死代码——"YAML 增删后调用 reload() 热更新"实为
+# 不存在的能力，修改配置必须重启进程。
+def _snapshot_dir_mtime() -> float:
+    """目录指纹 = 目录 mtime 与其中 YAML 文件 mtime 的最大值（读失败返回 0）。"""
+    stamps = [0.0]
+    try:
+        stamps.append(os.path.getmtime(PROFILES_DIR))
+        for fname in os.listdir(PROFILES_DIR):
+            if fname.lower().endswith((".yaml", ".yml")):
+                stamps.append(os.path.getmtime(os.path.join(PROFILES_DIR, fname)))
+    except OSError:
+        return 0.0
+    return max(stamps)
+
+
 _PROFILES: dict[str, dict] = load_profiles()
+_dir_mtime_state: float = _snapshot_dir_mtime()
+
+
+def _maybe_reload() -> None:
+    """配置目录 mtime 变化时自动重载（get_profile/match_profile/list_profiles 入口触发）。
+
+    只做 stat 对比，命中未变化的常态时开销一次目录遍历，可忽略。
+    """
+    global _PROFILES, _dir_mtime_state
+    current = _snapshot_dir_mtime()
+    if current != _dir_mtime_state:
+        logger.info("检测到公司配置目录变化，自动热重载")
+        _PROFILES = load_profiles()
+        _dir_mtime_state = current
 
 
 def reload() -> dict[str, dict]:
-    """热重载公司配置（运维/测试用）。"""
-    global _PROFILES
+    """强制热重载公司配置（运维/测试用；常规路径走 _maybe_reload 自动检测）。"""
+    global _PROFILES, _dir_mtime_state
     _PROFILES = load_profiles()
+    _dir_mtime_state = _snapshot_dir_mtime()
     return _PROFILES
 
 
 def list_profiles() -> list[dict]:
     """全部公司配置摘要（供前端选择器 / GET /api/company-profiles）。"""
+    _maybe_reload()
     return [
         {
             "name": p["name"],
@@ -168,6 +199,7 @@ def list_profiles() -> list[dict]:
 
 def get_profile(name: str | None) -> dict | None:
     """按 name 取配置；未知/空返回 None（调用方降级为不注入）。"""
+    _maybe_reload()
     if not name:
         return None
     return _PROFILES.get(str(name).strip())
@@ -178,6 +210,7 @@ def match_profile(jd_text: str | None) -> dict | None:
 
     打分：命中数最高者胜出，平手取注册顺序首个（加载顺序稳定，结果可复现）。
     """
+    _maybe_reload()
     if not jd_text or not _PROFILES:
         return None
     jd = str(jd_text).lower()

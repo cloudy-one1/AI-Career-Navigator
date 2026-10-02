@@ -40,7 +40,9 @@ INJECTION_PATTERNS_HARD = [
     r"你的(任务|角色|职责|身份)\s*(是|变成了|换成了)",
     r"你(不再|不要)\s*(是|扮演|假装|作为|当|装)",
     r"system\s*prompt",
-    r"(扮演|假装|模拟)\s*(一个|一位)",
+    # v8.20: 移除"模拟"——"模拟一个高并发请求/故障场景"是正常技术回答；
+    # 补充"冒充/伪装"（意图更明确，正常业务语言几乎不用）
+    r"(扮演|假装|冒充|伪装)\s*(一个|一位|一名)",
     r"重新定义(你的|自己)",
     r"切换(角色|身份|人格)",
 
@@ -86,7 +88,8 @@ INJECTION_PATTERNS_HARD = [
     # --- 面试专用注入 ---
     r"(跳过|绕过|快进)\s*(这道|这题|这个|所有)\s*(问题|题目|面试)",
     r"(直接|马上)\s*(给我|显示)\s*(答案|评分|结果|报告)",
-    r"(结束|终止|退出)\s*(面试|当前)",
+    # v8.20: 收窄到"面试"——"结束了当前迭代/退出当前目录"等正常回答此前被误拦
+    r"(结束|终止|退出)\s*面试",
     r"修改\s*(评分|结果|诊断|评价)",
     r"提高\s*(我的|这次)\s*(评分|分数)",
 ]
@@ -212,21 +215,35 @@ def check_repeated_answer(current: str, history: list[str]) -> tuple[bool, str]:
         return False, "连续提交相同回答，疑似自动化行为"
 
     # 高度相似检查（简易 Jaccard)
-    current_words = set(current.split())
-    if not current_words:
+    current_tokens = _similarity_tokens(current)
+    if not current_tokens:
         return True, ""
 
     for prev in history[-2:]:  # 只检查最近 2 条
-        prev_words = set(prev.split())
-        if not prev_words:
+        prev_tokens = _similarity_tokens(prev)
+        if not prev_tokens:
             continue
-        intersection = len(current_words & prev_words)
-        union = len(current_words | prev_words)
+        intersection = len(current_tokens & prev_tokens)
+        union = len(current_tokens | prev_tokens)
         similarity = intersection / union if union > 0 else 0
         if similarity > SIMILARITY_THRESHOLD:
             return False, "回答与之前高度相似，请提供新的内容"
 
     return True, ""
+
+
+def _similarity_tokens(text: str) -> set[str]:
+    """Jaccard 相似度的分词：ASCII 按词，CJK 按字符 bigram。
+
+    v8.20: 此前 str.split() 按空白分词——中文整句没有空格，每条回答只剩
+    1 个 token，相似度只能算出 0 或 1（且 1 的情形已被精确相等覆盖），
+    重复检测对主要语言（中文）完全失效。
+    """
+    text = text or ""
+    tokens: set[str] = {w.lower() for w in re.findall(r"[A-Za-z0-9]+", text)}
+    cjk = re.findall(r"[\u4e00-\u9fff]", text)
+    tokens.update(a + b for a, b in zip(cjk, cjk[1:]))
+    return tokens
 
 
 def check_answer_quality(answer: str) -> tuple[bool, str]:
@@ -311,24 +328,30 @@ def full_check(
     ⚠️ 这是启发式「内容护栏」，不是安全边界；认真绕过者仍可规避。
     Returns: (pass_all, reject_reason)
     """
+    # v8.20: 检测前先清洗——零宽字符插进"忽略之前"即可绕过全部注入正则，
+    # sanitize_input 写好后一直没接进检测链路。只清洗检测输入，不改动原文。
+    cleaned = sanitize_input(text or "")
+
     # 1. 输入注入检测（硬拦截集合）
-    safe, matched = check_input(text)
+    safe, matched = check_input(cleaned)
     if not safe:
         return False, f"输入包含不安全内容: {'; '.join(matched[:3])}"
 
     # 2. 质量校验
-    valid, reason = check_answer_quality(text)
+    valid, reason = check_answer_quality(cleaned)
     if not valid:
         return False, reason
 
-    # 3. 重复检测
+    # 3. 重复检测（历史侧同样清洗，保证两侧分词口径一致）
     if history:
-        safe, reason = check_repeated_answer(text, history)
+        safe, reason = check_repeated_answer(
+            cleaned, [sanitize_input(h or "") for h in history]
+        )
         if not safe:
             return False, reason
 
     # 4. 记忆污染
-    safe, matched = check_memory_pollution(text)
+    safe, matched = check_memory_pollution(cleaned)
     if not safe:
         return False, f"检测到试图修改历史的操作: {'; '.join(matched[:2])}"
 

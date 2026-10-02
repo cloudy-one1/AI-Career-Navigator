@@ -1018,6 +1018,14 @@ export function handleWSMessage(type, data) {
 
     case 'error':
       toast(data.message, 'error');
+      // v8.20: 等待诊断期间的错误帧（如"诊断服务暂时不可用，请重新作答"）
+      // 意味着本次提交没有成功——解锁输入并保留草稿，否则要干等 35 秒超时
+      if (session.inputLocked) {
+        clearTimeout(_answerTimeout);
+        const sbBtn = $('#submit-answer');
+        if (sbBtn) sbBtn.textContent = '提交回答';
+        setInputLocked(false);
+      }
       break;
   }
 }

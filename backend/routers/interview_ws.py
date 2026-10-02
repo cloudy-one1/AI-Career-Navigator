@@ -411,6 +411,7 @@ async def ws_interview(websocket: WebSocket, session_id: str):
 
                     # v2.6: 安全通过 → 流式双 Agent 诊断，逐块推送
                     diag = None
+                    stream_notified = False
                     async for stream_msg in session.stream_answer(
                         answer_text,
                         from_voice=from_voice,
@@ -419,13 +420,21 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                         if stream_msg.get("type") == "diagnosis_done":
                             diag = stream_msg.get("data")
                             continue
+                        if stream_msg.get("type") == "diagnosis_error":
+                            # v8.20: 链路失败显式上报——本题未计分、指针未推进，
+                            # 前端可对同一题重答（此前伪装成全 0 分诊断照常入库）
+                            stream_notified = True
+                            await websocket.send_json({"type": "error",
+                                                       "data": stream_msg.get("data")})
+                            continue
                         await websocket.send_json(stream_msg)
 
                     if not diag:
-                        await websocket.send_json({
-                            "type": "error",
-                            "data": {"message": "诊断失败，请重新作答"}
-                        })
+                        if not stream_notified:
+                            await websocket.send_json({
+                                "type": "error",
+                                "data": {"message": "诊断失败，请重新作答"}
+                            })
                         continue
 
                     # v8.6: 用服务端墙钟差校验前端上报的思考时长（失真时以服务端值为准）

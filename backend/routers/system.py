@@ -16,6 +16,9 @@ from . import state
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# v8.20: 单次预热处理的 JD 数上限（其余按需计算，自然落缓存）
+_WARMUP_MAX_JDS = 20
+
 
 @router.get("/api/health")
 async def health():
@@ -124,7 +127,14 @@ async def warmup(request: Request):
     precomputed = 0
     skipped = 0
 
-    llm = LLMClient()
+    # v8.20: 复用全局单例——此前自建 LLMClient()，绕过 state.py 的单例收敛机制
+    llm = state.llm_client
+
+    # v8.20: 单次预热上限——此前对唯一 JD 数量无上限，历史会话多时该"预热"
+    # 请求串行打 N 次完整 LLM 往返，时长不可控且 1/minute 限流拦不住单次内的长尾
+    total_unique = len(unique_jds)
+    unique_jds = unique_jds[:_WARMUP_MAX_JDS]
+    truncated = total_unique > _WARMUP_MAX_JDS
 
     for jd_text in unique_jds:
         jd_hash = hashlib.sha256(jd_text.encode("utf-8")).hexdigest()
@@ -146,8 +156,10 @@ async def warmup(request: Request):
             logger.warning(f"预热 JD 权重失败: {e}")
 
     return {
-        "message": f"预热完成：{precomputed} 个已计算，{skipped} 个已缓存",
+        "message": f"预热完成：{precomputed} 个已计算，{skipped} 个已缓存"
+                   + (f"（超出单次预热上限 {_WARMUP_MAX_JDS}，其余 {total_unique - _WARMUP_MAX_JDS} 个按需计算）"
+                      if truncated else ""),
         "precomputed": precomputed,
         "skipped": skipped,
-        "total_jds": len(unique_jds),
+        "total_jds": total_unique,
     }

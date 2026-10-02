@@ -52,11 +52,19 @@ class KnowledgeStore:
             ns = f"rag:{ns}"
         return ns
 
-    def _retriever(self, namespace: str) -> ResumeRetriever:
+    def _retriever(self, namespace: str, create: bool = True) -> ResumeRetriever | None:
+        """取命名空间检索器。create=False 只读不建。
+
+        v8.20: 读路径（retrieve/has_content/stats）此前也会为未见过的命名空间
+        创建并永久登记空检索器——career_planner 首次 has_content 即触发，
+        此后 namespaces() 会列出零块的"幽灵命名空间"。
+        """
         ns = self._normalize_ns(namespace)
-        if ns not in self._retrievers:
-            self._retrievers[ns] = ResumeRetriever()
-        return self._retrievers[ns]
+        r = self._retrievers.get(ns)
+        if r is None and create:
+            r = ResumeRetriever()
+            self._retrievers[ns] = r
+        return r
 
     def namespaces(self) -> list[str]:
         """返回当前已有内容的命名空间列表。"""
@@ -94,8 +102,8 @@ class KnowledgeStore:
         exclude_hashes（v6.3 注入去重）：跳过指纹命中的块。过滤发生在**字符预算之前**，
         否则被过滤的名额会白占预算，把本可入选的新块挤掉。
         """
-        r = self._retriever(namespace)
-        if not r.chunks or top_k <= 0:
+        r = self._retriever(namespace, create=False)
+        if r is None or not r.chunks or top_k <= 0:
             return []
         terms = extract_terms(query or "")
         # v6.4: 同层复用双通道评分（关键词命中 + bigram 语义近似），见 resume_retriever
@@ -124,15 +132,16 @@ class KnowledgeStore:
 
     def has_content(self, namespace: str) -> bool:
         """命名空间是否已有可检索内容。"""
-        return bool(self._retriever(namespace).chunks)
+        r = self._retriever(namespace, create=False)
+        return bool(r and r.chunks)
 
     def stats(self, namespace: str | None = None) -> dict:
         """命名空间统计（块数/来源数），None 则返回全部。"""
-        targets = (
-            {self._normalize_ns(namespace): self._retriever(namespace)}
-            if namespace is not None
-            else {ns: r for ns, r in self._retrievers.items() if r.chunks}
-        )
+        if namespace is not None:
+            r = self._retriever(namespace, create=False)
+            targets = {self._normalize_ns(namespace): r} if r is not None else {}
+        else:
+            targets = {ns: r for ns, r in self._retrievers.items() if r.chunks}
         return {
             ns: {"chunks": len(r.chunks), "sources": len({c.source for c in r.chunks})}
             for ns, r in targets.items()

@@ -77,6 +77,11 @@ def bigram_tokens(text: str) -> Counter:
 def bigram_cosine(left: str, right: str) -> float:
     """两段文本的字符 bigram 余弦相似度（[0,1]）；任一侧为空返回 0。"""
     lt, rt = bigram_tokens(left), bigram_tokens(right)
+    return _bigram_cosine_counters(lt, rt)
+
+
+def _bigram_cosine_counters(lt: Counter, rt: Counter) -> float:
+    """基于已分词 Counter 的 bigram 余弦（v8.20: 供逐块循环复用 query 侧分词）。"""
     if not lt or not rt:
         return 0.0
     common = set(lt) & set(rt)
@@ -219,13 +224,16 @@ class ResumeRetriever:
         query_text 为 None 时退化为纯词条通道（行为与 v6.3 完全一致）。
         """
         term_set = set(terms)
+        # v8.20: query 侧 bigram 分词只算一次——此前在逐块循环内 bigram_cosine
+        # 对同一 query 重复分词（120k 字简历约 60+ 块即重复 60 次）
+        query_tokens = bigram_tokens(query_text) if query_text else None
         for chunk in self.chunks:
             head = chunk.text[:SEARCH_HEAD_CHARS].lower()
             chunk.matched_terms = [t for t in term_set if t in head]
             chunk.semantic_bonus = 0.0
             chunk.semantic_sim = 0.0
-            if query_text:
-                sim = bigram_cosine(query_text, head)
+            if query_tokens is not None:
+                sim = _bigram_cosine_counters(query_tokens, bigram_tokens(head))
                 chunk.semantic_sim = round(sim, 4)
                 if sim > 0:
                     chunk.semantic_bonus = round(

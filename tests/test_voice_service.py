@@ -95,9 +95,11 @@ def test_resolve_voice_default_alias(svc):
 # ----- TTS 合成 -----
 
 def test_synthesize_empty_text_short_circuits(svc):
-    """空文本在启用判定前直接返回 used=True（跳过合成）"""
+    """空文本在启用判定前直接短路。v8.20: 未合成 ≠ 合成成功，used 应为 False
+    （此前 used=True 却无音频，以 used 判成功的调用方会误判）。"""
     res = svc.synthesize("")
-    assert res.used is True
+    assert res.used is False
+    assert res.audio_b64 is None
     assert "文本为空" in res.message
 
 

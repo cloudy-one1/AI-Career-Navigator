@@ -1135,11 +1135,16 @@ class InterviewSession:
                 "diagnosis": final_result,
             }
 
-        # v6.3: assisted 标记 —— 本题借助了恢复引导，分数照记但报告中披露
-        self.record_answer(answer_text, final_result, thinking_seconds,
-                           assisted=recovery_requested)
-        if recovery_requested:
-            self.recovery_active = True
+        # v8.20: 只有拿到有效诊断结果才记录本题——此前 final_result 为 None
+        # （LLM 链路失败）也无条件 record_answer：题目指针已推进、历史已落条，
+        # WS 的"诊断失败，请重新作答"实际不可达，用户重答会串到下一题、历史双记。
+        # 现在失败时不推进，用户重答仍针对本题。
+        if final_result is not None:
+            # v6.3: assisted 标记 —— 本题借助了恢复引导，分数照记但报告中披露
+            self.record_answer(answer_text, final_result, thinking_seconds,
+                               assisted=recovery_requested)
+            if recovery_requested:
+                self.recovery_active = True
 
     def handle_follow_up_answer(self, answer_text: str, thinking_seconds: float = 0):
         """

@@ -15,7 +15,7 @@ import { cityCoord } from './cityCoords.js';
 import {
   startMarketCrawl, getCrawlStatus, cancelMarketCrawl, getCityMap, getMarketJob,
   getMarketJobs, getMarketStats, runGapAnalysis, crossJobCompare,
-  toggleMarketInterest, getMarketCharts, getMarketInsight,
+  getMarketCharts, getMarketInsight,
   addMarketJobToPosition, uploadResumeToLibrary, getResume,
 } from './api.js';
 
@@ -665,7 +665,6 @@ function renderTable() {
   }
   state.items.forEach((job) => {
     const selected = state.selectedRows.includes(job.id);
-    const interested = isInterested(job);
     const tr = el('tr', {
       className: `data-row${selected ? ' selected' : ''}`,
       'data-id': String(job.id),
@@ -716,30 +715,9 @@ function renderPagination() {
 }
 
 /* ─────────────────── 感兴趣（后端持久化） ───────────────────
-   状态存在 market.db 的 job_postings.is_interested（全局标记，
-   与题库 question_bank.is_favorited 同模式）。列表 / 详情接口
-   均返回该字段，故直接读 job 对象，无需前端另存一份。 */
-
-function isInterested(job) {
-  return !!(job && job.is_interested);
-}
-
-async function toggleInterest(id, btn) {
-  try {
-    const { is_interested: on } = await toggleMarketInterest(id);
-    btn.classList.toggle('interested', on);
-    const label = btn.querySelector('.interest-label');
-    if (label) label.textContent = on ? '已收藏' : '感兴趣';
-    // 同步内存态，避免翻页 / 重新渲染后状态回退
-    const hit = state.items.find(j => String(j.id) === String(id));
-    if (hit) hit.is_interested = on ? 1 : 0;
-    if (state.currentJob && String(state.currentJob.id) === String(id)) {
-      state.currentJob.is_interested = on ? 1 : 0;
-    }
-  } catch (e) {
-    toast(e.message || '收藏失败', 'error');
-  }
-}
+   v8.20: 独立的"感兴趣"收藏交互已由「加入岗位库」承载，toggleInterest/
+   toggleMarketInterest 前端调用链已删除；后端 /interest 端点与
+   job_postings.is_interested 字段保留（接口仍在 docs/API.md）。 */
 
 /**
  * [v8.2] 把当前市场岗位导入岗位库，之后在面试页可直接选用这份 JD。
@@ -790,14 +768,23 @@ function clearSelection() {
 
 function updateCompareBar() {
   const bar = $('#mkt-compare-bar');
-  const cnt = state.selectedRows.length;
-  bar.classList.toggle('visible', cnt > 0);
-  $('#mkt-compare-cnt').textContent = String(cnt);
-  if (cnt > 5) {
-    toast('最多对比 5 个岗位，请减少选择', 'warning');
+  // v8.20: 状态截断后同步 DOM——此前只 slice state，被移除岗位的复选框仍显示
+  // 勾选、行仍高亮，UI 与状态不一致
+  if (state.selectedRows.length > 5) {
+    toast('最多对比 5 个岗位，已保留前 5 个', 'warning');
+    const removed = state.selectedRows.slice(5);
     state.selectedRows = state.selectedRows.slice(0, 5);
-    $('#mkt-compare-cnt').textContent = '5';
+    removed.forEach(id => {
+      const row = document.querySelector(`.data-row[data-id="${String(id)}"]`);
+      if (row) {
+        const box = row.querySelector('.mkt-checkbox');
+        if (box) box.checked = false;
+        row.classList.remove('selected');
+      }
+    });
   }
+  bar.classList.toggle('visible', state.selectedRows.length > 0);
+  $('#mkt-compare-cnt').textContent = String(state.selectedRows.length);
 }
 
 async function doCrossCompare() {

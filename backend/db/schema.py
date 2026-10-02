@@ -195,6 +195,14 @@ async def init_db():
             )
         """)
 
+        # v8.20: 补查询索引——get_session_qas 按 session_id 拉问答每次全表扫；
+        # 题库导入去重按 (question_text, session_id) COUNT 也是全表扫
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_interview_qa_session ON interview_qa(session_id)")
+        await db.execute(
+            "CREATE INDEX IF NOT EXISTS idx_question_bank_text_session "
+            "ON question_bank(question_text, session_id)")
+
         # v7.0: 老库升级（给已有表加列必须走 PRAGMA+ALTER 迁移，不能用 CREATE 覆盖）
         await _ensure_session_columns(db)
         await _ensure_position_source_columns(db)
@@ -288,7 +296,14 @@ async def _drop_auth_columns(db) -> None:
             await db.execute("ALTER TABLE journey_marks_v2 RENAME TO journey_marks")
             logger.info("[db] journey_marks 迁移：重建为 step_key 主键")
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"[db] 认证遗留清理未完成（不影响使用，下次启动重试）: {e}")
+        # v8.20: 回滚半成品迁移——此前只吞异常，init_db 末尾的 commit 会把
+        # "旧表已删、新表未改名"的中间态落盘，journey_marks 数据就此丢失，
+        # 与"下次启动重试"的假设相悖。回滚后事务内的改动全部撤销，重试才真的安全。
+        try:
+            await db.rollback()
+        except Exception as rb_err:  # noqa: BLE001
+            logger.warning(f"[db] 迁移回滚失败: {rb_err}")
+        logger.warning(f"[db] 认证遗留清理未完成（已回滚，下次启动重试）: {e}")
 
 
 async def _ensure_position_source_columns(db) -> None:

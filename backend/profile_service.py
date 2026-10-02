@@ -38,6 +38,7 @@ v8.1 术语纪律：对外的四段状态名为 当前简历 / 目标岗位 / �
 """
 
 import asyncio
+import copy
 import json
 import logging
 import re
@@ -632,7 +633,10 @@ async def get_profile(use_cache: bool = True) -> dict:
     """聚合四组状态 + NBA。任一段失败只降级该段，整接口不 500。"""
     global _cache
     if use_cache and _cache and (time.monotonic() - _cache[0]) < CACHE_TTL_SECONDS:
-        return _cache[1]
+        # v8.20: 返回深拷贝——命中缓存返回同一 dict 引用时，任何调用方原地
+        # mutate（已有 target["skill_gap"] 原地写入的先例）都会污染 60s 内
+        # 所有后续响应
+        return copy.deepcopy(_cache[1])
 
     degraded: list[str] = []
 

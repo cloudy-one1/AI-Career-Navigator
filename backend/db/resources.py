@@ -22,12 +22,17 @@ _POSITION_LIST_COLUMNS = ("id, title, department, "
 async def save_resume(resume_id: str, title: str, raw_text: str,
                       filename: str | None = None,
                       parsed_json: str | None = None) -> None:
+    """新建 / 覆盖简历。v8.20: REPLACE → UPSERT，覆盖已存在 id 时不再重置 created_at。"""
     db = await get_db()
     try:
         await db.execute(
-            """INSERT OR REPLACE INTO resumes
+            """INSERT INTO resumes
                (id, title, filename, raw_text, parsed_json, char_count, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
+               VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+               ON CONFLICT(id) DO UPDATE SET
+                   title=excluded.title, filename=excluded.filename,
+                   raw_text=excluded.raw_text, parsed_json=excluded.parsed_json,
+                   char_count=excluded.char_count, updated_at=excluded.updated_at""",
             (resume_id, title, filename, raw_text, parsed_json, len(raw_text or "")),
         )
         await db.commit()
@@ -95,13 +100,20 @@ async def save_position(position_id: str, title: str, jd_text: str,
                         department: str | None = None,
                         source: str = "manual",
                         market_job_id: int | None = None) -> None:
-    """保存岗位。source/market_job_id 仅市场导入时需要传入，手工新建走默认值。"""
+    """保存岗位。source/market_job_id 仅市场导入时需要传入，手工新建走默认值。
+
+    v8.20: REPLACE → UPSERT——覆盖已存在 id 时不再重置 created_at，也不把
+    市场导入岗位的 source/market_job_id 静默抹成 manual/NULL。
+    """
     db = await get_db()
     try:
         await db.execute(
-            """INSERT OR REPLACE INTO positions
+            """INSERT INTO positions
                (id, title, department, jd_text, source, market_job_id, updated_at)
-               VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))""",
+               VALUES (?, ?, ?, ?, ?, ?, datetime('now', 'localtime'))
+               ON CONFLICT(id) DO UPDATE SET
+                   title=excluded.title, department=excluded.department,
+                   jd_text=excluded.jd_text, updated_at=excluded.updated_at""",
             (position_id, title, department, jd_text, source, market_job_id),
         )
         await db.commit()

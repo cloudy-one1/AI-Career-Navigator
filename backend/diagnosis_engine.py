@@ -673,7 +673,23 @@ async def run_diagnosis_streaming(llm_client, question: str, answer: str,
     if not safe:
         logger.warning(f"诊断输出检测到泄漏: {leaked}")
 
+    # v8.20: 链路失败显式上报，不再伪装成"全 0 分的已完成诊断"。
+    # 两种失败形态：_astream 吞掉异常后 0 chunk（diag_raw 为空）；
+    # llm_client 流式降级失败时 yield 的 {"error": ...} JSON。
+    # 此前两者都会走 fallback 结构照常发 diagnosis_done 并入库计分，
+    # 用户看到"0 分诊断完成"且无法重答。现在发 diagnosis_error 终止本题，
+    # session 层据此跳过 record_answer，前端允许重新作答。
+    if not diag_raw.strip():
+        logger.error("诊断流式产出为空（LLM 链路失败），本题不计分")
+        yield {"type": "diagnosis_error",
+               "data": {"message": "诊断服务暂时不可用，请重新作答"}}
+        return
     diagnosis = _extract_json(diag_raw) or _parse_diagnosis_fallback(diag_raw)
+    if isinstance(diagnosis, dict) and diagnosis.get("error"):
+        logger.error(f"诊断链路返回错误: {diagnosis.get('error')}")
+        yield {"type": "diagnosis_error",
+               "data": {"message": "诊断服务暂时不可用，请重新作答"}}
+        return
 
     # ---- Phase 2: Rewriter ----
     # v8.6: 只有 AUTO_REWRITE 开启时才随诊断一起跑。关闭后诊断完成即返回，
@@ -923,6 +939,18 @@ async def run_diagnosis(llm_client, question: str, answer: str,
         "diagnosis",   # v6.2: 任务级模型绑定
     )
     diagnosis = _extract_json(diag_raw) or _parse_diagnosis_fallback(diag_raw)
+
+    # v8.20: 链路失败（chat 返回 error JSON / 空产出）时不再跑 Rewriter——
+    # 对一个 error 结构做"回答改写"纯属浪费一次 LLM 往返
+    failed = (not (diag_raw or "").strip()) or (
+        isinstance(diagnosis, dict) and diagnosis.get("error"))
+    if failed:
+        logger.error(f"非流式诊断链路失败，跳过改写: {str(diagnosis.get('error'))[:200] if isinstance(diagnosis, dict) else '空产出'}")
+        return {"diagnosis": diagnosis if isinstance(diagnosis, dict) else {}, "rewrite": {}}
+
+    # v8.20: 与流式主路径对齐——AUTO_REWRITE 关闭时不跑 Rewriter
+    if not config.AUTO_REWRITE:
+        return {"diagnosis": diagnosis, "rewrite": {}}
 
     rewrite_prompt = REWRITER_USER_PROMPT.format(
         question=question, answer=answer,

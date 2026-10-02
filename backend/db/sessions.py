@@ -14,13 +14,27 @@ async def save_session(session_id: str, style: str = "friendly",
                         resume_text: str = "",
                         resume_id: str | None = None,
                         position_id: str | None = None) -> None:
-    """新建 / 覆盖会话。v8.3: 已无 owner_id 参数（认证下线）。"""
+    """新建 / 覆盖会话。v8.3: 已无 owner_id 参数（认证下线）。
+
+    v8.20: INSERT OR REPLACE → 显式 UPSERT。REPLACE 的语义是"删旧行再插入"：
+    外键开启下，会话已有 QA/报告子记录时直接抛 FOREIGN KEY constraint failed；
+    无子记录时 status/created_at/answered_count/flow_state 也会被静默重置。
+    当前调用方都用 uuid4 新 id 不会触发，属埋雷拆除。
+    """
     db = await get_db()
     try:
         await db.execute(
-            """INSERT OR REPLACE INTO sessions
+            """INSERT INTO sessions
                (id, style, resume_filename, jd_text, resume_text, resume_id, position_id)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(id) DO UPDATE SET
+                   style=excluded.style,
+                   resume_filename=excluded.resume_filename,
+                   jd_text=excluded.jd_text,
+                   resume_text=excluded.resume_text,
+                   resume_id=excluded.resume_id,
+                   position_id=excluded.position_id,
+                   updated_at=datetime('now', 'localtime')""",
             (session_id, style, resume_filename, jd_text, resume_text,
              resume_id, position_id),
         )

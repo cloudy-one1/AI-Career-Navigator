@@ -56,6 +56,8 @@ class VoiceService:
 
     # v6.1: TTS LRU 缓存条目上限（音频 Base64 较大，防止常驻内存膨胀）
     TTS_CACHE_MAX = 32
+    # v8.20: 缓存总字节上限（64MB）——只限条数时，32 条长音频仍可常驻上百 MB
+    TTS_CACHE_MAX_BYTES = 64 * 1024 * 1024
 
     # 官方预置音色（VALUE 大小写敏感）；mimo_default 在中国集群等同 冰糖
     PRESET_VOICES = frozenset({
@@ -91,6 +93,18 @@ class VoiceService:
         # 同一段文本（重听题目/追问、探测包、前端预取）不再重复付费合成。
         self._tts_cache: OrderedDict[str, TTSUsage] = OrderedDict()
         self._cache_lock = threading.Lock()
+        # v8.20: 缓存字节上限——音频 Base64 是本应用最大的内存对象，只限条数
+        # 不限字节时，32 条长文本的 WAV 可常驻上百 MB
+        self._cache_bytes = 0
+        # v8.20: 惰性共享 httpx.Client（首次调用时创建）——连接复用省去每次调用
+        # 的完整 TLS 握手（TTS 预取/重听属高频场景）；httpx.Client 线程安全。
+        # 惰性创建也让测试可以 patch httpx.Client 类。
+        self._http: Optional[httpx.Client] = None
+
+    def _get_http(self) -> httpx.Client:
+        if self._http is None:
+            self._http = httpx.Client(timeout=self.timeout)
+        return self._http
 
     @property
     def enabled(self) -> bool:
@@ -128,7 +142,9 @@ class VoiceService:
         """
         text = (text or "").strip()
         if not text:
-            return TTSUsage(used=True, message="文本为空，跳过合成")
+            # v8.20: used=False——"未合成"不是"已合成成功"，此前 used=True 无音频
+            # 会让以 used 判成功的调用方误判
+            return TTSUsage(used=False, message="文本为空，跳过合成")
         if not self.enabled:
             return TTSUsage(used=False, message="未配置 MIMO_API_KEY")
 
@@ -149,8 +165,8 @@ class VoiceService:
             "audio": {"format": "wav", "voice": self._resolve_voice(voice)},
         }
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                resp = client.post(url, headers=self._headers(), json=payload)
+            # v8.20: 复用长连接客户端（首次调用时惰性创建，实例生命周期内共享）
+            resp = self._get_http().post(url, headers=self._headers(), json=payload)
             if resp.status_code != 200:
                 logger.warning("MiMo TTS 失败 status=%s body=%s", resp.status_code, resp.text[:300])
                 return TTSUsage(used=False, message=f"MiMo TTS 请求失败（{resp.status_code}）")
@@ -160,8 +176,14 @@ class VoiceService:
             usage = TTSUsage(used=True, audio_b64=audio_b64)
             with self._cache_lock:
                 self._tts_cache[cache_key] = usage
-                while len(self._tts_cache) > self.TTS_CACHE_MAX:
-                    self._tts_cache.popitem(last=False)
+                self._cache_bytes += len(audio_b64)
+                # 双重上限：条数（LRU 语义）+ 总字节（内存兜底），超限时从最旧端驱逐
+                while (len(self._tts_cache) > self.TTS_CACHE_MAX
+                       or self._cache_bytes > self.TTS_CACHE_MAX_BYTES):
+                    oldest, oldest_usage = self._tts_cache.popitem(last=False)
+                    self._cache_bytes -= len(oldest_usage.audio_b64 or "")
+                    if not self._tts_cache:
+                        break
             return usage
         except httpx.TimeoutException:
             logger.warning("MiMo TTS 超时")
@@ -210,8 +232,8 @@ class VoiceService:
             "asr_options": {"language": self.asr_language},
         }
         try:
-            with httpx.Client(timeout=self.timeout) as client:
-                resp = client.post(url, headers=self._headers(), json=payload)
+            # v8.20: 复用长连接客户端
+            resp = self._get_http().post(url, headers=self._headers(), json=payload)
             if resp.status_code != 200:
                 logger.warning("MiMo ASR 失败 status=%s body=%s", resp.status_code, resp.text[:300])
                 return ASRResult(ok=False, message=f"MiMo ASR 请求失败（{resp.status_code}）")

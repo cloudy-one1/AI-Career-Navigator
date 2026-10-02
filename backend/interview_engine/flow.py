@@ -25,9 +25,11 @@ decide_next()。副作用（改状态、写库、发消息）仍然留在 Interv
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Optional
+
+from ..config import config as _app_config
 
 
 class FlowState(str, Enum):
@@ -87,7 +89,10 @@ class FlowSnapshot:
 
     # 追问维度
     follow_up_count: int = 0
-    follow_up_max: int = 3
+    # v8.20: 默认值与 config.FOLLOW_UP_MAX_COUNT 对齐（此前写死 3，与生产配置 2
+    # 不一致——生产路径经 snapshot() 显式覆盖无害，但直接构造 FlowSnapshot 的
+    # 调用方会拿到错误的默认追问上限）
+    follow_up_max: int = field(default_factory=lambda: _app_config.FOLLOW_UP_MAX_COUNT)
 
     # 本轮回答质量（非纯规则的部分由调用方先算好再传进来）
     has_follow_up_question: bool = False   # 诊断已产出追问文本

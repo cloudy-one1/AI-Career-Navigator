@@ -1,10 +1,64 @@
 # 变更日志（CHANGELOG）
 
-> 记录 **v8.0 → v8.19** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
+> 记录 **v8.0 → v8.20** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
 > 历史见 [docs/changelog-archive.md](docs/changelog-archive.md)。不变的架构约束与决策记录见
 > [CHARTER.md](CHARTER.md)，贡献流程见 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的“AI 求职陪跑”为历史名称，保留不删。**
+
+---
+
+## v8.20 审查整改第三批：内容护栏纠偏 / 诊断失败可感知 / 数据层埋雷拆除（2026-10-02）
+
+> v8.19 之后的存量项：security 护栏的两处误伤与一处完全失效、诊断链路失败
+> 伪装成 0 分、db 层 REPLACE 写入的三处埋雷。
+
+### 改动
+
+- **内容护栏（security.py）**：
+  - 硬拦截去误伤："模拟一个"（正常技术回答）从角色逃逸词表移除，补"冒充/伪装"；
+    "(结束|终止|退出)当前" 收窄为 "(结束|终止|退出)面试"——"结束了当前迭代"不再被拦。
+  - `sanitize_input` 接入 `full_check` 检测链——零宽字符此前可插进"忽略之前"
+    绕过全部注入正则（清洗函数写好后一直没接线）。只清洗检测输入，不改动原文。
+  - `check_repeated_answer` 中文修复：按空白分词对中文完全失效（整句只剩
+    1 个 token），改为 ASCII 按词 + CJK 按字符 bigram 的 Jaccard。
+- **诊断失败可感知（diagnosis_engine + session + interview_ws + 前端）**：
+  - 流式诊断对"0 chunk"与 `{"error": ...}` 两种链路失败显式发 `diagnosis_error`
+    并终止本题——此前一律走 fallback 结构伪装成全 0 分的"诊断完成"照常入库。
+  - `session.stream_answer`：只有拿到有效诊断结果才 `record_answer`——此前
+    失败也无条件推进题目指针，"诊断失败，请重新作答"实际不可达，重答会串题、
+    历史双记。
+  - 非流式 `run_diagnosis`：失败短路不再跑 Rewriter；AUTO_REWRITE 关闭时与
+    流式主路径行为对齐（此前恒跑）。
+  - WS 层把 `diagnosis_error` 转成 error 帧；前端在等待诊断期间收到错误帧即
+    解锁输入保留草稿（此前要干等 35 秒超时）。
+- **db 层埋雷拆除**：
+  - `save_session` / `save_resume` / `save_position`：INSERT OR REPLACE →
+    显式 UPSERT——REPLACE 是"删旧行再插入"，会话有子记录时直接外键炸、
+    无子记录时 status/created_at/source 被静默重置（当前调用方恰好不触发，属埋雷）。
+  - `_drop_auth_columns` 迁移失败回滚——此前吞异常后 init_db 末尾的 commit 会把
+    "旧表已删、新表未改名"的中间态落盘，journey_marks 有丢数据窗口。
+  - 补索引：`interview_qa(session_id)`、`question_bank(question_text, session_id)`。
+- **健壮性杂项**：
+  - `voice_service`：TTS 缓存加 64MB 字节上限（此前只限条数，长音频可常驻上百
+    MB）；httpx 连接复用（惰性共享 Client）；空文本 `used=False`（"未合成"
+    不是"合成成功"）。
+  - `profile_service.get_profile` 缓存命中返回深拷贝（同引用可被调用方原地污染）。
+  - `knowledge_store` 读路径只读不建——空命名空间不再被永久登记成"幽灵命名空间"。
+  - `company_profiles` mtime 自动热重载接线（reload 此前是无人调用的死代码，
+    改 YAML 必须重启）。
+  - `flow.FlowSnapshot.follow_up_max` 默认值对齐 `config.FOLLOW_UP_MAX_COUNT`（3→2）。
+  - `routers/system` warmup：复用 state 单例 + 单次 JD 上限 20（此前自建
+    LLMClient 且数量无上限）。
+  - `resume_retriever._score_chunks`：query 侧 bigram 分词循环外预计算
+    （120k 字简历此前每轮重复分词 60+ 次）。
+  - `marketData.js`：对比条超 5 个岗位时同步 DOM 勾选态；清理 toggleInterest/
+    toggleMarketInterest 死代码（交互已由「加入岗位库」承载）。
+
+### 验证（2026-10-02，本机）
+
+- security / voice / db / flow / company_profiles / knowledge / retriever 专项全过；
+  全量 pytest 通过；vitest 83 例、eslint、vite build 通过。
 
 ---
 
