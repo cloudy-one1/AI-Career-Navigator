@@ -13,6 +13,7 @@
 import json
 import logging
 import re
+import uuid
 from typing import Optional
 
 import aiosqlite
@@ -137,6 +138,12 @@ def _map_data_row(row_dict: dict, keyword_filter: str | None) -> dict:
 
     description = str(row_dict.get("content", "") or "")[:4000]
     job_url = str(row_dict.get("job_url", "") or "")
+    company = str(row_dict.get("company", ""))
+
+    # v8.18: source_id 兜底——此前无 URL 记录共享 source_id=""，
+    # UNIQUE(source, source_id) 冲突后 upsert 互相覆盖，N 条只落库 1 条；
+    # 与 crawler/adapters.to_standard_job 的 uuid5 兜底同口径
+    source_id = job_url or f"import:{uuid.uuid5(uuid.NAMESPACE_URL, f'{title}|{company}')}"
 
     salary_min_val = row_dict.get("salary_min")
     salary_max_val = row_dict.get("salary_max")
@@ -147,10 +154,10 @@ def _map_data_row(row_dict: dict, keyword_filter: str | None) -> dict:
 
     return {
         "source": "51job",
-        "source_id": job_url,
+        "source_id": source_id,
         "keyword": final_keyword or title,
         "title": title,
-        "company": str(row_dict.get("company", "")),
+        "company": company,
         "city": str(row_dict.get("address", "")),
         "salary_raw": salary_raw,
         "salary_min": salary_min_val,
@@ -179,12 +186,17 @@ def _map_jobs_row(row_dict: dict, keyword_filter: str | None) -> dict:
 
     description = str(row_dict.get("description", "") or "")[:4000]
 
+    job_url = str(row_dict.get("url", "") or "")
+    company = str(row_dict.get("company", ""))
+    # v8.18: 与 _map_data_row 同口径——空 URL 不再共享 source_id="" 互相覆盖
+    source_id = job_url or f"import:{uuid.uuid5(uuid.NAMESPACE_URL, f'{title}|{company}')}"
+
     return {
         "source": "51job",
-        "source_id": str(row_dict.get("url", "")),
+        "source_id": source_id,
         "keyword": keyword_filter or str(row_dict.get("category", "")),
         "title": title,
-        "company": str(row_dict.get("company", "")),
+        "company": company,
         "city": str(row_dict.get("city", "")),
         "salary_raw": str(row_dict.get("salary", "") or ""),
         "salary_min": row_dict.get("salary_min"),

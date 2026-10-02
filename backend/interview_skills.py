@@ -140,6 +140,9 @@ class ConceptTeachSkill(SkillBase):
     priority = 70
     MAX_ROUNDS = 4
     _DONE_MARKERS = ("理解了", "明白了", "懂了", "清楚了", "会了")
+    # v8.18: 否定短语优先判定——"还是不会了"是"会了"的超串、"没懂"与"懂了"同族，
+    # 不挡住会把放弃误判成掌握、提前结束讲解
+    _NOT_DONE_MARKERS = ("不会", "没懂", "没会", "不明白", "不理解", "不清楚", "不懂")
 
     def can_activate(self, ctx: SkillContext, trigger: str) -> bool:
         text = (trigger or "").lower()
@@ -161,7 +164,10 @@ class ConceptTeachSkill(SkillBase):
 - 严禁展开成一篇技术文档——这是面试现场，不是课堂。"""
 
     def on_turn_end(self, ctx: SkillContext, candidate_reply: str) -> None:
-        if any(m in (candidate_reply or "") for m in self._DONE_MARKERS):
+        reply = candidate_reply or ""
+        # v8.18: 否定短语命中时不标记完成（"还是不会了"不得算"会了"）
+        if (not any(m in reply for m in self._NOT_DONE_MARKERS)
+                and any(m in reply for m in self._DONE_MARKERS)):
             ctx.metadata["teach_done"] = True
         ctx.step += 1
 

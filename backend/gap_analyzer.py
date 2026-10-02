@@ -22,6 +22,7 @@
 import asyncio
 import json
 import logging
+import re
 from typing import Optional
 
 from .llm_client import LLMClient
@@ -210,6 +211,20 @@ def _build_market_reference(keyword: str, stats: dict, resume_text: str) -> dict
     }
 
 
+def _keyword_hit(kw: str, jd: str) -> bool:
+    """关键词命中判定（v8.18）。
+
+    纯 ASCII 关键词用词边界匹配：此前 "ai" in jd.lower() 会命中 email/detail/
+    available 等常见英文单词——中英混排 JD 高概率取错关键词，把错误岗位的市场
+    均薪/学历分布当"基准参照"注入给用户。C++ 这类符号结尾词允许后随数字
+    （C++11 仍算命中）；CJK 关键词无词边界概念，保持子串匹配。
+    """
+    if kw.isascii():
+        return re.search(rf"(?<![A-Za-z0-9]){re.escape(kw)}(?![A-Za-z])", jd,
+                         re.IGNORECASE) is not None
+    return kw in jd
+
+
 def _extract_keyword_from_jd(jd: str) -> str:
     """从 JD 文本中提取最可能的搜索关键词（简单启发式）"""
     # 常见岗位关键词
@@ -219,9 +234,8 @@ def _extract_keyword_from_jd(jd: str) -> str:
         "Golang", "C++", "React", "Vue", "Node.js", "Spring", "Docker", "Kubernetes",
         "大数据", "Hadoop", "Spark", "Flutter", "iOS", "Android", "安全",
     ]
-    jd_lower = jd.lower()
     for kw in keywords:
-        if kw.lower() in jd_lower:
+        if _keyword_hit(kw, jd):
             return kw
     # fallback: 取标题第一行或前10个非停用词
     return ""

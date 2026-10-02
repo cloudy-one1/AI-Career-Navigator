@@ -46,7 +46,8 @@ ANCHOR_META = {
         "keywords": (
             "用了", "基于", "采用", "选型", "引入", "接入", "替换为", "迁移到",
             "框架", "组件", "中间件", "技术栈", "工具", "库", "sdk", "api",
-            "redis", "kafka", "mysql", "es", "mq", "rpc", "orm",
+            # v8.18: "es" → "elasticsearch"——两字母缩写会命中 cases/processes 等
+            "redis", "kafka", "mysql", "elasticsearch", "mq", "rpc", "orm",
         ),
     },
     METRIC: {

@@ -180,10 +180,11 @@ def match_profile(jd_text: str | None) -> dict | None:
     """
     if not jd_text or not _PROFILES:
         return None
-    jd = str(jd_text)
+    jd = str(jd_text).lower()
     best: tuple[int, dict] | None = None
     for p in _PROFILES.values():
-        hits = sum(1 for kw in p["match_keywords"] if kw and kw in jd)
+        # v8.18: 大小写归一——此前 "alibaba"/"BYTEDANCE"/小写 "ieg" 会漏匹配
+        hits = sum(1 for kw in p["match_keywords"] if kw and kw.lower() in jd)
         if hits <= 0:
             continue
         if best is None or hits > best[0]:

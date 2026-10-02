@@ -34,9 +34,11 @@ def parse_salary(raw):
         return 0.0, 0.0
 
     if is_day:
-        vmin = round(float(matches[0][0]) * 21.75 / 1000, 2)
-        vmax = round(float(matches[-1][0]) * 21.75 / 1000, 2)
-        return vmin, vmax
+        # v8.18: 日薪分支补单位换算——此前完全忽略万/千，"2万/天"按 2 元/天解析
+        def _day_k(num, unit):
+            v = float(num) * (10 if unit == '万' else 1)  # 千/无单位均按千元日薪
+            return round(v * 21.75 / 1000, 2)
+        return _day_k(*matches[0]), _day_k(*matches[-1])
 
     # 缺单位的数字,向后继承最近一个数字的单位("1.5-2万" -> 1.5也按"万"算)
     filled = []
@@ -58,5 +60,15 @@ def parse_salary(raw):
 
     if is_year:
         vmin, vmax = round(vmin / 12, 2), round(vmax / 12, 2)
+
+    # v8.18: 单位继承只向左看——"2万-5K"这类前有单位后缺单位的串会产出倒挂
+    # 区间(如 20-5)。cleaner.parse_salary 有交换，这里补齐两条入库路径的口径。
+    if vmin > vmax:
+        vmin, vmax = vmax, vmin
+
+    # v8.18: 合理性边界——"100-200万/年"会产出 833K/月的月薪直接拉爆均薪图。
+    # 月薪上限 200K（对应年薪 240 万）远超真实岗位分布，超界按面议哨兵丢弃。
+    if vmin < 0 or vmax > 200:
+        return 0.0, 0.0
 
     return round(vmin, 2), round(vmax, 2)

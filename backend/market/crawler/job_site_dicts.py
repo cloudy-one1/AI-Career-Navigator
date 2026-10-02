@@ -606,7 +606,7 @@ CITY_PINYIN = {
     "景德镇": "jingdezhen",
     "曲靖": "qujing",
     "朔州": "shuozhou",
-    "朝阳": "zhaoyang",
+    "朝阳": "chaoyang",  # v8.18 修正拼音（原 zhaoyang 产出 404 URL）
     "本溪": "benxi",
     "来宾": "laibin",
     "杨凌": "yangling",
@@ -665,7 +665,7 @@ CITY_PINYIN = {
     "湛江": "zhanjiang",
     "滁州": "chuzhou",
     "滨州": "binzhou",
-    "漯河": "tahe",
+    "漯河": "luohe",  # v8.18 修正拼音（原 tahe 产出 404 URL）
     "漳州": "zhangzhou",
     "潍坊": "weifang",
     "潜江": "qianjiang",
@@ -770,7 +770,7 @@ CITY_PINYIN = {
     "镇江": "zhenjiang",
     "长春": "changchun",
     "长沙": "changsha",
-    "长治": "zhangzhi",
+    "长治": "changzhi",  # v8.18 修正拼音（原 zhangzhi 产出 404 URL）
     "阜新": "fuxin",
     "阜阳": "fuyang",
     "防城港": "fangchenggang",

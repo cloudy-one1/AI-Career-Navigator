@@ -7,8 +7,10 @@
 - 任务状态存内存 dict（threading.Lock 保护），前端轮询
   ``GET /api/market/crawl/status/{task_id}`` 获取进度。
 - 单实例互斥：同一时刻只允许一个 running 任务（避免并发访问 51job 被封）。
-- 终态任务（done/failed）保留 TTL=10 分钟，轮询时惰性清理，防止内存膨胀。
+- 终态任务（done/failed/cancelled）保留 TTL=10 分钟，轮询时惰性清理，防止内存膨胀。
 - 采集完成自动回灌 market.db（store.upsert_jobs，按 (source, source_id) 去重）。
+- v8.18: 支持协作式取消（用户取消 / 硬超时）——此前一次僵死就会让唯一采集槽
+  永久占用，只能重启进程恢复。
 """
 import asyncio
 import logging
@@ -24,6 +26,7 @@ from .. import store
 logger = logging.getLogger("market.crawler.tasks")
 
 _TASK_TTL = 600.0  # 终态任务保留秒数
+_HARD_DEADLINE = 720.0  # v8.18: 单任务硬超时（秒）——5城×5页的正常耗时远小于该值
 _CITY_LIMIT = 5    # 单次采集城市上限（与 job-crawler 一致）
 _PAGES_RANGE = (1, 5)
 
@@ -36,12 +39,14 @@ class CrawlTask:
     cities: list
     pages: int
     sort_type: str
-    status: str = "running"                      # running | done | failed
+    status: str = "running"                      # running | done | failed | cancelled
     message: str = "排队中..."
     collected: int = 0                            # 累计采集条数
     pages_collected: dict = field(default_factory=dict)  # {city: 实际翻取页数}
     error: str = ""
     created_at: float = field(default_factory=time.time)
+    finished_at: Optional[float] = None           # v8.18: 终态时刻（TTL 依据）
+    cancel_requested: bool = False                # v8.18: 取消标记（检查点响应）
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -99,13 +104,44 @@ def start_crawl(keyword: str, cities: list, pages: int, sort_type: str = "0") ->
     return task, ""
 
 
-def get_status(task_id: str) -> Optional[CrawlTask]:
-    """轮询任务状态；终态任务超过 TTL 后惰性清理并返回 None。"""
+def cancel(task_id: str) -> Optional[CrawlTask]:
+    """v8.18: 请求取消采集任务。
+
+    任务在下一个页间检查点退出（最长延迟 = 单页硬超时 60s + 重试余量）。
+    取消不中断当前页——同步 Playwright 对象跨线程调用不安全，只能协作式中止。
+    """
     with _lock:
         task = _tasks.get(task_id)
         if task is None:
             return None
-        if task.status != "running" and time.time() - task.created_at > _TASK_TTL:
+        if task.status == "running":
+            task.cancel_requested = True
+            task.message = "正在取消…（等待当前页结束）"
+        return task
+
+
+def get_status(task_id: str) -> Optional[CrawlTask]:
+    """轮询任务状态；终态任务超过 TTL 后惰性清理并返回 None。
+
+    v8.18 两处修正：
+    - TTL 以 finished_at 计——此前按 created_at，运行超 10 分钟的任务完成后
+      第一次轮询就被弹出，前端永远看不到完成结果与入库数；
+    - running 任务超过硬超时+缓冲仍未结束 → 强制置为 failed 并释放采集槽
+      （采集线程可能僵死在 page.evaluate，此前唯一的恢复手段是重启进程）。
+    """
+    with _lock:
+        task = _tasks.get(task_id)
+        if task is None:
+            return None
+        if task.status == "running":
+            if time.time() - task.created_at > _HARD_DEADLINE + 60.0:
+                task.status = "failed"
+                task.error = f"任务超过硬超时（{_HARD_DEADLINE:.0f}秒）仍未结束，已强制置为失败"
+                task.message = "采集失败（超时）"
+                task.finished_at = time.time()
+                logger.error("采集任务硬超时 id=%s keyword=%s", task_id, task.keyword)
+            return task
+        if task.finished_at is not None and time.time() - task.finished_at > _TASK_TTL:
             _tasks.pop(task_id, None)
             return None
         return task
@@ -131,6 +167,17 @@ def _on_progress(task_id: str, city: str, page: int, added: int) -> None:
         task.message = f"[{city}] 第{page}页 +{added}条（累计 {task.collected}）"
 
 
+def _should_cancel(task_id: str) -> bool:
+    """取消判定（采集线程在页间检查点轮询）：用户请求取消 或 硬超时。"""
+    with _lock:
+        task = _tasks.get(task_id)
+        if task is None:
+            return False
+        if task.cancel_requested:
+            return True
+        return time.time() - task.created_at > _HARD_DEADLINE
+
+
 def _run_crawl(task_id: str) -> None:
     """采集线程入口：scrape_jobs → adapters → store.upsert_jobs 回灌 market.db。"""
     task = _tasks.get(task_id)
@@ -139,7 +186,7 @@ def _run_crawl(task_id: str) -> None:
     try:
         # 延迟导入：playwright 未安装时，应用本身与状态轮询仍可用，
         # 只有真正启动采集时才在任务内转为 failed 并给出安装指引
-        from .python_job_scraper import scrape_jobs  # noqa: PLC0415
+        from .python_job_scraper import scrape_jobs, CrawlCancelled  # noqa: PLC0415
 
         _update(task_id, status="running", message="正在启动浏览器…")
         jobs, pages_collected = scrape_jobs(
@@ -148,6 +195,7 @@ def _run_crawl(task_id: str) -> None:
             pages_per_city=task.pages,
             sort_type=task.sort_type,
             progress_callback=lambda c, p, n: _on_progress(task_id, c, p, n),
+            should_cancel=lambda: _should_cancel(task_id),
         )
         _update(task_id, message="采集完成，正在写入市场数据库…")
 
@@ -168,12 +216,26 @@ def _run_crawl(task_id: str) -> None:
             status="done",
             message=f"完成：共采集 {len(jobs)} 条，入库 {inserted} 条",
             pages_collected=pages_collected,
+            finished_at=time.time(),
         )
         logger.info(
             "采集任务完成 id=%s keyword=%s 采集=%d 入库=%d",
             task_id, task.keyword, len(jobs), inserted,
         )
+    except CrawlCancelled:
+        # v8.18: 用户取消 / 硬超时——区分终态，但都释放采集槽
+        user_cancelled = task.cancel_requested
+        _update(
+            task_id,
+            status="cancelled" if user_cancelled else "failed",
+            error="任务被取消" if user_cancelled else f"超过硬超时（{_HARD_DEADLINE:.0f}秒）",
+            message="已取消（已采集部分未入库）" if user_cancelled else "采集失败（超时）",
+            finished_at=time.time(),
+        )
+        logger.info("采集任务中断 id=%s keyword=%s 原因=%s",
+                    task_id, task.keyword, "用户取消" if user_cancelled else "硬超时")
     except Exception as e:  # noqa: BLE001 - 采集链路任何异常都转为 failed 状态
         error_msg = f"{type(e).__name__}: {e}"
-        _update(task_id, status="failed", error=error_msg, message="采集失败")
+        _update(task_id, status="failed", error=error_msg, message="采集失败",
+                finished_at=time.time())
         logger.exception("采集任务失败 id=%s keyword=%s", task_id, task.keyword)

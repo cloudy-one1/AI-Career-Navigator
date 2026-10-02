@@ -15,6 +15,8 @@ import {
 const ROUND_TYPES = ['全部阶段', '破冰环节', '技术广度', '技术深度', '项目拷问', '行为面试', '反问收尾'];
 
 let currentFilters = { round_type: '', search: '', favorited: false, source: '' };
+let _loadSeq = 0;        // v8.18: 请求序号——搜索/筛选连点时旧响应后到不得覆盖新结果
+let _searchTimer = null; // v8.18: 搜索输入防抖（此前每键一次全量请求）
 
 /** 初始化题库面板 */
 export function initQuestionBank() {
@@ -44,7 +46,12 @@ export function initQuestionBank() {
         ...ROUND_TYPES.map(rt => el('option', { value: rt, textContent: rt })),
       ),
       el('input', { id: 'qb-filter-search', className: 'form-input', style: 'max-width:250px;', placeholder: '搜索题目或意图...',
-          onInput: () => { currentFilters.search = $('#qb-filter-search').value; loadQuestions(); } }),
+          onInput: () => {
+            currentFilters.search = $('#qb-filter-search').value;
+            // v8.18: 防抖 250ms——此前每个按键触发一次全量请求
+            clearTimeout(_searchTimer);
+            _searchTimer = setTimeout(loadQuestions, 250);
+          } }),
       el('button', {
         id: 'qb-filter-fav', className: 'btn btn-sm',
         style: `background:${currentFilters.favorited ? 'var(--amber-50)' : 'var(--bg-secondary)'};border:1px solid var(--border);`,
@@ -66,6 +73,7 @@ export function initQuestionBank() {
 // ===== 加载列表 =====
 
 async function loadQuestions() {
+  const seq = ++_loadSeq;
   const container = $('#qb-list');
   container.innerHTML = el('div', { className: 'empty-state' },
     el('div', { className: 'empty-text', textContent: '加载中...' }),
@@ -85,6 +93,8 @@ async function loadQuestions() {
       favorited: currentFilters.favorited ? '1' : '',
       source: currentFilters.source,
     });
+    // v8.18: 已有更新的请求在途/完成——丢弃本次旧响应，防竞态覆盖
+    if (seq !== _loadSeq) return;
 
     const questions = data.questions || [];
     if (questions.length === 0) {
@@ -141,7 +151,10 @@ async function loadQuestions() {
 // ===== 构建题目行（或编辑行）=====
 
 function buildQuestionRow(q) {
-  const diffStars = '⭐'.repeat(q.difficulty || 1) + '☆'.repeat(5 - (q.difficulty || 1));
+  // v8.18: 夹取 1-5——difficulty 为脏数据（6+）时 '☆'.repeat(-n) 会抛 RangeError，
+  // 一条坏题此前能拖垮整个列表渲染
+  const diff = Math.min(5, Math.max(1, Number(q.difficulty) || 1));
+  const diffStars = '⭐'.repeat(diff) + '☆'.repeat(5 - diff);
 
   return el('div', { className: `qb-row ${q.is_favorited ? 'qb-fav' : ''}` },
     el('div', { className: 'qb-cell qb-cell-fav' },
@@ -168,8 +181,13 @@ function buildQuestionRow(q) {
       el('button', { className: 'btn btn-sm btn-danger', textContent: '🗑️', title: '删除',
           onClick: async () => {
             if (!confirm('确定删除这道题目吗？')) return;
-            await deleteQuestion(q.id);
-            toast('已删除', 'info');
+            try {
+              await deleteQuestion(q.id);
+              toast('已删除', 'info');
+            } catch (err) {
+              // v8.18: 此前无 try/catch——失败静默、无任何提示
+              toast('删除失败: ' + err.message, 'error');
+            }
             loadQuestions();
           } }),
     ),
@@ -211,9 +229,12 @@ function openQbFormModal({ title, initial = {}, submitLabel, onSubmit }) {
 
   const questionInput = el('textarea', { className: 'form-input', style: 'min-height:80px;',
     placeholder: '输入题目内容...', textContent: initial.question_text || '' });
+  // v8.18: 补"通用（未设置）"空值选项——此前 round_type 为空的题目打开编辑时
+  // 下拉无匹配项、浏览器默认落在第一项"破冰环节"，不改直接保存即被静默改写
   const roundSelect = el('select', { className: 'form-input', style: 'flex:1;' },
+    el('option', { value: '', textContent: '通用（未设置）', selected: !initial.round_type }),
     ...ROUND_TYPES.filter(r => r !== '全部阶段').map(rt =>
-      el('option', { value: rt, selected: rt === (initial.round_type || ''), textContent: rt })));
+      el('option', { value: rt, selected: rt === initial.round_type, textContent: rt })));
   const intentInput = el('input', { className: 'form-input', style: 'flex:2;', placeholder: '考察意图（可选）',
     value: initial.intent || '' });
   const diffInput = el('input', { type: 'range', min: '1', max: '5', value: String(diffVal), style: 'flex:1;',

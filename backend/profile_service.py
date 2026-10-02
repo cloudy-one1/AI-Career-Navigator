@@ -40,6 +40,7 @@ v8.1 术语纪律：对外的四段状态名为 当前简历 / 目标岗位 / �
 import asyncio
 import json
 import logging
+import re
 import time
 from datetime import datetime
 
@@ -416,15 +417,40 @@ def compute_skill_gap(resume_skills: list[str], market_skills: list[str],
     if not resume or not market:
         return {"matched": [], "missing": [], "market_total": len(market)}
 
-    lower_resume = [s.lower() for s in resume]
+    def _norm(s: str) -> str:
+        # v8.18: 版本后缀归一（python3 ≈ python、html5 ≈ html）——市场侧技能
+        # 口径常带版本号，此前靠双向子串兼容它，现在归一后走更严的词边界
+        return re.sub(r"\d+$", "", s.lower())
+
+    lower_resume = [_norm(r) for r in resume]
+    resume_exact = {r for r in lower_resume if r}
+    joined = " ".join(r for r in lower_resume if r)
+
+    # v8.18: 已知同族词的方向性别名——简历写 golang 应视为会 go（反之亦然），
+    # js/javascript 同理。其余 ASCII 技能名走词边界，杜绝 java 误命中 javascript。
+    _ALIASES = {
+        "go": ("golang",), "golang": ("go",),
+        "js": ("javascript",), "javascript": ("js",),
+    }
+
+    def _hit(skill_lower: str) -> bool:
+        ls = _norm(skill_lower)
+        if ls in resume_exact:
+            return True
+        if ls in _ALIASES and any(a in resume_exact for a in _ALIASES[ls]):
+            return True
+        if ls.isascii():
+            # 词边界匹配：java 不得命中 javascript（前缀陷阱，双向子串会误判
+            # "会 Java"为"已具备 JavaScript"，技能缺口失真并沿规划链路传导）
+            return re.search(rf"(?<![a-z0-9+.#]){re.escape(ls)}(?![a-z0-9])",
+                             joined) is not None
+        # CJK/混合技能名保持双向子串（"Redis 缓存" vs "Redis"）
+        return any((r in ls) or (ls in r) for r in lower_resume if len(r) >= 2)
+
     matched: list[str] = []
     missing: list[str] = []
     for skill in market:
-        ls = skill.lower()
-        hit = ls in lower_resume or any(
-            (r in ls) or (ls in r) for r in lower_resume if len(r) >= 2
-        )
-        (matched if hit else missing).append(skill)
+        (matched if _hit(skill) else missing).append(skill)
 
     return {
         "matched": matched[:limit],

@@ -581,6 +581,32 @@ function enterSessionView() {
   if (area) area.classList.remove('hidden');
 }
 
+// v8.18: 供 app.js 判断「会话进行中」——真则切回面试 Tab 不重建面板。
+// 此前每次切到面试 Tab 都无条件 initInterview()（innerHTML='' + 状态复位），
+// 会话进行中切走再切回（包括点面试状态灯跳回）整场 UI 即被销毁。
+export function isInterviewAlive() {
+  return session.phase === PHASE.ACTIVE || session.phase === PHASE.STARTING;
+}
+
+/** v8.18: 致命断连（会话失效/重连失败）的统一恢复——回到 Setup 引导页。
+ *  此前重连失败只解锁输入并恢复隐藏的 start-btn，不恢复 setup-view 可见性，
+ *  用户停在已死的会话视图，唯一出路是刷新页面。 */
+function abortToSetup(message) {
+  clearTimeout(_answerTimeout);
+  stopSpeaking();
+  if (voiceStopFn) { voiceStopFn(); voiceStopFn = null; }
+  voiceState = 'idle';
+  cancelAutoSubmit();
+  setPhase(PHASE.SETUP);
+  $('#setup-view')?.classList.remove('hidden');
+  const area = $('#interview-area');
+  if (area) { area.classList.add('hidden'); area.innerHTML = ''; }
+  resetLiveRadar();
+  const btn = $('#start-btn');
+  if (btn) { btn.style.display = 'block'; btn.disabled = false; btn.textContent = '🚀 开始面试'; }
+  if (message) toast(message, 'error');
+}
+
 function selectStyle(style) {
   currentStyle = style;
   $$('.style-option').forEach(el => el.classList.remove('selected'));
@@ -711,12 +737,13 @@ function connectWS(sessionId) {
     },
 
     onReconnectFailed: () => {
-      clearTimeout(_answerTimeout);
-      toast('连接失败，请刷新页面后重试', 'error');
-      // 恢复输入（v6.3: 统一入口；语义：重连失败 = 解锁 + 保留草稿文字）
-      const sbBtn = $('#submit-answer');
-      if (sbBtn) sbBtn.textContent = '提交回答';
-      setInputLocked(false);
+      // v8.18: 统一恢复到 Setup 引导页（此前只解锁输入，用户停在死视图里）
+      abortToSetup('连接失败，已回到引导页；本场已答题目已尽力保存，可在历史记录查看');
+    },
+
+    // v8.18: 会话失效（服务端重启/会话过期/另一连接接管）——停止重连并恢复界面
+    onSessionExpired: () => {
+      abortToSetup('会话已失效，已回到引导页；已答题目已尽力保存，可在历史记录查看');
     },
   });
 }
@@ -1544,12 +1571,20 @@ function submitAnswer() {
   input.disabled = true;
   // 后端读取 msg.data.text；v6.1: 上报输入来源（voice → ASR 容错评分），随后重置
   // v6.2: 附加本题思考时长（秒），进入报告 qaBreakdown
-  ws.send('answer', {
+  const sent = ws.send('answer', {
     text: answer,
     is_follow_up: false,
     source: lastInputSource,
     thinking_seconds: elapsedSeconds(questionShownAt),
   });
+  if (!sent) {
+    // v8.18: 连接未就绪（断线重连窗口）——保留草稿并解锁，让用户稍候重试，
+    // 而不是静默丢消息等 35 秒超时
+    btn.textContent = '提交回答';
+    setInputLocked(false, { focus: true });
+    toast('连接未就绪，回答未发出，请重试', 'error');
+    return;
+  }
   lastInputSource = 'text';
   questionShownAt = 0;
 
@@ -1581,12 +1616,19 @@ function submitFollowUp() {
   const buttons = $('#follow-up-block')?.querySelectorAll('button');
   buttons?.forEach(b => b.disabled = true);
 
-  ws.send('answer', {
+  const sent = ws.send('answer', {
     text: answer,
     is_follow_up: true,
     source: lastInputSource,
     thinking_seconds: elapsedSeconds(followUpShownAt),
   });
+  if (!sent) {
+    // v8.18: 连接未就绪——恢复输入与按钮，草稿保留
+    input.disabled = false;
+    buttons?.forEach(b => b.disabled = false);
+    toast('连接未就绪，回答未发出，请重试', 'error');
+    return;
+  }
   lastInputSource = 'text';  // v6.1: 上报后重置输入来源
   followUpShownAt = 0;
 

@@ -205,6 +205,11 @@ export async function getCrawlStatus(taskId) {
   return request('GET', `/api/market/crawl/status/${taskId}`);
 }
 
+/** v8.18: 取消采集任务（协作式中止，最长延迟约 60s = 单页硬超时） */
+export async function cancelMarketCrawl(taskId) {
+  return request('POST', `/api/market/crawl/${taskId}/cancel`);
+}
+
 /** 省份→城市级联数据 */
 export async function getCityMap() {
   return request('GET', '/api/market/city-map');
@@ -331,16 +336,27 @@ export function createInterviewWS(sessionId, handlers) {
   let _intentionalClose = false;
   let _sessionExpired = false;  // 会话已失效标记，防止收不到 error 消息时仍重连
   let _reconnectAttempts = 0;
+  let _reconnectTimer = null;   // v8.18: 挂起的重连定时器——close() 时必须清掉，否则成幽灵连接
   const _maxReconnectAttempts = 5;
   const _baseDelay = 1000; // 1s
   const _maxDelay = 30000;  // 30s
+  // v8.18: 不可恢复错误（收到即停止重连）——会话不存在 / 已被另一连接接管
+  const _fatalErrorMarkers = ['会话不存在', '另一连接'];
 
   function _connect() {
+    // v8.18: 幽灵连接守卫——close()/会话失效之后到期的重连定时器不再建连
+    if (_intentionalClose || _sessionExpired) return;
     // 连接不再带 token query 参数（此前是因 WS API 不支持自定义请求头
     // 而做的兜底，随认证一并下线）。
     ws = new WebSocket(baseUrl);
 
     ws.onopen = () => {
+      // v8.18: close() 之后才建立的迟到连接——静默关掉，不进业务层
+      if (_intentionalClose || _sessionExpired) {
+        _intentionalClose = true;
+        try { ws.close(); } catch (_) { /* noop */ }
+        return;
+      }
       console.log('[WS] 已连接');
       if (_sessionExpired) {
         // 会话已失效，不再重置计数，直接关闭
@@ -356,12 +372,14 @@ export function createInterviewWS(sessionId, handlers) {
     ws.onmessage = (e) => {
       try {
         const msg = JSON.parse(e.data);
-        // 会话不存在属于不可恢复错误（服务端重启导致内存会话丢失/会话过期），
-        // 重试必然再次被拒，立即置为失效并停止重连，交由 onClose 恢复"开始面试"入口
-        if (msg.type === 'error' && msg.data && msg.data.message === '会话不存在') {
+        // 会话不存在/已被接管属于不可恢复错误（服务端重启导致内存会话丢失/
+        // 会话过期/单会话单连接守卫），重试必然再次被拒，立即置为失效并停止
+        // 重连，交由 onSessionExpired 恢复界面
+        if (msg.type === 'error' && msg.data
+            && _fatalErrorMarkers.some(m => String(msg.data.message || '').includes(m))) {
           _sessionExpired = true;
           _intentionalClose = true;
-          console.error('[WS] 会话已失效，停止重连');
+          console.error('[WS] 会话不可恢复，停止重连');
           ws.close();
         }
         if (handlers.onMessage) handlers.onMessage(msg.type, msg.data);
@@ -372,22 +390,28 @@ export function createInterviewWS(sessionId, handlers) {
 
     ws.onclose = (e) => {
       console.log('[WS] 已断开', e.code, e.reason);
+      _reconnectTimer = null;
       // 1000 = 服务端正常关闭（面试完成后 handler 返回），不是断线，不重连
       if (e.code === 1000 && !_intentionalClose) {
         console.log('[WS] 面试连接正常关闭');
         if (handlers.onClose) handlers.onClose();
         return;
       }
-      // 服务端用 4000/session_not_found 标识会话不存在，兜底停止重连
-      if (!_sessionExpired && e.code === 4000 && e.reason === 'session_not_found') {
+      // 服务端用 4000 标识不可恢复：session_not_found（会话不存在）/
+      // session_already_active（同会话已在另一连接进行，v8.18 单连接守卫）
+      if (!_sessionExpired && e.code === 4000
+          && (e.reason === 'session_not_found' || e.reason === 'session_already_active')) {
         _sessionExpired = true;
         _intentionalClose = true;
-        console.error('[WS] 会话已失效，停止重连');
+        console.error('[WS] 会话不可恢复，停止重连');
       }
       // v8.3: 原先还有 4001（未授权）分支——那是 WS 握手鉴权的产物，
       // 认证下线后服务端不再发此码，分支连同 handlers.onUnauthorized 一并删除。
-      if (_sessionExpired || _intentionalClose) {
-        if (handlers.onClose) handlers.onClose();
+      if (_intentionalClose) {
+        // v8.18: 拆分两种终局——用户主动 close（面试完成等）走 onClose；
+        // 会话失效走 onSessionExpired，由调用方决定如何恢复 UI
+        if (_sessionExpired && handlers.onSessionExpired) handlers.onSessionExpired();
+        else if (handlers.onClose) handlers.onClose();
         return;
       }
       if (_reconnectAttempts < _maxReconnectAttempts) {
@@ -395,7 +419,7 @@ export function createInterviewWS(sessionId, handlers) {
         _reconnectAttempts++;
         console.log(`[WS] 将在 ${delay}ms 后重连 (第 ${_reconnectAttempts}/${_maxReconnectAttempts} 次)`);
         if (handlers.onReconnect) handlers.onReconnect(_reconnectAttempts, delay);
-        setTimeout(_connect, delay);
+        _reconnectTimer = setTimeout(_connect, delay);
       } else {
         console.error('[WS] 重连失败，已达最大重试次数');
         if (handlers.onReconnectFailed) handlers.onReconnectFailed();
@@ -416,11 +440,21 @@ export function createInterviewWS(sessionId, handlers) {
     send(type, data = {}) {
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type, data }));
+        return true;
       }
+      // v8.18: 此前静默丢弃——断线重连窗口内用户提交的回答直接蒸发，
+      // 只能等 35 秒超时。现在如实返回 false，由调用方提示并保留草稿。
+      console.warn('[WS] 连接未就绪，消息未发送:', type);
+      return false;
     },
     close() {
       _intentionalClose = true;
-      ws.close();
+      // v8.18: 挂起的重连定时器不清掉的话，到期仍会 new WebSocket——
+      // 旧 handlers 与模块级状态共享，旧会话消息会打进新一场面试
+      if (_reconnectTimer) { clearTimeout(_reconnectTimer); _reconnectTimer = null; }
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        ws.close();
+      }
     },
     get readyState() { return ws ? ws.readyState : WebSocket.CLOSED; },
   };

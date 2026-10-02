@@ -96,6 +96,7 @@
 | POST | `/api/market/insight` | 对指定图表 section 生成 AI 解读（服务端 TTL 缓存 5 分钟；无 Key / 异常返回 `{"error": ...}` 而非 5xx） | 20/minute |
 | POST | `/api/market/crawl` | 启动实时采集（后台任务，返回 `task_id`；`cities` 不传 = 全国） | 3/minute |
 | GET | `/api/market/crawl/status/{task_id}` | 轮询采集进度 | 全局 |
+| POST | `/api/market/crawl/{task_id}/cancel` | 取消采集任务（协作式中止，最长延迟约 60s = 单页硬超时；终态 409；v8.18） | 全局 |
 | GET | `/api/market/city-map` | 省份 → 城市级联数据 | 全局 |
 | POST | `/api/market/jobs/{job_id}/interest` | 切换「感兴趣」收藏（落库，重新采集不清空） | 全局 |
 | POST | `/api/market/jobs/{job_id}/to-position` | 市场岗位导入岗位库（幂等，返回 `{position, created}`） | 全局 |

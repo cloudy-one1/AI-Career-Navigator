@@ -11,7 +11,7 @@ import { $, $$ } from './utils.js';
 import {
   renderSidebar, renderBottomNav, renderJourneyProgress, updateJourneyActive,
 } from './navConfig.js';
-import { initInterview } from './interview.js';
+import { initInterview, isInterviewAlive } from './interview.js';
 import { initReport } from './report.js';
 import { initHistory } from './history.js';
 import { initQuestionBank } from './questionBank.js';
@@ -70,7 +70,12 @@ function applyTab(tabName) {
       }
     });
 
-    tabRegistry[tabName]?.();
+    // v8.18: 面试会话进行中（active/starting）切回面试 Tab 时不重建面板——
+    // initInterview() 会 innerHTML='' 并复位状态机，等于销毁整场会话 UI，
+    // 状态灯的"点击跳回"也因此失效。仅首次进入或非活跃态才初始化。
+    if (!(tabName === 'interview' && isInterviewAlive())) {
+      tabRegistry[tabName]?.();
+    }
   };
 
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;

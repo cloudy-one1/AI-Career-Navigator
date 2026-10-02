@@ -15,8 +15,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 # ---- Python 依赖（分层缓存，代码变更时复用）----
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# -c constraints.txt：与 CI 同口径的锁版纪律（v8.18 修复——此前 Docker 路径
+# 走浮动解析，装出的版本组合可以与被评审的决定不同）
+COPY requirements.txt constraints.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -c constraints.txt
 
 # ---- 项目文件 ----
 COPY . .

@@ -1,7 +1,8 @@
 """WebSocket 面试主循环（原 main.py 单体的最大职责块，v7.2.2 拆出）。
 
 协议不变：{type, data} 消息嵌套；
-会话不存在（4000/session_not_found）；正常完成 1000 关闭。
+会话不存在（4000/session_not_found）；同会话重复握手（4000/session_already_active，
+v8.18 单会话单连接守卫）；正常完成 1000 关闭。
 
 v8.3: 握手阶段不再校验身份（4001 unauthorized 随认证一起下线）。
 """
@@ -99,6 +100,62 @@ async def _handle_control_message(websocket, session, msg) -> bool:
     return False
 
 
+async def _safe_send(websocket, payload: dict) -> None:
+    """发送失败只吞掉（连接已断时由下一次 receive 的 WebSocketDisconnect 兜住）。"""
+    try:
+        await websocket.send_json(payload)
+    except Exception:  # noqa: BLE001
+        pass
+
+
+async def _recv_msg(websocket) -> dict:
+    """接收并校验一帧客户端消息——畸形帧不杀死面试（v8.18）。
+
+    此前 receive_json 的三种失败（非法 JSON、非 dict 帧、data 非 dict）都会
+    带着异常一路炸穿最外层 except，把整场面试打成 error 终态。现在逐帧校验：
+    畸形帧回一条错误帧后继续收，直到拿到合法 dict；WebSocketDisconnect 不在
+    捕获范围（它继承 Exception 但不是下面任何一种），断连照常向外传播。
+    """
+    while True:
+        try:
+            raw = await websocket.receive_json()
+        except json.JSONDecodeError:
+            await _safe_send(websocket, {"type": "error",
+                                         "data": {"message": "消息格式错误（非法 JSON），已忽略"}})
+            continue
+        except (KeyError, RuntimeError, TypeError, ValueError) as e:
+            # KeyError：二进制帧进 receive_text；其余为极端传输层噪声
+            await _safe_send(websocket, {"type": "error",
+                                         "data": {"message": f"消息格式错误，已忽略（{type(e).__name__}）"}})
+            continue
+        if not isinstance(raw, dict):
+            await _safe_send(websocket, {"type": "error",
+                                         "data": {"message": "消息格式错误（需为 JSON 对象），已忽略"}})
+            continue
+        if not isinstance(raw.get("data", {}), dict):
+            raw["data"] = {}   # data 恒为 dict，下游 .get 不再可能炸
+        return raw
+
+
+async def _save_partial_report(session_id: str, session, status: str) -> bool:
+    """断连/异常路径尽量保住已答题目——只要有诊断记录就落一份部分报告。
+
+    返回是否真正落库。此前只有 WebSocketDisconnect 分支落部分报告，服务端
+    发送诊断/出题期间断连（比 receive 期间断连更常见）落入通用 except 只落
+    status=error，几十分钟答题数据随 unregister 全部蒸发。
+    """
+    if not getattr(session, "all_diagnoses", None):
+        return False
+    try:
+        partial_report = session.build_report()
+        await save_report(session_id, partial_report)
+        await update_session_status(session_id, status)
+        return True
+    except Exception as e:  # noqa: BLE001
+        logger.error(f"保存部分报告失败 session={session_id}: {e}")
+        return False
+
+
 @router.websocket("/ws/interview/{session_id}")
 async def ws_interview(websocket: WebSocket, session_id: str):
     """面试主循环握手。
@@ -107,12 +164,19 @@ async def ws_interview(websocket: WebSocket, session_id: str):
     accept() 之前做 4001 身份校验，v8.3 随认证下线一并移除）。
     """
     await websocket.accept()
-    async with state.session_lock:
-        session = state.active_sessions.get(session_id)
-
-    if not session:
-        await websocket.send_json({"type": "error", "data": {"message": "会话不存在"}})
-        await websocket.close(code=4000, reason="session_not_found")
+    # v8.18: 原子完成「查会话 + 单连接认领」。没有这道守卫时，同一会话的第二次
+    # 握手会拿到同一 session 对象，两个主循环并发出题/推进/互踩状态。
+    session, err = await state.acquire_ws_session(session_id)
+    if session is None:
+        if err == "session_already_active":
+            await websocket.send_json({
+                "type": "error",
+                "data": {"message": "该会话已在另一连接中进行，请勿重复打开"},
+            })
+            await websocket.close(code=4000, reason="session_already_active")
+        else:
+            await websocket.send_json({"type": "error", "data": {"message": "会话不存在"}})
+            await websocket.close(code=4000, reason="session_not_found")
         return
 
     try:
@@ -224,7 +288,7 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                 # 等待回答
                 answer_received = False
                 while not answer_received:
-                    msg = await websocket.receive_json()
+                    msg = await _recv_msg(websocket)
                     msg_type = msg.get("type", "")
                     data = msg.get("data", {})
 
@@ -412,7 +476,7 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                         })
                         # 等待补充回答，允许用户主动跳过
                         while True:
-                            fu_msg = await websocket.receive_json()
+                            fu_msg = await _recv_msg(websocket)
                             fu_type = fu_msg.get("type", "")
 
                             if await _handle_control_message(websocket, session, fu_msg):
@@ -577,30 +641,28 @@ async def ws_interview(websocket: WebSocket, session_id: str):
 
     except WebSocketDisconnect:
         logger.info(f"会话 {session_id} WebSocket 断开")
-
-        # 尝试保存部分结果
-        if session.all_diagnoses:
-            try:
-                partial_report = session.build_report()
-                await save_report(session_id, partial_report)
-                await update_session_status(session_id, "interrupted")
-            except Exception as e:
-                logger.error(f"保存中断报告失败: {e}")
+        await _save_partial_report(session_id, session, "interrupted")
 
     except Exception as e:
         logger.exception(f"面试会话 {session_id} 异常")
-        # v8.12: 非断连异常也要落终态 —— 此前这里只回 error 消息，DB 里 status
-        # 停在 active/in_progress，历史列表会把一场"实际已炸"的面试永远显示成进行中
-        try:
-            await update_session_status(session_id, "error")
-        except Exception as log_err:  # noqa: BLE001 - 终态落库失败不能掩盖原始异常
-            logger.warning("会话 %s 异常终态落库失败: %s", session_id, log_err)
-        try:
-            await websocket.send_json({"type": "error", "data": {"message": str(e)}})
-        except Exception:
-            pass
+        # v8.18: 非断连异常同样尝试保住已答题目（此前只落 status=error，
+        # 发送诊断/出题期间的异常会带着整场答题数据一起蒸发）
+        saved = await _save_partial_report(session_id, session, "error")
+        if not saved:
+            try:
+                await update_session_status(session_id, "error")
+            except Exception as log_err:  # noqa: BLE001 - 终态落库失败不能掩盖原始异常
+                logger.warning("会话 %s 异常终态落库失败: %s", session_id, log_err)
+        # v8.18: 不再把 str(e) 原样回传客户端（内部路径/库错误细节泄漏），
+        # 细节已在上面 logger.exception 留痕
+        await _safe_send(websocket, {
+            "type": "error",
+            "data": {"message": "面试进程发生内部错误，本场已结束；已答题目已尽力保存，可在历史记录查看"},
+        })
 
     finally:
         # v3.1 整改：WS 结束（正常完成/断开/异常）一律清理会话引用，避免 active_sessions 内存泄漏
         # v8.12: 连同创建时刻一并对称注销（TTL 记录不留悬挂条目）
+        # v8.18: 连同单连接认领一并对称释放
+        await state.release_ws_session(session_id)
         await state.unregister_session(session_id)

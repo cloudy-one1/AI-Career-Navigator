@@ -494,10 +494,17 @@ def _dimension_advice(key: str) -> str:
 
 def generate_review_markdown(report: dict) -> str:
     """v2.7: 生成复盘文件（Markdown 格式，侧重学习改进）"""
+    # v8.18: build_report 的模式键是 mode——此前读 interview_mode 恒为缺失，
+    # traditional/coach 等模式导出时全被错标成"模拟面试"
+    _MODE_NAMES = {
+        "simulation": "模拟面试", "traditional": "传统模式", "coach": "教练模式",
+        "hardcore": "拷打模式", "interview_only": "只面试模式",
+    }
+    mode_label = _MODE_NAMES.get(report.get("mode"), "模拟面试")
     lines = []
     lines.append("# 面试复盘报告")
-    lines.append(f"\n**生成时间**: {report.get('timestamp', datetime.now().strftime('%Y-%m-%d %H:%M'))}")
-    lines.append(f"**面试模式**: {report.get('interview_mode', '模拟面试')}")
+    lines.append(f"\n**生成时间**: {report.get('timestamp') or datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    lines.append(f"**面试模式**: {mode_label}")
     lines.append(f"**总得分**: {report.get('overall_avg', 0):.2f} / 5.0")
     lines.append("\n---\n")
 

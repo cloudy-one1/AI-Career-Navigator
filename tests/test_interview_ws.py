@@ -220,6 +220,7 @@ def ws_client(tmp_path, monkeypatch):
     with TestClient(app) as client:
         yield client
     state.active_sessions.clear()
+    state.ws_active.clear()
 
 
 @pytest.fixture()

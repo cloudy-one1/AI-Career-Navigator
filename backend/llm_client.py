@@ -5,6 +5,7 @@ v6.0: Provider 注册表自动探测（AI_PROVIDER=auto）+ LLM 输出 JSON 四�
       （对标 career-copilot 的 PROVIDER_REGISTRY / safeJsonParse）。
 """
 
+import inspect
 import json
 import logging
 import re
@@ -16,6 +17,22 @@ logger = logging.getLogger(__name__)
 # v6.0: Key 校验下沉到 config 层（注册表所在层，供 AI_PROVIDER_RESOLVED 自动探测复用）；
 # 此处保留别名，兼容既有调用方与测试（from backend.llm_client import _api_key_issue）。
 _api_key_issue = validate_api_key
+
+
+def _close_client_quietly(client) -> None:
+    """尽力关闭 OpenAI/httpx 客户端以释放连接池；失败不阻断重建（v8.18）。
+
+    AsyncOpenAI.close() 在部分 SDK 版本是协程——同步上下文等不了，显式关闭该
+    协程对象以避免 "coroutine was never awaited" 警告，底层连接池交由 GC 回收。
+    """
+    if client is None:
+        return
+    try:
+        result = client.close()
+    except Exception:  # noqa: BLE001
+        return
+    if inspect.iscoroutine(result):
+        result.close()
 
 
 # ===== v6.0: LLM 输出 JSON 四级容错提取 =====
@@ -244,6 +261,17 @@ class LLMClient:
         if self.provider not in config.AI_PROVIDERS:
             self.provider = config.AI_PROVIDER_RESOLVED
 
+        # v8.18: 重建前尽力关闭旧客户端（各含 httpx 连接池）——此前每次运行时
+        # 切换 provider 都泄漏一整组连接池。switch_provider 是管理侧低频操作，
+        # 若恰好切断在途调用，按既有 fallback 语义换候选/报错，可接受。
+        _old_clients = [getattr(self, "client", None), getattr(self, "async_client", None)]
+        _old_clients += [c for cand in (getattr(self, "_candidates", None) or [])
+                         for c in (cand.client, cand.async_client)]
+        _old_clients += [c for cached in (getattr(self, "_task_candidate_cache", None) or {}).values()
+                         for c in (cached.client, cached.async_client)]
+        for _old in _old_clients:
+            _close_client_quietly(_old)
+
         self.api_key = config.LLM_API_KEY
         self.base_url = config.LLM_BASE_URL
         self.model = config.LLM_MODEL
@@ -272,9 +300,12 @@ class LLMClient:
 
         # v6.2: 任务级模型绑定的候选缓存 {(provider, model): _Candidate}
         # 与 self.provider 解耦（任务绑定可能指向别的 provider），切换后端不必重建。
+        # v8.18: 旧缓存客户端已在上方统一关闭，这里整表重建。
         self._task_candidate_cache: dict = {}
 
-        self._candidates = []
+        # v8.18: 先在局部构建完整候选池，最后一次性赋值——此前先置空再逐个
+        # append，并发协程经 task_candidates() 拿到半空池会误判"全部候选失败"
+        new_pool = []
         for c in candidates:
             # v5.0 健壮性：fallback 候选若 key 缺失/占位，直接跳过——
             # fallback 的意义是「主候选有效即可，备用缺失应降级而非致命」，
@@ -285,7 +316,7 @@ class LLMClient:
                     f"LLM 跳过无效 fallback 候选 {c['provider']}:{c['model']}（{issue}），仅主候选可用"
                 )
                 continue
-            self._candidates.append(_Candidate(
+            new_pool.append(_Candidate(
                 provider=c["provider"],
                 model=c["model"],
                 client=OpenAI(api_key=c["api_key"], base_url=c["base_url"],
@@ -293,6 +324,7 @@ class LLMClient:
                 async_client=AsyncOpenAI(api_key=c["api_key"], base_url=c["base_url"],
                                          timeout=config.LLM_TIMEOUT),
             ))
+        self._candidates = new_pool
 
         provider_info = config.AI_PROVIDERS.get(self.provider, {})
         self._api_key_env = provider_info.get("api_key_env", "DEEPSEEK_API_KEY")
@@ -508,11 +540,25 @@ class LLMClient:
 
         v6.0: 支持 "auto"（重新按注册表自动探测）；切换到显式后端时若其 Key
         无效则告警（注册表校验），但仍允许切换（由调用方决定是否容忍）。
+        v8.18: "auto" 在这里就地完成注册表探测——此前 self.provider="auto" 交给
+        _init_client 后走 config.AI_PROVIDER_RESOLVED，后者解析的是**环境变量
+        AI_PROVIDER**：env 为显式值时"切到 auto"会静默变回 env 指定的后端，
+        注册表探测从未发生。探测不到任何有效 Key 时回退 deepseek（与
+        AI_PROVIDER_RESOLVED 的 auto 语义一致）。
         """
         if provider != "auto" and provider not in config.AI_PROVIDERS:
             logger.warning(f"未知 provider: {provider}，保持当前 {self.provider}")
             return False
-        if provider != "auto":
+        if provider == "auto":
+            detected = next((pid for pid in config.AI_PROVIDERS
+                             if not config.provider_key_issue(pid)), None)
+            if detected is None:
+                logger.warning("switch_provider(auto) 未探测到任何有效 Key，回退 deepseek")
+                detected = "deepseek"
+            else:
+                logger.info(f"switch_provider(auto) 探测到 provider={detected}")
+            provider = detected
+        else:
             issue = config.provider_key_issue(provider)
             if issue:
                 logger.warning(f"切换到 {provider} 后 {issue}，请检查对应环境变量")

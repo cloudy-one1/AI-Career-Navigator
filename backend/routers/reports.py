@@ -27,12 +27,16 @@ async def api_get_report(session_id: str):
 async def export_review(session_id: str):
     """导出复盘 Markdown 文件"""
     try:
-        report = await get_report(session_id)
-        if not report:
+        row = await get_report(session_id)
+        if not row:
             raise HTTPException(404, "报告不存在")
         # v3.3: get_report 返回含 report_json 字符串的行，需解析后再交给导出函数
         # （此前直接传行对象，导出的复盘内容全为空）
-        report = json.loads(report["report_json"]) if isinstance(report.get("report_json"), str) else report
+        report = json.loads(row["report_json"]) if isinstance(row.get("report_json"), str) else row
+        # v8.18: 导出的"生成时间"应为面试完成时刻（DB created_at），而非导出那一刻；
+        # build_report 不产出 timestamp，这里注入供 generate_review_markdown 读取
+        if isinstance(report, dict) and not report.get("timestamp"):
+            report["timestamp"] = row.get("created_at")
         md = generate_review_markdown(report)
         return Response(content=md, media_type="text/markdown; charset=utf-8",
                         headers={"Content-Disposition": f"attachment; filename=review_{session_id}.md"})
@@ -122,7 +126,11 @@ async def export_report_html(session_id: str):
         report = await get_report(session_id)
         if not report:
             raise HTTPException(404, "报告不存在")
+        row_created_at = report.get("created_at")
         report = json.loads(report["report_json"]) if isinstance(report.get("report_json"), str) else report
+        # v8.18: 与 /review 同口径——导出时间用面试完成时刻
+        if isinstance(report, dict) and not report.get("timestamp"):
+            report["timestamp"] = row_created_at
         body = _md.markdown(
             generate_review_markdown(report),
             extensions=["tables", "fenced_code"],

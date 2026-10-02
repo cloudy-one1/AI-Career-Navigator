@@ -13,7 +13,7 @@
 import { $, el, toast } from './utils.js';
 import { cityCoord } from './cityCoords.js';
 import {
-  startMarketCrawl, getCrawlStatus, getCityMap, getMarketJob,
+  startMarketCrawl, getCrawlStatus, cancelMarketCrawl, getCityMap, getMarketJob,
   getMarketJobs, getMarketStats, runGapAnalysis, crossJobCompare,
   toggleMarketInterest, getMarketCharts, getMarketInsight,
   addMarketJobToPosition, uploadResumeToLibrary, getResume,
@@ -310,10 +310,21 @@ function queryExisting() {
 
 /* ─────────────────── 采集任务（轮询进度） ─────────────────── */
 
+const CRAWL_POLL_MAX_MS = 15 * 60 * 1000;  // v8.18: 轮询上限——任务挂起时不再永久轮询
+
 async function startCrawl() {
   const keyword = $('#mkt-keyword').value.trim();
   if (!keyword) { toast('请先输入关键词', 'warning'); return; }
-  if (state.crawling) { toast('已有采集任务进行中', 'warning'); return; }
+  if (state.crawling) {
+    // v8.18: 采集进行中再点按钮 = 取消任务（此前按钮只是 disabled，僵死任务无解）
+    try {
+      await cancelMarketCrawl(state.crawlTaskId);
+      toast('取消请求已受理，等待当前页结束…', 'info');
+    } catch (e) {
+      toast('取消失败: ' + e.message, 'error');
+    }
+    return;
+  }
 
   const pages = parseInt($('#mkt-pages').value, 10) || 2;
   const sortType = $('#mkt-sort').value;
@@ -321,8 +332,9 @@ async function startCrawl() {
   if (!state.selectedCities.length) toast('未选城市，将按全国范围采集', 'info');
 
   const btn = $('#mkt-crawl-btn');
-  btn.disabled = true;
-  btn.textContent = '采集进行中…';
+  // v8.18: 按钮保持可点并变为"取消采集"——此前 disabled，任务僵死时用户无解
+  btn.disabled = false;
+  btn.textContent = '✕ 取消采集';
   state.lastKeyword = keyword;
   hideError();
   hideCollectResult();
@@ -343,14 +355,22 @@ async function startCrawl() {
 
 function pollCrawl(taskId) {
   clearInterval(state.crawlTimer);
+  const pollStart = Date.now();  // v8.18: 轮询上限计时
   state.crawlTimer = setInterval(async () => {
     try {
+      if (Date.now() - pollStart > CRAWL_POLL_MAX_MS) {
+        // v8.18: 任务挂起时不再永久轮询（此前切走 Tab 也不停）
+        stopPolling();
+        showError('采集任务长时间未完成，已停止轮询；后端任务层有硬超时兜底');
+        return;
+      }
       const st = await getCrawlStatus(taskId);
       if (!st) {
         stopPolling();
         return;
       }
-      const totalCities = st.cities.length;
+      // v8.18: cities 字段缺省守卫（此前 TypeError 被 catch 吞掉，进度条冻结但轮询永续）
+      const totalCities = (st.cities || []).length;
       const doneCities = Object.keys(st.pages_collected || {}).length;
       const pct = st.status === 'done' ? 100
         : Math.min(95, Math.round((doneCities / Math.max(totalCities, 1)) * 100));
@@ -359,9 +379,10 @@ function pollCrawl(taskId) {
       if (st.status === 'done') {
         stopPolling();
         setCrawlDone(st);
-      } else if (st.status === 'failed') {
+      } else if (st.status === 'failed' || st.status === 'cancelled') {
+        // v8.18: cancelled（用户取消/硬超时）与 failed 同为终态
         stopPolling();
-        setCrawlFailed(st.error);
+        setCrawlFailed(st.error || st.message || '采集已取消');
       }
     } catch (e) {
       // 单次轮询失败不中断，继续尝试

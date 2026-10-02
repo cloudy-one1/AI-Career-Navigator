@@ -118,12 +118,18 @@ class DifficultyScheduler:
     def summary(self) -> dict:
         """报告披露用：难度轨迹 + 峰值/终值（解决分数归因问题）。"""
         levels = [t["level"] for t in self.state.trace] or [self.state.level]
+        # v8.18: changed_times 统计相邻两次记录的实际变档次数——此前用
+        # "去重档位数-1"（跨度），3→4→3→4 实际变档 3 次只报 1，报告口径失真
+        trace = self.state.trace
+        changed_times = sum(
+            1 for prev, cur in zip(trace, trace[1:]) if prev["level"] != cur["level"]
+        )
         return {
             "enabled": True,
             "initial_level": self.state.trace[0]["level"] if self.state.trace else self.state.level,
             "final_level": self.state.level,
             "peak_level": max(levels),
             "lowest_level": min(levels),
-            "changed_times": len({t["level"] for t in self.state.trace}) - 1,
+            "changed_times": changed_times,
             "trace": list(self.state.trace),
         }

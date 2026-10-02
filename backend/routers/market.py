@@ -190,6 +190,23 @@ async def market_crawl_status(task_id: str):
     return task.to_dict()
 
 
+@router.post("/api/market/crawl/{task_id}/cancel")
+async def market_crawl_cancel(task_id: str):
+    """v8.18: 取消采集任务。
+
+    协作式中止：任务在下一个页间检查点退出（最长延迟约 60s = 单页硬超时）。
+    终态任务返回 409（无事可做）；不存在的任务返回 404。
+    此前一次僵死采集只能重启进程恢复——现在用户可主动取消，
+    硬超时兜底也由任务层自动执行。
+    """
+    task = crawler_tasks.cancel(task_id)
+    if task is None:
+        raise HTTPException(404, "任务不存在或已过期")
+    if task.status != "running":
+        raise HTTPException(409, f"任务已结束（{task.status}），无需取消")
+    return {"task_id": task.id, "status": task.status, "message": "取消请求已受理，正在等待当前页结束"}
+
+
 @router.get("/api/market/city-map")
 async def market_city_map():
     """省份→城市级联数据（采集表单用，前端不内嵌 388 城市表）。"""

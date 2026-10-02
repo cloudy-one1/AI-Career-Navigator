@@ -4,6 +4,7 @@
 
 import json
 import os
+import re
 from .config import config
 
 # 启动时加载一次
@@ -19,6 +20,22 @@ def _load_skills():
         with open(config.SKILLS_DATA_PATH, "r", encoding="utf-8") as f:
             _skills_data = json.load(f)
     return _skills_data
+
+
+def _kw_hit(kw: str, haystack_lower: str) -> bool:
+    """单个关键词命中判定（v8.18）。
+
+    ASCII 关键词按词边界匹配——此前纯子串会让 "go" 命中 "Django"（d-j-a-n-**go**）、
+    "java" 命中 "javascript"，命中数虚高导致岗位推荐排序失真；
+    CJK 关键词无词边界概念，保持子串。
+    """
+    kw = kw.lower().strip()
+    if not kw:
+        return False
+    if kw.isascii():
+        return re.search(rf"(?<![a-z0-9]){re.escape(kw)}(?![a-z])", haystack_lower,
+                         re.IGNORECASE) is not None
+    return kw in haystack_lower
 
 
 def match_skills(jd_keywords: list[str]) -> list[dict]:
@@ -43,7 +60,8 @@ def match_skills(jd_keywords: list[str]) -> list[dict]:
         pos_keywords = info.get("keywords", [])
         if not pos_keywords:
             continue
-        hits = sum(1 for kw in jd_keywords if kw.lower() in " ".join(pos_keywords).lower())
+        haystack = " ".join(pos_keywords).lower()
+        hits = sum(1 for kw in jd_keywords if _kw_hit(kw, haystack))
         if hits > 0:
             matched.append({
                 "position": position,

@@ -22,6 +22,23 @@ data/
 *.db
 *.sqlite3
 
+# === v8.18: 构建瘦身 —— 此前 node_modules / 源码 zip / 二进制文档 / 测试与
+# CI 配置全部被 COPY . . 打进镜像（数百 MB 膨胀，且无运行时用途）===
+frontend/node_modules/
+frontend/dist/
+*.zip
+*.docx
+*.doc
+*.coverage
+.coverage
+tests/
+.github/
+.pytest_cache/
+.ruff_cache/
+.grimp_cache/
+.import_linter_cache/
+import_linter_cache/
+
 # === 日志 ===
 *.log
 

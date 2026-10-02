@@ -82,18 +82,26 @@ def build_api_params(keyword, job_area, page_num, sort_type='0'):
     }
 
 
+class CrawlCancelled(RuntimeError):
+    """采集被取消/硬超时中断（v8.18：协作式检查点抛出，tasks.py 捕获落终态）。"""
+
+
 def _evaluate_with_timeout(page, js_func, params, timeout_ms=28000):
     """
-    调用 page.evaluate() 并带上显式超时(默认28s), 处理超时与异常。
+    调用 page.evaluate() 并处理超时与异常。
 
     返回值:
         (result_data, page_dead: bool)
         page_dead=True 表示页面可能已失效, 调用方应重建 page。
 
-    说明:
-        page.set_default_timeout() 控制的是 Playwright 内部事件循环的等待上限,
-        但在浏览器进程半僵死时(time_wait状态/WebSocket半开), 内部超时可能也失效。
-        此时本函数会阻塞至多 timeout_ms 毫秒后放弃, 并告知调用方重建页面。
+    说明（v8.18 如实更正——旧 docstring 声称"阻塞至多 timeout_ms 后放弃"，
+    实现里从来没有任何超时机制）:
+        本函数**没有** wall-clock 超时能力。同步 Playwright 对象跨线程调用
+        不安全，evaluate 无法从外部打断。timeout_ms 只出现在日志与错误文案里。
+        实际防线是三层：page.set_default_timeout(30s) 覆盖 SDK 内部等待、
+        页内 fetch 自带 15s AbortController（见 JS_FETCH_API）、以及任务层的
+        硬超时 + 取消检查点（见 tasks.py——渲染进程真僵死时放弃整个任务并
+        释放采集槽，而不是无限阻塞采集线程）。
     """
     from playwright.sync_api import TimeoutError as PWTimeoutError
     try:
@@ -177,7 +185,7 @@ def to_job_record(job, city, scraped_at):
     }
 
 
-def scrape_jobs(keyword, cities, pages_per_city=3, sort_type='0', progress_callback=None, save_callback=None):
+def scrape_jobs(keyword, cities, pages_per_city=3, sort_type='0', progress_callback=None, save_callback=None, should_cancel=None):
     """
     核心函数: 给定关键词 + 城市名列表,实时采集51job数据。
 
@@ -190,6 +198,10 @@ def scrape_jobs(keyword, cities, pages_per_city=3, sort_type='0', progress_callb
                 用于在网页上实时显示采集进度(比如Flask里可以传一个打印日志的函数)
         save_callback: 可选,一个函数(city, jobs_for_city) -> None,
                 每采集完一个城市后调用,用于增量写入DB(防Ctrl+C丢数据)
+        should_cancel: 可选,一个函数() -> bool,v8.18 协作式取消检查点——
+                在城市间/页间轮询，返回 True 即抛 CrawlCancelled 安全中止。
+                同步 Playwright 对象跨线程调用不安全、evaluate 无法从外部打断，
+                因此只能在检查点退出（最长延迟 = 单页硬超时 60 秒）。
 
     返回: list of dict,字段跟项目数据库schema一致
           (post, company, address, salary_raw, edu, exper, dateT, scrape_date)
@@ -208,6 +220,10 @@ def scrape_jobs(keyword, cities, pages_per_city=3, sort_type='0', progress_callb
     if not valid_cities:
         # 没有指定城市 → 全国范围搜索
         valid_cities = [("全国", "000000")]
+
+    def _check_cancel():
+        if should_cancel is not None and should_cancel():
+            raise CrawlCancelled('采集被取消或超过硬超时，已在检查点安全中止')
 
     all_jobs = []
     all_seen = set()
@@ -318,12 +334,14 @@ def scrape_jobs(keyword, cities, pages_per_city=3, sort_type='0', progress_callb
         now = datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')
 
         for city, code in valid_cities:
+            _check_cancel()
             _logger.info('开始采集: %s', city)
             pages_collected[city] = 0
             city_start_idx = len(all_jobs)  # 记录该城市采集前的数据量,用于增量保存
             _interrupted = False
             try:
                 for pg in range(1, pages_per_city + 1):
+                    _check_cancel()
                     # 单页硬超时: 每页(含重试)最多60秒, 超时跳过该城市后续页
                     page_start = time.time()
                     params = build_api_params(keyword, code, pg, sort_type)
@@ -419,6 +437,10 @@ def scrape_jobs(keyword, cities, pages_per_city=3, sort_type='0', progress_callb
                         _logger.info('[%s] 第%d页无新数据, 跳过后续页', city, pg)
                         break
             except (KeyboardInterrupt, Exception) as e:
+                if isinstance(e, CrawlCancelled):
+                    # v8.18: 取消/硬超时必须穿透城市级兜底，直达任务层落终态——
+                    # 否则取消会被当成普通城市异常，继续采下一座城
+                    raise
                 if isinstance(e, KeyboardInterrupt):
                     _logger.warning('[%s] 采集被中断(Ctrl+C), 保存已采集数据...', city)
                     _interrupted = True

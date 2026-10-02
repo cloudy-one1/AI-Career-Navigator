@@ -96,12 +96,75 @@ class TestGetStatus:
         assert got.status == "running"
 
     def test_expired_done_task_cleaned(self):
+        """v8.18: TTL 以 finished_at（终态时刻）计，不再按 created_at——
+        运行超 10 分钟的任务完成后第一次轮询即被弹出是原缺陷。"""
         task = CrawlTask(id="old", keyword="python", cities=["北京"], pages=2, sort_type="0")
         task.status = "done"
-        task.created_at = time.time() - 700  # 超过 TTL(600s)
+        task.finished_at = time.time() - 700  # 超过 TTL(600s)
         tasks._tasks[task.id] = task
         assert tasks.get_status("old") is None
         assert "old" not in tasks._tasks
+
+    def test_long_running_task_not_ttl_cleaned(self):
+        """v8.18: running 任务不因 created_at 过旧被误清——此前 5城×5页的任务
+        运行超 10 分钟后，完成状态第一次轮询就被弹出，前端永远看不到结果。"""
+        task = CrawlTask(id="slow", keyword="python", cities=["北京"], pages=5, sort_type="0")
+        task.status = "running"
+        task.created_at = time.time() - 700
+        tasks._tasks[task.id] = task
+        got = tasks.get_status("slow")
+        assert got is not None and got.status == "running"
+
+    def test_hard_timeout_forces_failed_and_releases_slot(self, monkeypatch):
+        """v8.18: running 任务超过硬超时+缓冲 → 强置 failed，采集槽随之释放
+        （采集线程僵死在 page.evaluate 时唯一的自动恢复手段）。"""
+        task = CrawlTask(id="stuck", keyword="python", cities=["北京"], pages=5, sort_type="0")
+        task.status = "running"
+        task.created_at = time.time() - (tasks._HARD_DEADLINE + 120)
+        tasks._tasks[task.id] = task
+        got = tasks.get_status("stuck")
+        assert got is not None and got.status == "failed"
+        assert got.finished_at is not None
+        # 强置 failed 后互斥解除：start_crawl 不再被"已有任务进行中"拒绝
+        monkeypatch.setattr("threading.Thread", _FakeThread)
+        task2, err2 = tasks.start_crawl("java", ["上海"], 2)
+        assert task2 is not None and err2 == ""
+
+
+class TestCancel:
+    """v8.18: 协作式取消"""
+
+    def setup_method(self):
+        tasks._tasks.clear()
+
+    def teardown_method(self):
+        tasks._tasks.clear()
+
+    def test_cancel_sets_flag_only_for_running(self):
+        task = CrawlTask(id="c1", keyword="python", cities=["北京"], pages=2, sort_type="0")
+        tasks._tasks[task.id] = task
+        got = tasks.cancel("c1")
+        assert got is not None and got.cancel_requested is True
+
+    def test_cancel_terminal_task_is_noop(self):
+        task = CrawlTask(id="c2", keyword="python", cities=["北京"], pages=2, sort_type="0")
+        task.status = "done"
+        tasks._tasks[task.id] = task
+        got = tasks.cancel("c2")
+        assert got is not None and got.cancel_requested is False
+
+    def test_cancel_missing_task_returns_none(self):
+        assert tasks.cancel("ghost") is None
+
+    def test_should_cancel_sees_flag_and_deadline(self):
+        task = CrawlTask(id="c3", keyword="python", cities=["北京"], pages=2, sort_type="0")
+        tasks._tasks[task.id] = task
+        assert tasks._should_cancel("c3") is False
+        task.cancel_requested = True
+        assert tasks._should_cancel("c3") is True
+        task.cancel_requested = False
+        task.created_at = time.time() - (tasks._HARD_DEADLINE + 1)
+        assert tasks._should_cancel("c3") is True
 
     def test_fresh_done_task_returned(self):
         task = CrawlTask(id="fresh", keyword="python", cities=["北京"], pages=2, sort_type="0")

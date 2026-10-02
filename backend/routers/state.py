@@ -30,7 +30,8 @@ diagnosis_engine = DiagnosisEngine(llm_client=llm_client)
 # ─── 活跃面试会话表（内存态；进程重启即失，进行中的那道题会丢——已知局限）───
 active_sessions: dict[str, InterviewSession] = {}
 session_created_at: dict[str, float] = {}   # session_id → time.monotonic()，TTL 依据
-session_lock = asyncio.Lock()    # 保护 active_sessions 的读写
+ws_active: set[str] = set()      # 正被 WS 主循环驱动的会话（单连接守卫 + sweep 豁免）
+session_lock = asyncio.Lock()    # 保护 active_sessions / ws_active 的读写
 provider_lock = asyncio.Lock()   # 保护 llm_client / diagnosis_engine 重赋值
 
 
@@ -46,20 +47,46 @@ async def unregister_session(session_id: str) -> None:
     async with session_lock:
         active_sessions.pop(session_id, None)
         session_created_at.pop(session_id, None)
+        ws_active.discard(session_id)
+
+
+async def acquire_ws_session(session_id: str) -> tuple[InterviewSession | None, str | None]:
+    """原子完成「查会话 + 单连接认领」，返回 (session, err)；err 为 None 即认领成功。
+
+    - session_not_found：active_sessions 无此条目（未创建 / 已注销 / 被误清）。
+    - session_already_active：该会话已有一条 WS 主循环在驱动——没有这道守卫时，
+      第二次握手会拿到同一 session 对象，两个主循环并发出题/推进，状态互踩。
+    认领成功即加入 ws_active，此后 sweep 豁免该条目（进行中的面试不再被 TTL 误杀，
+    此前超过 SESSION_TTL_SECONDS 的长面试会被 sweep 清出注册表，HTTP 侧 404）。
+    """
+    async with session_lock:
+        session = active_sessions.get(session_id)
+        if session is None:
+            return None, "session_not_found"
+        if session_id in ws_active:
+            return None, "session_already_active"
+        ws_active.add(session_id)
+        return session, None
+
+
+async def release_ws_session(session_id: str) -> None:
+    """WS 主循环结束（正常/断开/异常）时释放认领。与 unregister_session 配套调用。"""
+    async with session_lock:
+        ws_active.discard(session_id)
 
 
 async def sweep_stale_sessions(ttl_seconds: int | None = None) -> list[str]:
-    """清掉创建后超过 TTL 的会话条目，返回被清的 session_id 列表。
+    """清掉创建后超过 TTL 且**从未被 WS 接管**的会话条目，返回被清的 session_id 列表。
 
-    唯一的泄漏窗口是"创建后 WS 从未接管"（页面刷新后重开一场、拿到 session_id
-    后放弃连接）——WS 正常接管后由其 finally 对称注销，不依赖本函数。
-    若某条目仍在被活跃的 WS 主循环使用，清出只影响同 id 的第二次握手
-    （会得到 4000），对进行中的面试无影响（handler 持有的是局部引用）。
+    唯一的清理对象是"创建后 WS 从未接管"（页面刷新后重开一场、拿到 session_id
+    后放弃连接）——被 WS 接管过的条目在 ws_active 里，sweep 一律豁免；
+    WS 结束时由 finally 对称注销（unregister + release），不依赖本函数。
     """
     ttl = config.SESSION_TTL_SECONDS if ttl_seconds is None else ttl_seconds
     now = time.monotonic()
     async with session_lock:
-        stale = [sid for sid, ts in session_created_at.items() if now - ts > ttl]
+        stale = [sid for sid, ts in session_created_at.items()
+                 if now - ts > ttl and sid not in ws_active]
         for sid in stale:
             active_sessions.pop(sid, None)
             session_created_at.pop(sid, None)

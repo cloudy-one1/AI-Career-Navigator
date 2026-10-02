@@ -1,10 +1,91 @@
 # 变更日志（CHANGELOG）
 
-> 记录 **v8.0 → v8.17** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
+> 记录 **v8.0 → v8.18** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
 > 历史见 [docs/changelog-archive.md](docs/changelog-archive.md)。不变的架构约束与决策记录见
 > [CHARTER.md](CHARTER.md)，贡献流程见 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的“AI 求职陪跑”为历史名称，保留不删。**
+
+---
+
+## v8.18 全面代码审查整改：面试数据安全 / 配置安全 / 数据正确性 / 采集可用性 / 工程闭环（2026-10-02）
+
+> 全项目逐文件审查（12 个模块并行）后的集中整改轮：修 17 个 P1 级问题与一批 P2。
+> 主线是四类系统性缺陷——"进行中的面试可被外部因素杀死/丢失"的边界族、
+> 关键词子串匹配误判族、"静默降级掩盖故障"族、工程闭环缺口。
+
+### 改动
+
+- **面试数据安全（后端）**：
+  - `routers/state.py`：新增 `ws_active` 单连接认领（`acquire_ws_session`/`release_ws_session`），
+    sweep 只清**从未被 WS 接管**的过期条目——此前进行中超 2 小时的面试会被
+    TTL 误杀（HTTP 侧 404 / 重连 4000）；同会话第二次 WS 握手被拒（4000/session_already_active），
+    杜绝双主循环并发驱动同一会话。
+  - `routers/interview_ws.py`：畸形帧不再杀死整场面试（`_recv_msg` 逐帧校验：
+    非法 JSON / 非 dict / data 非 dict 只回错误帧后继续收）；通用异常分支同样落
+    部分报告（`_save_partial_report`，此前只有 WebSocketDisconnect 分支落，
+    发送诊断期间的断连会带着整场答题数据蒸发）；异常回执不再回传 `str(e)`。
+- **面试数据安全（前端）**：
+  - `api.js`：`close()` 清除挂起的重连定时器（修幽灵连接）；`send()` 未就绪返回 false
+    （修静默丢回答）；会话失效走新增 `onSessionExpired` 回调。
+  - `interview.js`：致命断连（重连失败/会话失效）统一 `abortToSetup` 恢复到引导页
+    （此前用户停在死视图，唯一出路是刷新页面）；提交回答检查 `send` 返回值，失败保留草稿。
+  - `app.js`：会话进行中（active/starting）切回面试 Tab 不再重建面板——
+    此前 `initInterview()` 无条件清空 DOM，状态灯"跳回"即销毁整场 UI。
+- **配置安全**：
+  - `run.py`：HOST/PORT 真正读取 .env（此前不读），默认 **127.0.0.1**——v8.11 的
+    发布面收口只落在 docker-compose，裸机路径与 `.env.example` 仍引导 0.0.0.0，
+    对无认证的单用户工具等于向局域网开放。
+  - `config.py`：fallback 链与任务绑定候选的凭据**按 provider 独立解析**
+    （`_resolve_candidate_credentials`）——此前全局 `LLM_API_KEY/LLM_BASE_URL`
+    会灌给所有备用候选，降级静默变成"同一上游试三遍"后 401。
+  - `llm_client.py`：`switch_provider("auto")` 就地注册表探测（此前静默回到
+    env 指定值，探测从未发生）；重建客户端前关闭旧连接池（修切换泄漏）；
+    候选池整体构建后原子赋值（修半空池窗口）。
+- **数据正确性**：
+  - `difficulty.py`：`changed_times` 改为相邻轨迹实际变档次数（此前是"跨度"，
+    3→4→3→4 报 1 次，直接进报告披露）。
+  - `gap_analyzer.py`：ASCII 关键词词边界匹配（"AI"不再命中 email/detail），
+    杜绝错误岗位的市场基准注入。
+  - `interview_engine/report.py` + `routers/reports.py`：导出复盘读 `mode` 键
+    （此前读不存在的 `interview_mode`，traditional 等模式恒被错标"模拟面试"）；
+    导出时间注入 DB `created_at`（此前恒为导出时刻）。
+  - `market/importer.py`：空 URL 的 `source_id` uuid5 兜底（此前共享 `""`，
+    UNIQUE 冲突后 upsert 互相覆盖，N 条只落库 1 条）。
+  - 关键词匹配族局部修复：`score_adjustments` k/w 单位在中文语境不再漏检；
+    `profile_service.compute_skill_gap` 词边界 + go/golang、js/javascript 别名
+    （"会 Java"不再误判为"已具备 JavaScript"）；`data_support` 词边界
+    （"Go"不再命中 Django）；`company_profiles` 大小写归一；`interview_skills`
+    否定短语优先（"还是不会了"不再算"会了"）；`resume_anchors` "es"→"elasticsearch"。
+- **采集可用性**：
+  - `market/crawler/tasks.py`：协作式取消（`cancel()` + 页间检查点）+ 硬超时
+    （`_HARD_DEADLINE=720s`，`get_status` 兜底强置 failed 释放采集槽）+ TTL 改按
+    `finished_at` 计（此前运行超 10 分钟的任务完成后第一次轮询即被弹出）。
+  - `python_job_scraper.py`：`should_cancel` 检查点 + CrawlCancelled 穿透城市级
+    兜底；`_evaluate_with_timeout` docstring 如实化（旧文档声称的超时从未实现）。
+  - `routers/market.py`：新增 `POST /api/market/crawl/{task_id}/cancel`；
+    `marketData.js` 采集按钮进行中变为"取消采集"、轮询 15 分钟上限、`cities` 缺省守卫。
+  - `market/store.py`：`collected_at` 进 INSERT 列（源采集/发布时间此前被静默丢弃，
+    "按发布时间排序"实为导入顺序）；`salary_parser` 补倒挂交换 + 合理性边界
+    （"100-200万/年"不再产出 833K/月）+ 日薪单位换算；修正朝阳/长治/漯河拼音
+    （原值产出 404 岗位 URL）。
+- **工程闭环**：
+  - `Dockerfile`：`pip install -c constraints.txt`（此前 Docker 路径走浮动解析，
+    锁版纪律失效）；`.dockerignore` 补 `frontend/node_modules/`、`*.zip`、`*.docx`、
+    `tests/`、`.github/` 等条目（此前数百 MB 无关内容进镜像）。
+  - CI frontend job 补 `npm run lint`（eslint 是事故驱动的防线，此前不进 CI）。
+  - `.env.example`：HOST 默认 127.0.0.1 并更新说明。
+
+### 核查更正
+
+- 审查中怀疑 constraints.txt 的 `httpx2/httpcore2` 为幽灵条目——经 `pip show` 核实
+  为真实包（当前 openai 的依赖），**保留不动**。
+
+### 验证（2026-10-02，本机）
+
+- 后端 `python -m pytest tests/ -q`：基线 1158 passed / 1 skipped，整改后新增
+  TTL 单连接认领 4 条、采集任务取消/硬超时 6 条回归，全部通过。
+- 前端 vitest 83 例全过、eslint 0 error（26 条既有 warning 不拦截）。
 
 ---
 

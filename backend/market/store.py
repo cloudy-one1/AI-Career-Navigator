@@ -8,6 +8,7 @@ import json
 import logging
 import os
 from collections import Counter
+from datetime import datetime
 from typing import Optional
 
 import aiosqlite
@@ -70,21 +71,31 @@ async def init_market_db() -> None:
 
 
 async def upsert_jobs(jobs: list[dict]) -> int:
-    """批量写入（按 (source, source_id) 去重，存在则更新），返回写入条数"""
+    """批量写入（按 (source, source_id) 去重，存在则更新），返回写入条数。
+
+    v8.18: collected_at 进 INSERT 列——源数据的采集/发布时间此前被静默丢弃、
+    全部落表默认值，"按发布时间排序"实为导入顺序。源时间为空时沿用默认当前时间；
+    冲突更新时仅当新记录带有效源时间才覆盖，避免空值回写。
+    """
     if not jobs:
         return 0
     rows = [{**j, "tags": json.dumps(j.get("tags", []), ensure_ascii=False)} for j in jobs]
+    now_ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    for r in rows:
+        src = str(r.get("collected_at") or "").strip()
+        r["collected_at"] = src or now_ts          # INSERT：无源时间落当前时间
+        r["collected_at_new"] = src or None        # 冲突更新：无源时间保留旧值
     db = await get_db()
     try:
         await db.executemany("""
             INSERT INTO job_postings
                 (source, source_id, keyword, title, company, city,
                  salary_raw, salary_min, salary_max, exp_min, exp_max,
-                 education, tags, description, url)
+                 education, tags, description, url, collected_at)
             VALUES
                 (:source, :source_id, :keyword, :title, :company, :city,
                  :salary_raw, :salary_min, :salary_max, :exp_min, :exp_max,
-                 :education, :tags, :description, :url)
+                 :education, :tags, :description, :url, :collected_at)
             ON CONFLICT(source, source_id) DO UPDATE SET
                 keyword=excluded.keyword, title=excluded.title, company=excluded.company,
                 city=excluded.city, salary_raw=excluded.salary_raw,
@@ -92,6 +103,7 @@ async def upsert_jobs(jobs: list[dict]) -> int:
                 exp_min=excluded.exp_min, exp_max=excluded.exp_max,
                 education=excluded.education, tags=excluded.tags,
                 description=excluded.description, url=excluded.url,
+                collected_at=COALESCE(:collected_at_new, job_postings.collected_at),
                 updated_at=datetime('now', 'localtime')
         """, rows)
         await db.commit()

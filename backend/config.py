@@ -124,6 +124,27 @@ class Config:
         return os.getenv("LLM_MODEL", os.getenv(env_key, provider["default_model"]))
 
     # ===== v4.3: 模型调用优雅降级（fallback）链 =====
+    def _resolve_candidate_credentials(self, provider: str, info: dict) -> tuple[str, str]:
+        """按候选 provider 解析 api_key / base_url（v8.18 修全局变量覆盖）。
+
+        三种模式：
+        - 当前 provider：允许全局 LLM_API_KEY / LLM_BASE_URL 覆盖（用户自定义
+          中转/代理的既定契约，与 LLM_API_KEY 属性同口径）。
+        - 全局 LLM_BASE_URL 指向聚合中转（one-api/openrouter 等）：全局 Key 对
+          所有候选生效——此时全局 Key 本来就是中转端点通用的。
+        - 其它 provider 且走各家官方端点：只认各自的 *_API_KEY。不同家的 Key
+          不通用，此前把主 provider 的全局 Key 灌给所有候选，fallback 会静默
+          变成"同一上游试三遍"后 401；现在留空，由 llm_client 直接跳过该候选。
+        """
+        if provider == self.AI_PROVIDER_RESOLVED:
+            return (os.getenv("LLM_API_KEY", "") or os.getenv(info["api_key_env"], ""),
+                    os.getenv("LLM_BASE_URL", "") or info["base_url"])
+        global_base = os.getenv("LLM_BASE_URL", "")
+        if global_base:
+            return (os.getenv(info["api_key_env"], "") or os.getenv("LLM_API_KEY", ""),
+                    global_base)
+        return os.getenv(info["api_key_env"], ""), info["base_url"]
+
     @property
     def LLM_FALLBACK_CHAIN(self) -> list[dict]:
         """解析 LLM_FALLBACK_CHAIN 为有序候选列表，供 LLMClient 兜底重试。
@@ -152,8 +173,7 @@ class Config:
                 logger.warning(f"LLM_FALLBACK_CHAIN 含未知 provider: {provider}，已跳过")
                 continue
             info = self.AI_PROVIDERS[provider]
-            api_key = os.getenv("LLM_API_KEY", os.getenv(info["api_key_env"], ""))
-            base_url = os.getenv("LLM_BASE_URL", info["base_url"])
+            api_key, base_url = self._resolve_candidate_credentials(provider, info)
             candidates.append({
                 "provider": provider,
                 "model": model,
@@ -297,11 +317,14 @@ class Config:
                 logger.warning(f"LLM_TASK_MODELS[{task}] 含未知 provider {provider!r}，已跳过")
                 continue
             info = self.AI_PROVIDERS[provider]
+            api_key, base_url = self._resolve_candidate_credentials(provider, info)
             result[task] = {
                 "provider": provider,
                 "model": model,
-                "api_key": os.getenv("LLM_API_KEY", os.getenv(info["api_key_env"], "")),
-                "base_url": os.getenv("LLM_BASE_URL", info["base_url"]),
+                # v8.18: 与 LLM_FALLBACK_CHAIN 同口径——跨 provider 绑定不再被
+                # 全局 LLM_API_KEY/LLM_BASE_URL 覆盖成主 provider 的凭据
+                "api_key": api_key,
+                "base_url": base_url,
             }
         return result
 

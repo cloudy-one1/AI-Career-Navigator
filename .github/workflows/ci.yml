@@ -60,6 +60,11 @@ jobs:
       - name: 安装依赖
         run: npm ci
 
+      # v8.18: eslint 是事故驱动的防线（no-undef 源于 renderJourneyProgress 缺
+      # import 构建静默放行的真实事故），不进 CI 等于只存在于开发者本机
+      - name: Lint（eslint）
+        run: npm run lint
+
       - name: 前端单测（vitest）
         run: npm run test
 

@@ -80,8 +80,31 @@ def main():
     os.makedirs("data", exist_ok=True)
     os.makedirs("data/uploads", exist_ok=True)
 
-    host = os.getenv("HOST", "0.0.0.0")
-    port = os.getenv("PORT", "8000")
+    host = os.getenv("HOST")
+    port = os.getenv("PORT")
+    # v8.18: 让 .env 里的 HOST/PORT 真正生效（此前 run.py 从不读 .env，该配置
+    # 只在 Docker 路径有效），兜底次序 = 进程环境变量 > .env > 默认值。
+    # 默认 127.0.0.1：全站免登录（CHARTER DC-10），默认不应把无认证服务绑到
+    # 所有网卡——v8.11 的发布面收口只落在 docker-compose，此处补齐裸机路径。
+    env_path = os.path.join(root, ".env")
+    if os.path.exists(env_path):
+        try:
+            with open(env_path, "r", encoding="utf-8") as fh:
+                for line in fh:
+                    line = line.strip()
+                    if not line or line.startswith("#") or "=" not in line:
+                        continue
+                    key, _, value = line.partition("=")
+                    key = key.strip()
+                    value = value.split(" #", 1)[0].strip().strip('"').strip("'")
+                    if key == "HOST" and host is None and value:
+                        host = value
+                    elif key == "PORT" and port is None and value:
+                        port = value
+        except OSError as exc:
+            log.warning("读取 .env 的 HOST/PORT 失败（不影响启动）: %s", exc)
+    host = host or "127.0.0.1"
+    port = port or "8000"
 
     log.info("=" * 50)
     log.info("  AI 求职领航 本地开发模式")
