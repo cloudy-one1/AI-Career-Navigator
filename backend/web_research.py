@@ -7,6 +7,7 @@ v3.1 降级：DDG 被墙时，从 skills_data.json 本地匹配 JD 关键词提�
 不再返回空数组。
 """
 
+import asyncio
 import logging
 import urllib.request
 import urllib.parse
@@ -158,8 +159,11 @@ async def search_position_info(position: str, company: str = "") -> str:
         queries.insert(0, f"{company} {position} hiring interview")
 
     all_texts = []
-    for q in queries[:3]:  # 最多 3 次查询
-        result = await to_thread(_fetch_ddg, q)
+    # v8.19: 三条查询相互独立，并行 fetch——此前串行 to_thread，DDG 被墙且超时
+    # 兜底时最坏 3×10s=30s 才能建会话（enrich_jd_with_research 挂在
+    # create_session 主链路上），并行后最坏压到 10s
+    tasks = [to_thread(_fetch_ddg, q) for q in queries[:3]]  # 最多 3 次查询
+    for result in await asyncio.gather(*tasks):
         text = _extract_text_from_ddg(result)
         if text:
             all_texts.append(text)
@@ -229,10 +233,20 @@ async def enrich_jd_with_research(llm_client, jd_text: str, position: str = "",
             max_tokens=1024,
             task="market",   # v6.2: 任务级模型绑定（岗位画像丰富）
         )
+        # v8.19: 字段类型守卫——chat_json 只保证顶层是 dict，字段被模型吐成
+        # str/dict 时下游按 list 消费（拼接/len/切片）会 TypeError，整次画像白做
         enriched_jd = result.get("enriched_jd", jd_text)
+        if not isinstance(enriched_jd, str) or not enriched_jd.strip():
+            enriched_jd = jd_text
         key_skills = result.get("key_skills", [])
+        if not isinstance(key_skills, list):
+            key_skills = []
         hot_topics = result.get("hot_topics", [])
+        if not isinstance(hot_topics, list):
+            hot_topics = []
         search_summary = result.get("search_summary", "")
+        if not isinstance(search_summary, str):
+            search_summary = str(search_summary)
 
         logger.info(f"web research: 提炼出 {len(key_skills)} 个技能, {len(hot_topics)} 个话题")
         return {

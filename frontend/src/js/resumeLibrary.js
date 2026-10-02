@@ -203,8 +203,11 @@ function showRenameForm(r) {
         el('button', {
           className: 'btn btn-sm btn-primary', textContent: '保存',
           onClick: async () => {
+            const title = input.value.trim();
+            // v8.19: 与新建表单同口径——此前空标题可直接 PATCH 入库
+            if (!title) { toast('标题不能为空', 'warning'); return; }
             try {
-              await request('PATCH', `/api/resumes/${r.id}`, { title: input.value.trim() });
+              await request('PATCH', `/api/resumes/${r.id}`, { title });
               toast('已保存', 'success');
               loadResumes();
             } catch (err) {

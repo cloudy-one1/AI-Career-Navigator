@@ -8,6 +8,7 @@ question_gen（rag:interview）与 career_planner（rag:career）在 v8.17 一�
 SimpleRagService），进程重启即清空——本路由不做持久化，文档需要每次运行后
 重新录入。规模上限与适用场景见 knowledge_store 模块头注释。
 """
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Request
@@ -55,7 +56,9 @@ async def add_knowledge(req: KnowledgeAddRequest, request: Request = None):
 
     store = get_knowledge_store()
     ns_normalized = ns if ns.startswith("rag:") else f"rag:{ns}"
-    added = store.add_document(ns_normalized, req.source.strip(), text)
+    # v8.19: 分块+索引是纯 CPU 操作，丢线程执行——与 WS 面试主循环同处一个
+    # 事件循环，50k 字符同步处理会短暂卡住所有在途面试
+    added = await asyncio.to_thread(store.add_document, ns_normalized, req.source.strip(), text)
     logger.info(f"知识库录入: {ns_normalized} <- {req.source!r} 新增 {added} 块")
     return {
         "namespace": ns_normalized,

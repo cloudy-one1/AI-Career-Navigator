@@ -15,6 +15,7 @@ from ..db import (
 )
 from ..schemas import WeaknessResolveRequest, DiagnosisFeedbackRequest
 from .. import weakness_memory
+from .deps import internal_error
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -35,7 +36,7 @@ async def submit_feedback(req: DiagnosisFeedbackRequest):
         )
         return {"status": "ok", "feedback_id": feedback_id}
     except Exception as e:
-        raise HTTPException(500, str(e))
+        raise internal_error(e, "提交诊断反馈")
 
 
 @router.get("/api/feedback/{session_id}")
@@ -45,7 +46,7 @@ async def get_feedback(session_id: str):
         stats = await get_feedback_stats(session_id)
         return stats
     except Exception as e:
-        raise HTTPException(500, str(e))
+        raise internal_error(e, "获取反馈统计")
 
 
 @router.get("/api/weakness-profile")
@@ -55,8 +56,7 @@ async def global_weakness_profile(position_id: str | None = None):
         profile = await get_global_weakness_profile(position_id=position_id)
         return {"status": "ok", "profile": profile}
     except Exception as e:
-        logger.error(f"获取全局薄弱点失败: {e}")
-        raise HTTPException(500, str(e))
+        raise internal_error(e, "获取全局薄弱点")
 
 
 @router.get("/api/weakness-profile/points")
@@ -74,8 +74,7 @@ async def weakness_points(include_resolved: bool = False,
                                             position_id=position_id)
         return {"status": "ok", "count": len(points), "points": points}
     except Exception as e:
-        logger.error(f"获取薄弱点明细失败: {e}")
-        raise HTTPException(500, str(e))
+        raise internal_error(e, "获取薄弱点明细")
 
 
 @router.get("/api/weakness-profile/suggestions")
@@ -93,8 +92,7 @@ async def weakness_suggestions(limit: int = Query(5, ge=1, le=20),
                                                             position_id=position_id)
         return {"status": "ok", "count": len(suggestions), "suggestions": suggestions}
     except Exception as e:
-        logger.error(f"获取复习建议失败: {e}")
-        raise HTTPException(500, str(e))
+        raise internal_error(e, "获取复习建议")
 
 
 @router.put("/api/weakness-profile/{point_id}/resolve")
@@ -108,8 +106,7 @@ async def resolve_weakness(point_id: int, payload: WeaknessResolveRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"更新薄弱点状态失败: {e}")
-        raise HTTPException(500, str(e))
+        raise internal_error(e, "更新薄弱点状态")
 
 
 @router.delete("/api/weakness-profile/{point_id}")
@@ -123,8 +120,7 @@ async def remove_weakness(point_id: int):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"删除薄弱点失败: {e}")
-        raise HTTPException(500, str(e))
+        raise internal_error(e, "删除薄弱点")
 
 
 @router.get("/api/weakness-profile/{session_id}")
@@ -134,5 +130,4 @@ async def session_weakness_profile(session_id: str):
         profile = await get_weakness_profile(session_id)
         return {"status": "ok", "session_id": session_id, "profile": profile}
     except Exception as e:
-        logger.error(f"获取会话薄弱点失败: {e}")
-        raise HTTPException(500, str(e))
+        raise internal_error(e, "获取会话薄弱点")

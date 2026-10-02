@@ -142,10 +142,54 @@ async def list_questions(
             results = []
             for row in rows:
                 d = dict(row)
-                d["tags"] = json.loads(d.get("tags", "[]"))
+                # v8.19: JSON 容错——NULL 列会让 json.loads(None) 抛 TypeError，
+                # 脏 JSON 抛 JSONDecodeError，两种都会令整个列表接口 500
+                try:
+                    d["tags"] = json.loads(d.get("tags") or "[]")
+                except (json.JSONDecodeError, TypeError):
+                    d["tags"] = []
                 d["is_favorited"] = bool(d.get("is_favorited", 0))
                 results.append(d)
             return results
+    finally:
+        await db.close()
+
+
+async def count_questions(
+    round_type: str = None,
+    difficulty: int = None,
+    favorited: bool = None,
+    search: str = None,
+    source: str = None,
+) -> int:
+    """题库命中总数（v8.19：此前 list_bank 把当前页条数当 total，题库超过
+    limit 后前端翻页永远以为只有一页）。
+
+    过滤条件必须与 list_questions 保持一致——改一处同步改另一处。
+    """
+    db = await get_db()
+    try:
+        where = ["1=1"]
+        params: list = []
+        if round_type:
+            where.append("round_type = ?")
+            params.append(round_type)
+        if difficulty is not None:
+            where.append("difficulty = ?")
+            params.append(difficulty)
+        if favorited:
+            where.append("is_favorited = 1")
+        if source:
+            where.append("source = ?")
+            params.append(source)
+        if search:
+            where.append("(question_text LIKE ? OR intent LIKE ?)")
+            params.extend([f"%{search}%", f"%{search}%"])
+        async with db.execute(
+            f"SELECT COUNT(*) FROM question_bank WHERE {' AND '.join(where)}", params
+        ) as cur:
+            row = await cur.fetchone()
+            return int(row[0]) if row else 0
     finally:
         await db.close()
 

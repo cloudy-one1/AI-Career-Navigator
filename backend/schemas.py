@@ -362,7 +362,10 @@ class JDEntry(BaseModel):
 
 class CrossJobCompareRequest(BaseModel):
     resume_text: str = Field(..., min_length=10, description="简历文本")
-    jd_list: list[JDEntry] = Field(..., min_length=2, description="待对比的岗位列表（至少2个）")
+    # v8.19: max_length=10——此前无上限，gather 对 N 个岗位并行打 N 路 LLM
+    # 调用且无并发闸，一次请求可瞬间打出几十路上游调用
+    jd_list: list[JDEntry] = Field(..., min_length=2, max_length=10,
+                                   description="待对比的岗位列表（2~10 个）")
 
 
 class JobCompareItem(BaseModel):

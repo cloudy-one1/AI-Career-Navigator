@@ -546,33 +546,41 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                     answer_received = True
 
                 # 本轮题目问完 → 质量驱动推进检查
-                quality = session.check_round_quality()
-                await websocket.send_json({
-                    "type": "round_quality_check",
-                    "data": quality
-                })
+                # v8.19: 用户已宣布结束（退出口令）就不再做质量检查与追加题——
+                # 此前 break 只跳出答题等待循环，随后仍会打一次 LLM 生成追加题，
+                # 前端在 interview_end_signal 之后收到自相矛盾的出题事件
+                if not user_ended:
+                    quality = session.check_round_quality()
+                    await websocket.send_json({
+                        "type": "round_quality_check",
+                        "data": quality
+                    })
 
-                if quality["passed"] or not quality["can_add_extra"]:
+                    if quality["passed"] or not quality["can_add_extra"]:
+                        break
+
+                    # v2.6: 未达标 → 针对薄弱维度追加定向题
+                    extra_q = await session.generate_extra_question()
+                    if not extra_q:
+                        break
+
+                    # v8.6: 追加题同样是"一道题"，墙钟起点随之重置
+                    question_sent_at = time.time()
+                    await websocket.send_json({
+                        "type": "extra_question",
+                        "data": {
+                            "round": session.current_round,
+                            "question": extra_q.get("question", ""),
+                            "intent": extra_q.get("intent", ""),
+                            "focus_dimension": extra_q.get("focus_dimension", ""),
+                            "focus_dimension_name": extra_q.get("focus_dimension_name", ""),
+                            "reason": extra_q.get("reason", "本轮质量未达标，追加一道针对性问题"),
+                        }
+                    })
+                    # 追加题回到答题等待循环（answer_received 仍为 False）
+
+                if user_ended:
                     break
-
-                # v2.6: 未达标 → 针对薄弱维度追加定向题
-                extra_q = await session.generate_extra_question()
-                if not extra_q:
-                    break
-
-                # v8.6: 追加题同样是"一道题"，墙钟起点随之重置
-                question_sent_at = time.time()
-                await websocket.send_json({
-                    "type": "extra_question",
-                    "data": {
-                        "round": session.current_round,
-                        "question": extra_q.get("question", ""),
-                        "intent": extra_q.get("intent", ""),
-                        "focus_dimension": extra_q.get("focus_dimension", ""),
-                        "focus_dimension_name": extra_q.get("focus_dimension_name", ""),
-                        "reason": extra_q.get("reason", "本轮质量未达标，追加一道针对性问题"),
-                    }
-                })
 
             # v6.2: 收尾阶段 —— 由工程层发收束语，确保最后一轮答完即收束不拖沓
             if session.is_closing_round() and not user_ended:

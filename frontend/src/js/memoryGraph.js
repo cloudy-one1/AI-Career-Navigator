@@ -316,10 +316,8 @@ export function initMemory() {
     }
   });
 
-  loadMemory();
-  loadWeaknessProfile();
-
-  // v8.4: 加载岗位列表 + 从档案获取默认目标岗位
+  // v8.19: 首屏数据统一由 loadPositionSelector 收尾加载——此前 init 先各拉
+  // 一次、命中默认岗位后再各拉一次，同一数据最多拉 4 次
   loadPositionSelector();
 }
 
@@ -330,17 +328,23 @@ function legendDot(tier, label) {
   );
 }
 
+let _profileSeq = 0;   // v8.19: 画像加载序号——旧响应后到不得覆盖新筛选
+let _memorySeq = 0;    // v8.19: 图谱加载序号（fallback 会改写 view.positionId，竞态风险更高）
+
 async function loadWeaknessProfile() {
+  const seq = ++_profileSeq;
   const container = $('#weakness-profile-content');
   if (!container) return;
   try {
     let data = await getGlobalWeaknessProfile(view.positionId);
+    if (seq !== _profileSeq) return;  // v8.19: 已有更新的筛选请求
     let profile = data.profile || [];
     let fallback = false;
     // v8.x: 若当前岗位筛选无数据，但全局有数据，自动 fallback 到全部岗位，
     // 避免"面过试但长期记忆为空"的误解（粘贴 JD 面试时 position_id 为 None）。
     if (profile.length === 0 && view.positionId) {
       const globalData = await getGlobalWeaknessProfile(null);
+      if (seq !== _profileSeq) return;
       const globalProfile = globalData.profile || [];
       if (globalProfile.length > 0) {
         profile = globalProfile;
@@ -405,25 +409,28 @@ async function loadPositionSelector() {
   if (targetId) {
     view.positionId = targetId;
     sel.value = targetId;
-    // 默认选中后刷新数据
-    loadMemory();
-    loadWeaknessProfile();
   }
+  // v8.19: 无论是否命中默认岗位都只在此处加载一次首屏数据
+  loadMemory();
+  loadWeaknessProfile();
 }
 
 // ===== 数据加载与渲染 =====
 
 async function loadMemory() {
+  const seq = ++_memorySeq;
   const detail = $('#memory-detail');
   const nodes = $('#memory-nodes');
   const svg = $('#memory-svg');
   try {
     let res = await getWeaknessPoints(view.includeResolved, 200, view.positionId);
+    if (seq !== _memorySeq) return;  // v8.19: 已有更新的筛选请求，丢弃旧响应
     let points = res.points || [];
     let fallback = false;
     // v8.x: 当前岗位筛选无数据时自动 fallback 到全部岗位（与 loadWeaknessProfile 一致）
     if (points.length === 0 && view.positionId) {
       const globalRes = await getWeaknessPoints(view.includeResolved, 200, null);
+      if (seq !== _memorySeq) return;
       const globalPoints = globalRes.points || [];
       if (globalPoints.length > 0) {
         points = globalPoints;

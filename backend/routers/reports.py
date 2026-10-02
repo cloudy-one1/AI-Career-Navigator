@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException, Response
 
 from ..db import get_report
 from ..interview_engine.report import generate_review_markdown
+from .deps import internal_error
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -43,8 +44,7 @@ async def export_review(session_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"生成复盘文件失败: {e}")
-        raise HTTPException(500, str(e))
+        raise internal_error(e, "生成复盘文件")
 
 
 # ===== v6.1: 复盘报告 HTML 导出（借鉴 offerMaster report_pdf.py 的 MD→HTML 模板渲染） =====
@@ -140,5 +140,4 @@ async def export_report_html(session_id: str):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"生成复盘 HTML 失败: {e}")
-        raise HTTPException(500, str(e))
+        raise internal_error(e, "生成复盘 HTML")

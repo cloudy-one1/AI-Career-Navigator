@@ -310,13 +310,15 @@ function queryExisting() {
 
 /* ─────────────────── 采集任务（轮询进度） ─────────────────── */
 
-const CRAWL_POLL_MAX_MS = 15 * 60 * 1000;  // v8.18: 轮询上限——任务挂起时不再永久轮询
+const CRAWL_POLL_MAX_MS = 15 * 60 * 1000;  // v8.19: 轮询上限——任务挂起时不再永久轮询
+let _listSeq = 0;     // v8.19: 列表请求序号——快速翻页/改筛选时旧响应后到不得覆盖新结果
+let _detailSeq = 0;   // v8.19: 详情请求序号——连点两行时旧详情不得覆盖新详情
 
 async function startCrawl() {
   const keyword = $('#mkt-keyword').value.trim();
   if (!keyword) { toast('请先输入关键词', 'warning'); return; }
   if (state.crawling) {
-    // v8.18: 采集进行中再点按钮 = 取消任务（此前按钮只是 disabled，僵死任务无解）
+    // v8.19: 采集进行中再点按钮 = 取消任务（此前按钮只是 disabled，僵死任务无解）
     try {
       await cancelMarketCrawl(state.crawlTaskId);
       toast('取消请求已受理，等待当前页结束…', 'info');
@@ -332,7 +334,7 @@ async function startCrawl() {
   if (!state.selectedCities.length) toast('未选城市，将按全国范围采集', 'info');
 
   const btn = $('#mkt-crawl-btn');
-  // v8.18: 按钮保持可点并变为"取消采集"——此前 disabled，任务僵死时用户无解
+  // v8.19: 按钮保持可点并变为"取消采集"——此前 disabled，任务僵死时用户无解
   btn.disabled = false;
   btn.textContent = '✕ 取消采集';
   state.lastKeyword = keyword;
@@ -355,11 +357,11 @@ async function startCrawl() {
 
 function pollCrawl(taskId) {
   clearInterval(state.crawlTimer);
-  const pollStart = Date.now();  // v8.18: 轮询上限计时
+  const pollStart = Date.now();  // v8.19: 轮询上限计时
   state.crawlTimer = setInterval(async () => {
     try {
       if (Date.now() - pollStart > CRAWL_POLL_MAX_MS) {
-        // v8.18: 任务挂起时不再永久轮询（此前切走 Tab 也不停）
+        // v8.19: 任务挂起时不再永久轮询（此前切走 Tab 也不停）
         stopPolling();
         showError('采集任务长时间未完成，已停止轮询；后端任务层有硬超时兜底');
         return;
@@ -369,7 +371,7 @@ function pollCrawl(taskId) {
         stopPolling();
         return;
       }
-      // v8.18: cities 字段缺省守卫（此前 TypeError 被 catch 吞掉，进度条冻结但轮询永续）
+      // v8.19: cities 字段缺省守卫（此前 TypeError 被 catch 吞掉，进度条冻结但轮询永续）
       const totalCities = (st.cities || []).length;
       const doneCities = Object.keys(st.pages_collected || {}).length;
       const pct = st.status === 'done' ? 100
@@ -380,7 +382,7 @@ function pollCrawl(taskId) {
         stopPolling();
         setCrawlDone(st);
       } else if (st.status === 'failed' || st.status === 'cancelled') {
-        // v8.18: cancelled（用户取消/硬超时）与 failed 同为终态
+        // v8.19: cancelled（用户取消/硬超时）与 failed 同为终态
         stopPolling();
         setCrawlFailed(st.error || st.message || '采集已取消');
       }
@@ -630,6 +632,7 @@ async function loadStats() {
 }
 
 async function reloadList(page) {
+  const seq = ++_listSeq;
   state.page = Math.max(0, page);
   const tbody = $('#mkt-tbody');
   tbody.innerHTML = '';
@@ -640,11 +643,14 @@ async function reloadList(page) {
   ));
   try {
     const data = await getMarketJobs(state.filters, state.page, PAGE_SIZE);
+    // v8.19: 已有更新的列表请求——丢弃旧响应，防竞态覆盖
+    if (seq !== _listSeq) return;
     state.items = data.items || [];
     state.total = data.total || 0;
     renderTable();
     renderPagination();
   } catch (e) {
+    if (seq !== _listSeq) return;
     tbody.innerHTML = '';
     tbody.appendChild(el('tr', {}, el('td', { colSpan: '8', className: 'mkt-empty', textContent: `加载失败：${e.message}` })));
   }
@@ -910,6 +916,7 @@ function buildDetailView() {
 }
 
 async function openDetail(jobId) {
+  const seq = ++_detailSeq;
   switchView('detail');
   const body = $('#mkt-detail-body');
   body.innerHTML = '';
@@ -917,10 +924,13 @@ async function openDetail(jobId) {
 
   try {
     const { job, jd_text } = await getMarketJob(jobId);
+    // v8.19: 已打开另一条岗位详情——丢弃旧响应，防"详情与所点行错位"
+    if (seq !== _detailSeq) return;
     state.currentJob = job;
     state.currentJdText = jd_text;
     renderDetail(body, job, jd_text);
   } catch (e) {
+    if (seq !== _detailSeq) return;
     body.innerHTML = '';
     body.appendChild(el('div', { className: 'alert alert-danger visible', textContent: `详情加载失败：${e.message}` }));
   }

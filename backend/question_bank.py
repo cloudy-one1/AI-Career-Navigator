@@ -48,9 +48,18 @@ async def list_bank(params: dict) -> dict:
         limit=limit,
         offset=offset,
     )
+    # v8.19: total 改为同过滤条件的真实命中数——此前返回当前页条数，
+    # 题库超过 limit 后前端翻页永远以为只有一页
+    total = await db.count_questions(
+        round_type=round_type,
+        difficulty=difficulty,
+        favorited=favorited,
+        search=search,
+        source=source,
+    )
     return {
         "questions": questions,
-        "total": len(questions),
+        "total": total,
         "round_types": ROUND_TYPES,
     }
 

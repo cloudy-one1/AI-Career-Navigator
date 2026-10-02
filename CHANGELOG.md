@@ -1,10 +1,64 @@
 # 变更日志（CHANGELOG）
 
-> 记录 **v8.0 → v8.18** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
+> 记录 **v8.0 → v8.19** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
 > 历史见 [docs/changelog-archive.md](docs/changelog-archive.md)。不变的架构约束与决策记录见
 > [CHARTER.md](CHARTER.md)，贡献流程见 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的“AI 求职陪跑”为历史名称，保留不删。**
+
+---
+
+## v8.19 审查整改第二批：前端竞态族 + 数据防线 + 泄漏收敛（2026-10-02）
+
+> v8.18 五包之外的存量 P1/P2 清理：前端四个"旧响应覆盖新内容/游离实例"级
+> 缺陷、db 层 JSON 容错口径、LLM 输入输出防线补齐、`str(e)` 外泄统一收敛。
+
+### 改动
+
+- **前端竞态/生命周期（4 个 P1 + 4 个 P2）**：
+  - `history.js`：详情加载加请求序号——快速连点两条记录时旧响应不再覆盖新内容；
+    `overall_avg`/`avg_score` 非数值不再抛 TypeError。
+  - `memoryGraph.js`：loadMemory / loadWeaknessProfile 各自加序号守卫（fallback 会
+    改写 `view.positionId`，慢响应竞态风险最高）；首屏数据收敛到
+    loadPositionSelector 一处加载（此前同数据最多拉 4 次）。
+  - `report.js`：drawRadarChart destroy 后立即置 null，空数据分支给显式空态
+    （此前残留指向已销毁实例，二次 destroy 是未定义行为）。
+  - `liveRadar.js`：实例 canvas 已游离（面板重建）时销毁重建——此前更新全部打到
+    脱离文档的旧实例，新雷达卡永远空白。
+  - `profileCard.js` 加载序号守卫；`resumeLibrary.js` 重命名空标题拦截；
+    `careerPlan.js` LLM 缺字段防御；`marketData.js` 列表/详情请求序号。
+- **数据防线（后端）**：
+  - `db/questions.py` / `db/weakness.py`：tags / risk_points JSON 列解析统一容错
+    （NULL/脏数据此前令列表接口整体 500，同文件两套口径收敛为一套）。
+  - `question_bank.py`：`total` 改为同过滤条件真实命中数（新增 `db.count_questions`，
+    此前返回当前页条数，超 limit 后前端永远以为只有一页）。
+  - `question_gen.py`：`questions` 元素级类型校验 + 空 question 文本过滤
+    （模型吐字符串时按字符迭代会污染出题主链路）。
+  - `dimension_weights.py`：夹取与归一化耦合迭代——此前"先夹紧再归一"会重新越界
+    （{0.40,0.10×4} 归一后主维度 0.50）。
+- **LLM 链路防线**：
+  - `web_research.py`：3 条 DDG 查询并行（create_session 最坏阻塞 30s→10s）；
+    LLM 返回的列表/文本字段 isinstance 守卫。
+  - `career_planner.py`：简历全文截断 4000 字（与 resume_parser 同口径），
+    超长简历不再静默落入通用降级模板。
+  - `routers/voice.py`：TTS 文本上限 2000 字（此前 ASR 有硬校验而 TTS 没有）。
+  - `routers/analytics.py` 入参：`jd_list` 加 max_length=10（此前一次请求可打
+    几十路并行 LLM 调用）。
+- **健壮性杂项**：
+  - `routers/knowledge.py`：add_document 丢线程执行（纯 CPU 分块不再短暂卡住
+    与 WS 主循环共享的事件循环）。
+  - `main.py`：CORS 通配源时强制 `allow_credentials=False`（通配+凭证是非法组合，
+    实际语义是任意网站可跨源携带凭证读写本地 API）。
+  - `interview_ws.py`：用户发出结束口令后不再做质量检查/追加题（此前前端会在
+    interview_end_signal 之后收到自相矛盾的出题事件）。
+- **`str(e)` 外泄收敛**：`deps.py` 新增 `internal_error()` 统一出口
+  （细节进日志、客户端拿固定文案），替换 diagnostics.py 8 处、
+  question_bank.py 2 处、reports.py 2 处、system.py health 载荷 1 处。
+
+### 验证（2026-10-02，本机）
+
+- 后端全量 pytest 通过（v8.18 基线 1168 passed / 1 skipped 之上零新增失败）。
+- 前端 vitest 83 例、eslint 0 error、vite build 通过。
 
 ---
 

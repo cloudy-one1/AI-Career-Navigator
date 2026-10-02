@@ -366,7 +366,7 @@ function renderBaseline(gap) {
         el('div', { style: 'font-size:.78rem;color:var(--text-muted);', textContent: '以简历-目标岗位六维匹配快照作为路径起点锚定' }),
       ),
       el('div', { style: 'text-align:right;' },
-        el('div', { style: 'font-size:1.6rem;font-weight:800;color:var(--primary);', textContent: `${gap.overall_score.toFixed(1)}/5` }),
+        el('div', { style: 'font-size:1.6rem;font-weight:800;color:var(--primary);', textContent: `${(Number(gap.overall_score) || 0).toFixed(1)}/5` }),
         el('div', {
           style: `display:inline-block;padding:2px 12px;border-radius:12px;font-size:.75rem;font-weight:600;color:white;background:${riskColor};margin-top:4px;`,
           textContent: `匹配风险：${gap.risk_level}`,
@@ -375,12 +375,15 @@ function renderBaseline(gap) {
     ),
     el('div', { className: 'career-dims', style: 'margin-top:14px;' },
       ...gap.dimensions.map(d => {
-        const pct = (d.score / 5) * 100;
-        const barClass = d.score >= 4 ? 'high' : d.score >= 3 ? 'mid' : 'low';
+        // v8.19: LLM 返回缺 score 字段时不再抛 TypeError（请求其实已成功，
+        // 此前报"规划暂时不可用：Cannot read properties of..."误导用户）
+        const score = Number(d.score) || 0;
+        const pct = (score / 5) * 100;
+        const barClass = score >= 4 ? 'high' : score >= 3 ? 'mid' : 'low';
         return el('div', { className: 'career-dim-row' },
           el('div', { className: 'career-dim-head' },
             el('span', { className: 'career-dim-name', textContent: d.name }),
-            el('span', { className: 'career-dim-score', style: `color:${d.score >= 4 ? 'var(--success)' : d.score >= 3 ? '#F59E0B' : 'var(--danger)'};`, textContent: `${d.score}/5` }),
+            el('span', { className: 'career-dim-score', style: `color:${score >= 4 ? 'var(--success)' : score >= 3 ? '#F59E0B' : 'var(--danger)'};`, textContent: `${score}/5` }),
           ),
           el('div', { className: 'dim-bar' },
             el('div', { className: `dim-bar-fill ${barClass}`, style: `width:${pct}%;` }),

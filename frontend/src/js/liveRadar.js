@@ -16,7 +16,14 @@ const LATEST_COLOR = '#A08945';  // v5.0 纸墨：黄铜
  * @param {HTMLElement} area 面试进行区容器
  */
 export function mountLiveRadar(area) {
-  if (mounted && $('#live-radar-chart')) return;
+  // v8.19: 模块级实例与 DOM 生命周期解耦——面板被重建后旧 canvas 已游离，
+  // 必须先销毁旧实例，否则更新全部打进脱离文档的 canvas（新雷达卡永远空白）
+  if (liveChart && !liveChart.canvas?.isConnected) {
+    liveChart.destroy();
+    liveChart = null;
+    mounted = false;
+  }
+  if (liveChart) return;  // 实例健康（canvas 仍在文档中），幂等返回
 
   const card = el('div', { className: 'card live-radar-card', id: 'live-radar-card' },
     el('div', { className: 'card-title', textContent: '📡 实时能力雷达' }),
@@ -43,6 +50,13 @@ export function updateLiveRadar(snapshot) {
 
   const canvas = $('#live-radar-chart');
   if (!canvas || typeof window.Chart === 'undefined') return;
+
+  // v8.19: 旧实例挂在已游离的 canvas 上（面板重建后服务端重发数据）→ 销毁重建，
+  // 此前更新全部打到脱离文档的旧实例，新 canvas 永远空白、本场雷达静默失效
+  if (liveChart && liveChart.canvas !== canvas) {
+    liveChart.destroy();
+    liveChart = null;
+  }
 
   const keys = snapshot.keys || [];
   const labels = snapshot.labels || [];

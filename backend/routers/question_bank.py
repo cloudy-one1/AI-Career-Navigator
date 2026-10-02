@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
 from .. import question_bank as qbank
+from .deps import internal_error
 
 router = APIRouter()
 
@@ -32,7 +33,7 @@ async def list_question_bank(
         })
         return result
     except Exception as e:
-        raise HTTPException(500, str(e))
+        raise internal_error(e, "列出题库题目")
 
 
 class CreateQuestionRequest(BaseModel):
@@ -100,4 +101,4 @@ async def import_questions_bank(req: ImportQuestionsRequest):
     try:
         return await qbank.import_from_session(req.session_id)
     except Exception as e:
-        raise HTTPException(500, str(e))
+        raise internal_error(e, "从会话导入题目")

@@ -502,10 +502,22 @@ async def generate_round_questions(llm_client, resume_text: str, jd_text: str,
             2048,
             "question",   # v6.2: 任务级模型绑定（出题）
         )
-        questions = result.get("questions", []) if isinstance(result, dict) else []
+        raw_questions = result.get("questions", []) if isinstance(result, dict) else []
+        # v8.19: 元素级类型校验——模型把 questions 吐成字符串时按字符迭代会污染
+        # 出题主链路（调用方对其 append/insert 直接炸）；缺 question 文本的条目丢弃
+        if isinstance(raw_questions, list):
+            questions = [
+                q for q in raw_questions
+                if isinstance(q, dict)
+                and isinstance(q.get("question"), str) and q["question"].strip()
+            ]
+        else:
+            logger.warning(
+                f"{round_name} 出题返回的 questions 不是列表"
+                f"（{type(raw_questions).__name__}），按空处理"
+            )
+            questions = []
         for q in questions:
-            if not isinstance(q, dict):
-                continue
             if focus_dimension:
                 q["focus_dimension"] = focus_dimension
                 q["focus_dimension_name"] = FOCUS_DIMENSION_NAMES.get(focus_dimension, "")

@@ -40,7 +40,12 @@ async def get_weakness_profile(session_id: str) -> list[dict]:
             results = []
             for r in rows:
                 d = dict(r)
-                d["risk_points"] = json.loads(d.get("risk_points", "[]"))
+                # v8.19: JSON 容错（与 get_latest_risk_points 同口径）——NULL/脏数据
+                # 不再令画像列表整体 500
+                try:
+                    d["risk_points"] = json.loads(d.get("risk_points") or "[]")
+                except (json.JSONDecodeError, TypeError):
+                    d["risk_points"] = []
                 results.append(d)
             return results
     finally:
@@ -110,7 +115,11 @@ async def list_weakness_points(include_resolved: bool = False,
             results = []
             for r in rows:
                 d = dict(r)
-                d["risk_points"] = json.loads(d.get("risk_points", "[]"))
+                # v8.19: JSON 容错（与上方 list 口径一致）
+                try:
+                    d["risk_points"] = json.loads(d.get("risk_points") or "[]")
+                except (json.JSONDecodeError, TypeError):
+                    d["risk_points"] = []
                 results.append(d)
             return results
     finally:

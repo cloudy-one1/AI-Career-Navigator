@@ -607,13 +607,21 @@ function _renderMarketRefBlock(ref) {
 }
 
 function drawRadarChart(report) {
-  const canvas = $('#radar-chart');
-  if (!canvas) return;
+	const canvas = $('#radar-chart');
+	if (!canvas) return;
 
-  // 销毁旧图表
-  if (chartInstance) chartInstance.destroy();
+	// 销毁旧图表（v8.19: destroy 后立即置 null——此前空数据分支 destroy 后
+	// 直接 return，模块级实例残留指向已销毁对象，下次渲染会对死实例二次 destroy）
+	if (chartInstance) {
+		chartInstance.destroy();
+		chartInstance = null;
+	}
 
-  const ctx = canvas.getContext('2d');
+	// v8.19: 清掉上一次残留的空态提示并恢复画布可见
+	canvas.style.display = '';
+	canvas.parentNode?.querySelector('.radar-empty-hint')?.remove();
+
+	const ctx = canvas.getContext('2d');
 
   // 每个轮次一个 dataset，展示各维度在不同轮次中的表现
   const roundCount = report.rounds?.length || 1;
@@ -636,7 +644,16 @@ function drawRadarChart(report) {
     });
   }
 
-  if (roundDatasets.length === 0) return;
+	if (roundDatasets.length === 0) {
+		// v8.19: 空数据给显式空态，不再静默留白（卡片已入 DOM 而画布空白）
+		canvas.style.display = 'none';
+		canvas.parentNode?.appendChild(el('div', {
+			className: 'radar-empty-hint',
+			style: 'text-align:center;color:var(--text-muted);font-size:.85rem;padding:32px 0;',
+			textContent: '暂无分轮数据（完成至少一轮作答后生成）',
+		}));
+		return;
+	}
 
   chartInstance = new Chart(ctx, {
     type: 'radar',

@@ -50,8 +50,14 @@ function resetCharts() {
   if (curveChart) { curveChart.destroy(); curveChart = null; }
 }
 
+let _profileSeq = 0;  // v8.19: 加载序号——快速切 Tab 并发 loadProfile 时旧响应不得覆盖新渲染
+
 async function loadProfile(panel) {
+  const seq = ++_profileSeq;
   const profile = await fetchProfile();
+  // v8.19: 面板已被新一轮加载接管——丢弃旧响应（此前两轮并发渲染会经
+  // 全局 ID 查询抢同一个 canvas，图表实例归属靠时序侥幸）
+  if (seq !== _profileSeq) return;
   panel.innerHTML = '';
   resetCharts();
 

@@ -101,7 +101,24 @@ def normalize_weights(raw: dict | None) -> dict:
     if total <= 0:
         return dict(DEFAULT_WEIGHTS)
 
-    return {k: round(v / total, 4) for k, v in cleaned.items()}
+    # v8.19: 夹取与归一化耦合——此前"先夹紧再归一"会重新越界（{0.40,0.10×4}
+    # 归一后主维度达 0.50，超出 MAX_WEIGHT 一倍），"防止单维被压到无效/过大"
+    # 的约束在归一后失效。迭代"归一→夹紧"直至稳定，把质量重新摊给未触顶的维度。
+    clamped = cleaned
+    for _ in range(6):
+        total = sum(clamped.values())
+        if total <= 0:
+            return dict(DEFAULT_WEIGHTS)
+        scaled = {k: v / total for k, v in clamped.items()}
+        new_clamped = {k: min(max(v, MIN_WEIGHT), MAX_WEIGHT) for k, v in scaled.items()}
+        if new_clamped == clamped:
+            break
+        clamped = new_clamped
+
+    total = sum(clamped.values())
+    if total <= 0:
+        return dict(DEFAULT_WEIGHTS)
+    return {k: round(v / total, 4) for k, v in clamped.items()}
 
 
 def weighted_score(dimensions: dict, weights: dict | None) -> float:

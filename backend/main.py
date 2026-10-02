@@ -96,10 +96,14 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="AI 求职领航", lifespan=lifespan)
 
 # CORS 中间件（最先注册）
+# v8.19: 通配源与 allow_credentials 组合是非法语义——Starlette 对带凭证请求
+# 会镜像任意 Origin，等于"任何网站都可携带凭证跨源读写本地 API"。
+# 空配置走 ["*"] 时强制关闭 credentials（本工具无 cookie 认证，无功能损失）。
+_wildcard_cors = (not _cors_origins) or "*" in _cors_origins
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins or ["*"],  # 空列表 = 开发模式，允许所有
-    allow_credentials=True,
+    allow_credentials=not _wildcard_cors,
     allow_methods=["*"],
     allow_headers=["*"],
 )

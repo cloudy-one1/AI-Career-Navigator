@@ -33,7 +33,8 @@ async def health():
         all_time = {
             "reports_scanned": 0, "reports_with_quote_data": 0,
             "cited": 0, "verified": 0, "verify_rate": None,
-            "parse_errors": 0, "error": str(e),
+            # v8.19: 异常细节只进日志，响应体不带 str(e)（与其余路由统一口径）
+            "parse_errors": 0, "error": type(e).__name__,
         }
     return {
         "status": "ok",

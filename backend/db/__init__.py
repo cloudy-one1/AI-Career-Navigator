@@ -21,6 +21,7 @@ from .jd_weights import (
 )
 from .questions import (
     add_question,
+    count_questions,
     delete_question,
     get_question,
     import_questions_from_session,
@@ -103,6 +104,7 @@ __all__ = [
     "import_questions_from_session",
     "increment_usage",
     "init_db",
+    "count_questions",
     "list_active_weakness_memory",
     "list_journey_marks",
     "list_positions",

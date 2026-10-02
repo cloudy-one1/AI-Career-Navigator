@@ -91,8 +91,11 @@ def _build_user_prompt(req: CareerPlanRequest, baseline: dict) -> str:
 技能缺口（简历与目标岗位市场热门技能的比对结果）：
 {skill_ctx.strip()}"""
 
+    # v8.19: 简历全文截断到 4000 字（与 resume_parser 同口径）——简历库入库明确
+    # 不截断，超长简历全文注入会让规划请求 token 费用暴涨甚至超模型上下文，
+    # 静默落入通用降级模板且无告警
     return f"""候选人简历：
-{req.resume_text}
+{(req.resume_text or '')[:4000]}
 
 目标：在 {req.timeframe_years} 年内成长为「{target_desc}」。
 

@@ -7,6 +7,7 @@ import { listSessions, getSession } from './api.js';
 
 const STYLE_NAMES = { friendly: '友好型', strict: '严格型', pressure: '压力型' };
 const STATUS_MAP = { active: '进行中', completed: '已完成', interrupted: '已中断', aborted: '已中止' };
+let _detailSeq = 0;  // v8.19: 详情请求序号——快速连点两条记录时旧响应后到不得覆盖新内容
 
 // v7.2: 加载态从「转圈 dots」升级为骨架屏（纸纹 shimmer）
 function loadingIndicator(text) {
@@ -138,12 +139,15 @@ function parseReport(report) {
 }
 
 async function loadSessionDetail(sessionId) {
+  const seq = ++_detailSeq;
   const body = openDrawer('面试详情');
   body.innerHTML = '';
   body.appendChild(loadingIndicator('加载详情...'));
 
   try {
     const data = await getSession(sessionId);
+    // v8.19: 已打开另一条记录——丢弃旧响应，防"详情与所点条目错位"
+    if (seq !== _detailSeq) return;
     const session = data.session || {};
     const qas = data.qas || [];
     const report = parseReport(data.report);
@@ -152,10 +156,11 @@ async function loadSessionDetail(sessionId) {
 
     // ── 概览区 ──
     const oAvg = report?.overall_avg;
+    const oAvgNum = Number(oAvg);  // v8.19: 非数值守卫——此前 toFixed 直接抛 TypeError
     body.appendChild(el('div', { className: 'drawer-section' },
       el('div', { className: 'detail-hero' },
-        oAvg != null ? el('div', { className: 'detail-score',
-          textContent: oAvg.toFixed(1) }) : '',
+        oAvg != null && Number.isFinite(oAvgNum) ? el('div', { className: 'detail-score',
+          textContent: oAvgNum.toFixed(1) }) : '',
         el('div', { className: 'detail-meta' },
           el('div', { className: 'detail-meta-row', textContent: `${STYLE_NAMES[session.style] || session.style || '友好型'} 风格 · ${fmtDate(session.created_at)}` }),
           el('div', { className: 'detail-meta-row detail-session-id', textContent: `Session: ${session.id}` }),
@@ -164,7 +169,7 @@ async function loadSessionDetail(sessionId) {
       (report?.rounds || []).length > 0 ? el('div', { className: 'detail-rounds' },
         ...report.rounds.map(r => el('div', { className: 'detail-round-row' },
           el('span', { className: 'detail-round-name', textContent: r.round_name }),
-          el('span', { className: 'detail-round-score', textContent: (r.avg_score || 0).toFixed(1) }),
+          el('span', { className: 'detail-round-score', textContent: (Number(r.avg_score) || 0).toFixed(1) }),
         )),
       ) : '',
     ));

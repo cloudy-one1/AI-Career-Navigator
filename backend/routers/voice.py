@@ -21,12 +21,22 @@ class VoiceTTSRequest(BaseModel):
     voice: Optional[str] = None  # None 时由后端解析为配置默认音色
 
 
+# v8.19: TTS 文本长度上限——此前 ASR 有 MAX_UPLOAD_BYTES 硬校验而 TTS 没有，
+# 任意大的 text 会直塞上游合成接口（阻塞 to_thread 线程池 + 白耗上游超时）。
+_TTS_TEXT_MAX = 2000
+
+
 @router.post("/api/voice/tts")
 @state.limiter.limit(config.RATE_LIMIT_VOICE)
 async def voice_tts(req: VoiceTTSRequest, request: Request = None):
     """文本 -> mimo-v2.5-tts -> 音频（Base64 WAV）。"""
     if not req.text or not req.text.strip():
         raise HTTPException(status_code=400, detail="文本不能为空")
+    if len(req.text) > _TTS_TEXT_MAX:
+        raise HTTPException(
+            status_code=413,
+            detail=f"合成文本过长，上限 {_TTS_TEXT_MAX} 字",
+        )
     if not voice_service.enabled:
         return {"used": False, "message": "未配置 MIMO_API_KEY"}
     usage = await asyncio.to_thread(voice_service.synthesize, req.text, req.voice)
