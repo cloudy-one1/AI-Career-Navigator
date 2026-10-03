@@ -584,6 +584,20 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                                 continue
 
                             fu_text = fu_msg.get("data", {}).get("text", "")
+
+                            # v8.21: 结束口令前置检查——与主回答等待循环同一处理。
+                            # 此前只修了主循环：追问等待期间说"结束面试"会先撞上
+                            # v8.20 注入拦截词 ((结束|终止|退出)\s*面试) 被拦为
+                            # 不安全内容，用户想收束面试却收到 security_block，
+                            # 只能先跳过追问再说口令。口令必须排在安全检查之前。
+                            if is_end_signal(fu_text):
+                                user_ended = True
+                                await websocket.send_json({
+                                    "type": "interview_end_signal",
+                                    "data": {"message": "收到结束信号，面试到此结束，正在生成面评报告……"}
+                                })
+                                break
+
                             fu_passed, fu_reason = full_check(fu_text, _answer_texts(session))
                             if not fu_passed:
                                 await websocket.send_json({

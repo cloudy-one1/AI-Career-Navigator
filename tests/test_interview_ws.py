@@ -215,6 +215,28 @@ class FakeSession:
 
 # ===== fixtures 与工具 =====
 
+class FollowUpFakeSession(FakeSession):
+    """首答即触发追问的桩——钉住追问等待循环内的口令收束路径。
+
+    基类 FakeSession 的 decide 恒为"收轮推进"（不进追问分支），无法驱动
+    追问等待循环；这里改写为首次结算给 GENERATE_FOLLOW_UP。
+    """
+
+    def __init__(self):
+        super().__init__()
+        self._follow_up_offered = False
+
+    def decide(self):
+        if not self._follow_up_offered:
+            self._follow_up_offered = True
+            return FlowDecision(NextAction.GENERATE_FOLLOW_UP,
+                                FlowState.GENERATING_FOLLOW_UP, "桩：触发追问")
+        return FlowDecision(NextAction.ADVANCE_ROUND, FlowState.ADVANCING_ROUND,
+                            "桩：默认收轮推进")
+
+    async def generate_follow_up(self, diagnosis=None):
+        return "能具体说说订单系统是怎么拆分的吗？"
+
 @pytest.fixture()
 def ws_client(tmp_path, monkeypatch):
     """真实 app + 临时文件 DB + 预置 sessions 行（reports 表有外键）。
@@ -428,6 +450,35 @@ class TestEndSignal:
         row = _report_row()
         assert row is not None, "结束后必须落完整报告"
         assert row["report"]["overall_score"] == 3.5
+        assert _session_row()["status"] == "completed"
+
+    def test_end_signal_during_follow_up_wait(self, ws_client):
+        """追问等待期间说\"结束面试\"必须照常收束，而不是被安全护栏拦截。
+
+        v8.21 端到端实测发现：is_end_signal 前置检查此前只在主回答循环有，
+        追问循环里口令文本会先撞上 v8.20 注入拦截词被 security_block——
+        用户想收束面试却收到\"不安全内容\"报错，只能先跳过追问再说口令。
+        """
+        s = FollowUpFakeSession()
+        state.active_sessions[SESSION_ID] = s
+        with ws_client.websocket_connect(f"/ws/interview/{SESSION_ID}") as ws:
+            _drain_until(ws, {"question"})
+            ws.send_json({"type": "answer", "data": {"text": ANSWER_1}})
+            _drain_until(ws, {"follow_up"})
+
+            # 口令作为追问补充提交——必须命中收束，而不是 security_block
+            ws.send_json({"type": "answer", "data": {"text": END_SIGNAL}})
+            final = _drain_until(ws, {"interview_end_signal", "interview_done"})
+            types = [m["type"] for m in final]
+            assert "security_block" not in types, "口令被安全护栏拦截（回归）"
+            assert "diagnosis_result" not in types  # 口令不进诊断
+
+            # 口令不得当作追问补充计入作答数据
+            assert s.answered_count == 1
+            assert len(s.all_diagnoses) == 1
+
+        assert _wait_until(_sessions_clean)
+        assert _report_row() is not None, "结束后必须落完整报告"
         assert _session_row()["status"] == "completed"
 
 
