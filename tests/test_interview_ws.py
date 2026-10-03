@@ -365,6 +365,8 @@ class TestPingPong:
             assert "diagnosis_result" in types
             assert "round_quality_check" in types
             assert "round_summary" in types
+            # v8.21: 流程位置落位——诊断是流式长任务，DIAGNOSING 必须可见
+            assert "diagnosing" in fake_session.flow_states
 
         assert _wait_until(_sessions_clean)
         row = _session_row()
@@ -441,6 +443,8 @@ class TestDisconnect:
             msgs = _drain_until(ws, {"extra_question"})
             assert fake_session.extra_questions_added == 1
             assert len(fake_session.all_diagnoses) == 1  # 已答部分必须存在，才有"部分报告"
+            # v8.21: 补题生成也是 LLM 往返，ASKING 落位必须可见
+            assert "asking" in fake_session.flow_states
 
             # 第二题展示后不回答，直接断连 → 服务端 receive 抛 WebSocketDisconnect
             _drain_until(ws, {"question"})

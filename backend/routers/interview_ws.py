@@ -241,6 +241,9 @@ async def ws_interview(websocket: WebSocket, session_id: str):
 
             # 生成题目
             if not session.round_questions:
+                # v8.21: ASKING 落位——出题是一次 LLM 往返（数秒级），流程位置
+                # 如实反映"正在出题"，而不是停在上一状态装死。
+                await _mark_flow(session_id, session, FlowState.ASKING)
                 await session.generate_questions()
 
             if not session.round_questions:
@@ -412,6 +415,9 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                     # v2.6: 安全通过 → 流式双 Agent 诊断，逐块推送
                     diag = None
                     stream_notified = False
+                    # v8.21: DIAGNOSING 落位——诊断是流式长任务，此前九态中
+                    # 此状态从不落位，"正在诊断"只能靠猜。
+                    await _mark_flow(session_id, session, FlowState.DIAGNOSING)
                     async for stream_msg in session.stream_answer(
                         answer_text,
                         from_voice=from_voice,
@@ -578,10 +584,26 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                     })
 
                     decision = session.decide()
+                    if decision.action == NextAction.AWAIT_ANSWER:
+                        # 本轮还有计划内的题 → 继续问下一题。结算块在每次回答后
+                        # 都会执行（不只在本轮题目问完后），该动作在此时意味着
+                        # "下一题"而非"收轮"——漏掉这个分支会把剩余计划题整轮
+                        # 跳过（实测：每答一题就推进一轮）。
+                        #
+                        # 取舍记录（D15）：老路径在此处按质量插入补题、抢在计划
+                        # 题之前（低分会把本轮计划题替换成补题）；v8.21 起以纯
+                        # 函数为准——计划题问完才进结算，补题只在结算点追加。
+                        continue
                     if decision.action != NextAction.GENERATE_EXTRA:
-                        # 推进 / 收尾：break 交还外层轮次循环（推进副作用在循环尾部）
+                        # v8.21: 推进 / 收尾同样出自本决策——ADVANCE_ROUND 进入
+                        # 下一轮、FINISH 结束面试，推进副作用仍由循环尾部的
+                        # advance_round 执行（advance 后 is_finished 的判定与
+                        # 纯函数 is_last_round 同源）。决策理由首次可观测。
+                        logger.info("[flow] %s 结算判定: %s", session_id[:8], decision.reason)
                         break
                     logger.info("[flow] %s 补题判定: %s", session_id[:8], decision.reason)
+                    # v8.21: ASKING 落位——补题生成同样是一次 LLM 往返
+                    await _mark_flow(session_id, session, FlowState.ASKING)
 
                     # v2.6: 未达标 → 针对薄弱维度追加定向题
                     extra_q = await session.generate_extra_question()
@@ -608,6 +630,8 @@ async def ws_interview(websocket: WebSocket, session_id: str):
 
             # v6.2: 收尾阶段 —— 由工程层发收束语，确保最后一轮答完即收束不拖沓
             if session.is_closing_round() and not user_ended:
+                # v8.21: CLOSING 落位——收尾强控阶段在流程位置上显式可见
+                await _mark_flow(session_id, session, FlowState.CLOSING)
                 await websocket.send_json({
                     "type": "interview_closing",
                     "data": {
