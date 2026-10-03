@@ -1,10 +1,44 @@
 # 变更日志（CHANGELOG）
 
-> 记录 **v8.0 → v8.20** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
+> 记录 **v8.0 → v8.21** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
 > 历史见 [docs/changelog-archive.md](docs/changelog-archive.md)。不变的架构约束与决策记录见
 > [CHARTER.md](CHARTER.md)，贡献流程见 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的“AI 求职陪跑”为历史名称，保留不删。**
+
+---
+
+## v8.21 结构性整改（进行中）
+
+> v8.17→v8.20 完成全项目逐文件审查与三个修复批次后，剩余三件**结构级改造**
+> 单独立项（任务书：docs/specs/2026-10-02-v8.21-结构性整改任务书.md，本地不入库）：
+> schemas 死模型清理 → flow.decide_next 双轨收敛 → 会话快照序列化。
+> 每个任务独立提交、独立可回滚。
+
+### 任务一：schemas.py 死模型清理（2026-10-03）
+
+- 删除 18 个全后端零引用的"文档型"模型：`DiagnoseRequest / DiagnoseResponse /
+  DiagnosisResult / DimensionScore / GenerateQuestionsRequest /
+  GenerateQuestionsResponse / HistoryItem / RoundSummary / ComprehensiveReport /
+  ReportData / RoundConfig / InterviewerStyle / WeaknessProfileItem / QuestionItem /
+  FeedbackStatsResponse / WSMessage / QuestionBankItem / QuestionBankListResponse`
+  （公开模型 47→29；逐一 grep 核实 backend/tests 零引用，test_schemas.py 钉的
+  均为存活模型，无需改写）。
+- `ProviderSwitchRequest.provider` 描述补上 `auto`——llm_client.switch_provider
+  自 v6.0 起、v8.18 起就地真探测，原描述漏列该值。
+- 新增 `tests/test_schemas_wiring.py` 接线门禁：每个公开模型必须在 backend 源码
+  被引用、或作为已接线模型的嵌套字段类型（传递闭包，覆盖
+  `GapDimensionItem`/`JDEntry`/`MarketReference` 这类"仅被存活模型嵌套引用"的
+  情形——FastAPI 递归校验/序列化时它们随父模型一起被消费）；并配反向自测
+  （注入僵尸模型必须让门禁变红，DC-11 自证纪律）。
+- 删除动机：文档型 schema 的危害不是占行数而是"接回即炸"——`DimensionScore.score`
+  钉 `int(ge=1,le=5)` 而诊断引擎实际输出 float（3.5 合法），已漂移；后人把它当
+  响应模型接回路由即 ValidationError。没有门禁则死模型会随时间回流。
+
+### 验证（2026-10-03，本机）
+
+- 全量 pytest 1170 passed / 1 skipped（+2 门禁用例）；被删名字在 backend/tests
+  零残留；run.py lint KEPT；前端三件套未涉及（无前端改动）。
 
 ---
 

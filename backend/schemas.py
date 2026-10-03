@@ -4,6 +4,9 @@ v2.1: 新增 AI 后端管理模型。
 v2.2: 新增题库管理模型。
 v2.4: 新增面试模式 + 面试官切换模型。
 v2.5: 新增诊断反馈模型 + 岗位画像研究模型。
+v8.21: 删除 18 个从未接线的"文档型"模型（其中 DimensionScore.score 的 int 约束
+与诊断引擎实际 float 输出已漂移，接回路由即 ValidationError）。
+防回潮门禁见 tests/test_schemas_wiring.py：新模型必须被接线才能进本文件。
 """
 
 from pydantic import BaseModel, Field
@@ -30,42 +33,7 @@ class InterviewStage(str, Enum):
     HR = "hr"                        # HR 面
 
 
-# ========== 面试官风格 ==========
-
-class InterviewerStyle(BaseModel):
-    """面试官风格配置"""
-    id: str
-    name: str
-    description: str
-    system_prompt_modifier: str  # 注入到 system prompt 的风格指令
-
-
-# ========== 面试轮次 ==========
-
-class RoundConfig(BaseModel):
-    """轮次配置"""
-    round_index: int
-    name: str  # 如 "技术面试"、"行为面试"、"综合面试"
-    question_count: int = 3
-    target_duration_min: int = 15
-    advance_threshold: float = 3.0  # 该轮平均分达此值才能推进
-
-
 # ========== 请求模型 ==========
-
-class GenerateQuestionsRequest(BaseModel):
-    resume_text: str = Field(..., description="简历文本")
-    jd_text: str = Field(default="", description="岗位描述文本")
-
-
-class DiagnoseRequest(BaseModel):
-    session_id: str = Field(..., description="会话 ID")
-    question_index: int = Field(..., description="当前题目索引")
-    question_text: str = Field(..., description="题目内容")
-    user_answer: str = Field(..., description="用户回答")
-    resume_text: str = Field(default="", description="简历文本")
-    jd_text: str = Field(default="", description="岗位描述")
-
 
 class SessionCreateRequest(BaseModel):
     resume_text: str = Field(default="", description="简历文本")
@@ -109,13 +77,6 @@ class PositionUpdateRequest(BaseModel):
     department: str | None = None
 
 
-class WeaknessProfileItem(BaseModel):
-    dimension: str
-    avg_score: float
-    weight: float
-    risk_points: list[str] = []
-
-
 class SessionCreateResponse(BaseModel):
     session_id: str
     message: str
@@ -125,62 +86,7 @@ class SessionCreateResponse(BaseModel):
     company_profile: str | None = None  # v6.5: 实际生效的目标公司显示名（未启用为 None）
 
 
-# ========== 响应模型 ==========
-
-class QuestionItem(BaseModel):
-    index: int
-    question: str
-
-
-class GenerateQuestionsResponse(BaseModel):
-    session_id: str
-    jd_keywords: list[str]
-    questions: list[QuestionItem]
-
-
-class DimensionScore(BaseModel):
-    score: int = Field(..., ge=1, le=5)
-    comment: str = Field(..., description="诊断评语")
-    # v7.0: 原话引用——从候选人回答中原样摘录的支撑片段（≤30 字）。
-    # 把主观打分锚定到文本证据上，使诊断可复核，也让报告页能并排展示"分数 vs 原话"。
-    #
-    # 字段名用 quote 而非 evidence：项目里已有"简历证据包（evidence package）"概念
-    # （_build_evidence_block / EVIDENCE_USE_HARD_RULES，指注入给诊断的简历片段）。
-    # 两者都叫 evidence 会让"证据"一词同时指"输入给模型的素材"和"模型输出的依据"，
-    # 语义正好相反，后续改任何一边都要反复确认指的是哪个。
-    quote: str = Field(default="", description="v7.0: 候选人回答原话摘录，作为该维度评分的依据")
-
-
-class DiagnosisResult(BaseModel):
-    star_completeness: DimensionScore
-    quantification: DimensionScore
-    logic_coherence: DimensionScore
-    job_relevance: DimensionScore
-    professional_depth: DimensionScore  # v5.0: 专业深度维度（与诊断引擎五维对齐）
-    overall_score: float = Field(..., description="综合评分")
-    overall_comment: str = Field(..., description="综合评语")
-    weakness_tags: list[str] = Field(default=[], description="v5.0: 本轮薄弱点标签（供跨轮累计）")
-
-
-class DiagnoseResponse(BaseModel):
-    session_id: str
-    question_index: int
-    round_index: int = 0
-    diagnosis: DiagnosisResult
-    rewrite_suggestion: str = Field(..., description="改写示范")
-    needs_follow_up: bool = False
-    follow_up_question: str = ""
-
-
-class HistoryItem(BaseModel):
-    question_index: int
-    round_index: int
-    question_text: str
-    user_answer: str
-    diagnosis: dict
-    rewrite_suggestion: str
-    created_at: str
-
+# ========== v5.0: 会话内模式切换 ==========
 
 class ModeSwitchRequest(BaseModel):
     """v5.0: 会话进行中切换面试模式"""
@@ -196,30 +102,6 @@ class ModeSwitchResponse(BaseModel):
     message: str
 
 
-# ========== 多轮面试模型 ==========
-
-class RoundSummary(BaseModel):
-    """单轮面试总结"""
-    round_index: int
-    round_name: str
-    questions_count: int
-    answers_count: int
-    avg_score: float
-    dimensions_avg: dict  # {star_completeness: 3.5, ...}
-
-
-class ComprehensiveReport(BaseModel):
-    """综合面试报告"""
-    session_id: str
-    interviewer_style: str
-    rounds: list[RoundSummary]
-    overall_avg: float
-    dimension_trends: list[dict]  # 各维度逐轮趋势数据
-    strengths: list[str]
-    weaknesses: list[str]
-    suggestions: str  # 整体提升建议
-
-
 # ========== v2.5: 诊断反馈 ==========
 
 class DiagnosisFeedbackRequest(BaseModel):
@@ -230,19 +112,6 @@ class DiagnosisFeedbackRequest(BaseModel):
     dimension: str = ""  # 可选：针对哪个评分维度
     comment: str = ""    # 可选：用户补充说明
     current_score: float = 0
-
-
-class FeedbackStatsResponse(BaseModel):
-    up: int = 0
-    down: int = 0
-    total: int = 0
-
-
-# ========== WebSocket 消息模型 ==========
-
-class WSMessage(BaseModel):
-    type: str
-    data: dict = {}
 
 
 # ========== v2.1 AI 后端管理模型 ==========
@@ -260,41 +129,10 @@ class ProviderListResponse(BaseModel):
 
 
 class ProviderSwitchRequest(BaseModel):
-    provider: str = Field(..., description="后端标识: deepseek/qwen/zhipu/openai")
-
-
-class ReportData(BaseModel):
-    session_id: str
-    interviewer_style: str
-    total_rounds: int
-    rounds: list[dict]
-    overall_avg: float
-    dimension_trends: list[dict]
-    strengths: list[str]
-    weaknesses: list[str]
-    suggestions: str
+    provider: str = Field(..., description="后端标识: deepseek/qwen/zhipu/openai/auto（auto=按 AI_PROVIDERS 注册顺序探测第一个 Key 有效的后端，llm_client.switch_provider 实际支持）")
 
 
 # ========== v2.2 题库管理模型 ==========
-
-class QuestionBankItem(BaseModel):
-    id: int
-    round_type: str = ""
-    question_text: str
-    intent: str = ""
-    tags: list[str] = []
-    difficulty: int = 3
-    source: str = "manual"
-    is_favorited: bool = False
-    usage_count: int = 0
-    created_at: str = ""
-
-
-class QuestionBankListResponse(BaseModel):
-    questions: list[QuestionBankItem]
-    total: int
-    round_types: list[str]
-
 
 class CreateQuestionRequest(BaseModel):
     question_text: str
