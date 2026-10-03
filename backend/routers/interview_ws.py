@@ -15,10 +15,10 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from ..config import config
 from ..db import (
     save_report, update_session_status, save_weakness_profile, update_session_flow,
-    get_session,
+    get_session, update_session_snapshot,
 )
 from ..interview_engine.flow import FlowState, NextAction
-from ..interview_engine.session import is_end_signal
+from ..interview_engine.session import InterviewSession, SnapshotError, is_end_signal
 from ..schemas import InterviewMode, InterviewStage
 from ..security import full_check, check_output
 from .. import weakness_memory
@@ -52,15 +52,64 @@ async def _mark_flow(session_id: str, session, state_: "FlowState") -> None:
     为什么单独封装：落库是"锦上添花"的能力，绝不能因为它失败而中断面试。
     所以这里吞掉所有异常，只记 debug 日志 —— 面试可用性优先于进度可观测性。
 
-    为什么不做断点续答：那需要把 InterviewSession 的全部字段（轮次配置、
-    诊断历史、追问状态、难度调度器……）序列化并从 DB 重建，改动面与风险都
-    远大于收益。当前只保证"流程位置可追溯、答题进度不因重启归零"。
+    v8.21: "不做断点续答"的限制已被会话快照补齐——快照在关键节点落库，
+    进程重启后可从 DB 快照重建会话继续面试（见 _try_revive_session）。
     """
     try:
         session.set_flow_state(state_)
         await update_session_flow(session_id, state_.value, session.answered_count)
     except Exception as e:  # noqa: BLE001
         logger.debug(f"[flow] 流程状态落库失败 session={session_id} state={state_}: {e}")
+
+
+async def _save_snapshot(session_id: str, session) -> None:
+    """v8.21: 关键节点落会话快照（出题后 / 诊断完成后 / 轮次推进后 / 模式切换后）。
+
+    与 _mark_flow 同一纪律：锦上添花不阻断，失败只记 debug 日志；刻意**不在**
+    流式 chunk 上调用（每 chunk 一写是数 KB 级 JSON 的无谓放大）。快照是
+    进行时持久化，不是报告替代品——终态仍走 build_report/save_report。
+    """
+    try:
+        await update_session_snapshot(session_id, session.to_snapshot())
+    except Exception as e:  # noqa: BLE001
+        logger.debug(f"[snapshot] 快照落库失败 session={session_id}: {e}")
+
+
+async def _try_revive_session(session_id: str) -> InterviewSession | None:
+    """v8.21: 快照复活——进程重启后 active_sessions 无此条目，但 DB 快照仍在
+    且会话状态为 active 时，从快照重建会话对象继续面试（任务书"重建继续"语义）。
+
+    任何一步不满足（无快照 / 状态非 active / JSON 损坏 / 快照残缺）都降级为
+    None，调用方按"会话不存在"处理——宁可放弃复活，也不带残缺状态继续面试。
+    """
+    try:
+        row = await get_session(session_id, include_snapshot=True)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"[snapshot] 快照读取失败 session={session_id}: {e}")
+        return None
+    if not row or (row.get("status") or "active") != "active":
+        return None
+    raw = row.get("snapshot_json")
+    if not raw:
+        return None
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, TypeError) as e:
+        logger.warning(f"[snapshot] 快照 JSON 解析失败 session={session_id}: {e}")
+        return None
+    try:
+        session = InterviewSession.from_snapshot(
+            data, llm_client=state.llm_client, diagnosis_engine=state.diagnosis_engine)
+    except SnapshotError as e:
+        logger.warning(f"[snapshot] 快照残缺，放弃复活 session={session_id}: {e}")
+        return None
+    except Exception as e:  # noqa: BLE001 - 快照形态的意外损坏同样降级，不让握手 500
+        logger.warning(f"[snapshot] 快照无法重建，放弃复活 session={session_id}: "
+                       f"{type(e).__name__}: {e}")
+        return None
+    logger.info("[snapshot] 会话 %s 已从快照复活（round=%s answered=%s）",
+                session_id[:8], session.current_round, session.answered_count)
+    return session
 
 
 async def _handle_control_message(websocket, session, msg) -> bool:
@@ -167,6 +216,14 @@ async def ws_interview(websocket: WebSocket, session_id: str):
     # v8.18: 原子完成「查会话 + 单连接认领」。没有这道守卫时，同一会话的第二次
     # 握手会拿到同一 session 对象，两个主循环并发出题/推进/互踩状态。
     session, err = await state.acquire_ws_session(session_id)
+    # v8.21: 快照复活——内存无此条目（进程重启）但 DB 快照仍在且会话 active 时，
+    # 从快照重建会话对象继续面试；复活后重新走认领（单连接守卫 / TTL 豁免语义
+    # 全部不变，只是在 acquire 之前多了一步"复活"）。
+    if session is None and err == "session_not_found":
+        revived = await _try_revive_session(session_id)
+        if revived is not None:
+            await state.register_session(session_id, revived)
+            session, err = await state.acquire_ws_session(session_id)
     if session is None:
         if err == "session_already_active":
             await websocket.send_json({
@@ -254,6 +311,9 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                 session.advance_round()
                 continue
 
+            # v8.21: 关键节点落快照——出题后（含复活后重入本轮的场景）
+            await _save_snapshot(session_id, session)
+
             # v8.6: 服务端墙钟起点（每次出题时设置），用于校验前端上报的思考时长
             question_sent_at = None
 
@@ -320,6 +380,9 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                             continue
                         session.pending_follow_up = ""
                         await websocket.send_json({"type": "mode_change", "data": event})
+                        # v8.21: 关键节点落快照——模式切换后（推进时按新模式
+                        # 重建轮次结构的 mode_changed 标记必须活过进程重启）
+                        await _save_snapshot(session_id, session)
                         continue
 
                     # v6.5: 面试技能（有状态多轮）—— 默认显式触发，
@@ -478,6 +541,9 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                         "data": session.weakness_payload()
                     })
 
+                    # v8.21: 关键节点落快照——诊断完成后（本题答案 + 诊断已入会话状态）
+                    await _save_snapshot(session_id, session)
+
                     # v8.21: 是否追问收敛到 decide_next 纯函数——"接下来该做什么"
                     # 的唯一出处（should_follow_up 老方法已删除，规则逐条并入纯
                     # 函数，取舍记录在本提交描述的规则 diff 清单）。OFFER_RECOVERY
@@ -564,6 +630,9 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                                 "data": {"message": "补充回答已记录"}
                             })
                             break
+                        # v8.21: 关键节点落快照——追问交换完成（补充回答 / 跳过留痕
+                        # 都已改变本题状态）
+                        await _save_snapshot(session_id, session)
 
                     answer_received = True
 
@@ -623,6 +692,8 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                             "reason": extra_q.get("reason", "本轮质量未达标，追加一道针对性问题"),
                         }
                     })
+                    # v8.21: 关键节点落快照——补题已入本轮题单
+                    await _save_snapshot(session_id, session)
                     # 追加题回到答题等待循环（answer_received 仍为 False）
 
                 if user_ended:
@@ -654,6 +725,8 @@ async def ws_interview(websocket: WebSocket, session_id: str):
             # 推进到下一轮
             session.advance_round()
             await _mark_flow(session_id, session, FlowState.ADVANCING_ROUND)
+            # v8.21: 关键节点落快照——轮次推进后（新轮次从零开始的状态）
+            await _save_snapshot(session_id, session)
 
         # 3. 生成报告
         await _mark_flow(session_id, session, FlowState.FINISHED)

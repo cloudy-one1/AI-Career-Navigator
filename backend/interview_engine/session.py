@@ -43,7 +43,7 @@ from .flow import (                      # v7.0 流程状态与推进决策（�
 )
 from ..company_profiles import company_role_block, company_round_block  # v6.5 公司风格层
 from ..interview_skills import SkillContext, default_registry  # v6.5 面试技能（有状态多轮）
-from ..difficulty import DifficultyScheduler  # v6.5 动态难度（轮内自适应）
+from ..difficulty import DifficultyScheduler, DifficultyState  # v6.5 动态难度（轮内自适应）
 from ..output_sanitizer import (
     OUTPUT_CONSTRAINTS,
     contains_answer_leak,
@@ -52,6 +52,14 @@ from ..output_sanitizer import (
 from .report import build_report
 
 logger = logging.getLogger(__name__)
+
+
+class SnapshotError(ValueError):
+    """会话快照残缺/版本不识别（v8.21）。
+
+    快照复活的风险模式是"复活后某状态静默归零"——比不复活更危险。
+    因此 from_snapshot 对必填字段显式 fail-fast，由调用方降级为"不复活"。
+    """
 
 # v5.0: 不会答/示弱信号检测（对标 agent-interview-coach 的 coaching recovery）
 UNCERTAIN_ANSWER_MARKERS = (
@@ -454,6 +462,244 @@ class InterviewSession:
             "question_idx": self.current_question_idx,
             "follow_up_count": self.follow_up_count,
         }
+
+    # ===== v8.21: 会话快照（进行时持久化，支撑进程重启后"重建继续"）=====
+
+    _SNAPSHOT_VERSION = 1
+
+    # 必填字段：任何一项缺失即视为残缺快照，from_snapshot 显式 fail-fast，
+    # 调用方降级为"不复活"。宁可放弃复活，也不带残缺状态继续面试——
+    # 静默归零的状态（如难度档、去重台账）比中断更难察觉。
+    _SNAPSHOT_REQUIRED = (
+        "session_id", "resume_text", "jd_text", "style", "mode", "stage",
+        "rounds", "current_round", "current_question_idx",
+        "round_questions", "round_answers", "round_diagnoses",
+        "all_diagnoses", "answer_history", "pending_follow_up",
+        "recovery_streak", "recovery_active", "difficulty",
+        "weakness_tags", "_weakness_counts", "dim_weights",
+        "_rewrite_ctx", "skill", "flow_state", "answered_count",
+    )
+
+    def to_snapshot(self) -> dict:
+        """序列化为纯 JSON 可承载的 dict（无对象引用/句柄/集合类型）。
+
+        快照是**进行时**持久化，不是报告替代品——终态仍走 build_report/save_report。
+        覆盖面与 __init__ 的状态面一一对应；刻意排除三类：
+        - 运行时依赖：db / llm / diagnosis（由复活方注入，不属于状态）；
+        - 可惰性重建：_retriever（由 resume_text 重建）、skill_registry
+          （default_registry() 无会话内状态，活动状态在 skill 三件套里）；
+        - 只写死字段：pending_status / current_question_context（历史遗留，
+          从未读过，没有可丢失的状态）。
+        """
+        return {
+            "v": self._SNAPSHOT_VERSION,
+            # —— 创建期输入（重建构造参数）——
+            "session_id": self.session_id,
+            "resume_text": self.resume_text,
+            "jd_text": self.jd_text,
+            "style": self.style,
+            "mode": self.mode,
+            "stage": self.stage,
+            "include_self_intro": self.include_self_intro,
+            "self_intro_done": self.self_intro_done,
+            "question_type_mix": dict(self.question_type_mix),
+            "resume_points": self.resume_points,
+            "jd_gaps": list(self.jd_gaps),
+            "company_profile": self.company_profile,
+            # —— 轮次与题目状态 ——
+            "rounds": [dict(r) for r in self.rounds],
+            "current_round": self.current_round,
+            "current_question_idx": self.current_question_idx,
+            "round_questions": [dict(q) for q in self.round_questions],
+            "round_answers": list(self.round_answers),
+            "round_diagnoses": [dict(d) for d in self.round_diagnoses],
+            "all_diagnoses": [dict(d) for d in self.all_diagnoses],
+            "answer_history": [dict(a) for a in self.answer_history],
+            "extra_questions_added": self.extra_questions_added,
+            "follow_up_count": self.follow_up_count,
+            "last_answer_text": self.last_answer_text,
+            "pending_follow_up": self.pending_follow_up,
+            "interviewer_history": [dict(h) for h in self.interviewer_history],
+            "_rewrite_ctx": self._rewrite_ctx,
+            # —— 权重 ——
+            "dim_weights": dict(self.dim_weights),
+            "weight_reason": self.weight_reason,
+            "weight_source": self.weight_source,
+            "_weights_ready": self._weights_ready,
+            # —— 薄弱点 / 不会答恢复 ——
+            "weakness_tags": list(self.weakness_tags),
+            "_weakness_counts": dict(self._weakness_counts),
+            "recovery_active": self.recovery_active,
+            "recovery_streak": self.recovery_streak,
+            "recovery_total": self.recovery_total,
+            "_recovery_advice_done": self._recovery_advice_done,
+            # —— 去重台账（set → list，恢复时转回 set）——
+            "_injected_hashes": sorted(self._injected_hashes),
+            "_kb_hashes": sorted(self._kb_hashes),
+            "asked_questions": list(self.asked_questions),
+            "asked_question_hashes": sorted(self.asked_question_hashes),
+            "long_term_memory": [dict(p) for p in self.long_term_memory],
+            "pressure_injected": self.pressure_injected,
+            # —— 调度器与一次性信号 ——
+            "difficulty": self.difficulty.state.to_dict(),
+            "pending_difficulty": self.pending_difficulty,
+            # —— 技能活动状态（registry 定义本身无会话内状态）——
+            "skill": {
+                "active_skill": self.active_skill,
+                "skill_ctx": self.skill_ctx.to_dict() if self.skill_ctx else None,
+                "skill_history": [dict(h) for h in self.skill_history],
+            },
+            # —— 流程位置 ——
+            "flow_state": self.flow_state.value
+            if isinstance(self.flow_state, FlowState) else str(self.flow_state),
+            "answered_count": self.answered_count,
+        }
+
+    @classmethod
+    def from_snapshot(cls, data, llm_client, diagnosis_engine, db=None) -> "InterviewSession":
+        """从快照重建会话对象（WS 复活入口用）。
+
+        必填字段缺失 / 类型不符 / 版本不识别 / 数值字段损坏一律抛
+        SnapshotError，调用方降级为"不复活"——绝不带残缺状态继续面试。
+        """
+        if not isinstance(data, dict):
+            raise SnapshotError("快照不是 dict")
+        if data.get("v") != cls._SNAPSHOT_VERSION:
+            raise SnapshotError(f"快照版本不识别: {data.get('v')!r}")
+        missing = [k for k in cls._SNAPSHOT_REQUIRED if k not in data]
+        if missing:
+            raise SnapshotError(f"快照缺少必填字段: {', '.join(missing)}")
+
+        def _need_str(key) -> str:
+            value = data[key]
+            if not isinstance(value, str):
+                raise SnapshotError(f"快照字段 {key} 应为字符串，实为 {type(value).__name__}")
+            return value
+
+        def _need_list(key) -> list:
+            value = data[key]
+            if not isinstance(value, list):
+                raise SnapshotError(f"快照字段 {key} 应为列表，实为 {type(value).__name__}")
+            return value
+
+        def _int(key, default=0):
+            raw = data.get(key, default)
+            try:
+                return int(raw)
+            except (TypeError, ValueError):
+                raise SnapshotError(f"快照字段 {key} 不是整数: {raw!r}")
+
+        session = cls(
+            session_id=_need_str("session_id"),
+            resume_text=_need_str("resume_text"),
+            jd_text=_need_str("jd_text"),
+            llm_client=llm_client,
+            diagnosis_engine=diagnosis_engine,
+            interview_style=_need_str("style"),
+            mode=_need_str("mode"),
+            stage=_need_str("stage"),
+            include_self_intro=bool(data.get("include_self_intro", False)),
+            question_type_mix=dict(data.get("question_type_mix") or {}),
+            resume_points=dict(data.get("resume_points") or {}),
+            jd_gaps=list(data.get("jd_gaps") or []),
+            company_profile=data.get("company_profile") or {},
+            db=db,
+        )
+
+        # —— 轮次与题目状态 ——
+        session.rounds = _need_list("rounds")
+        session.current_round = _int("current_round")
+        session.current_question_idx = _int("current_question_idx")
+        session.round_questions = _need_list("round_questions")
+        session.round_answers = _need_list("round_answers")
+        session.round_diagnoses = _need_list("round_diagnoses")
+        session.all_diagnoses = _need_list("all_diagnoses")
+        session.answer_history = _need_list("answer_history")
+        session.extra_questions_added = _int("extra_questions_added")
+        session.follow_up_count = _int("follow_up_count")
+        session.last_answer_text = str(data.get("last_answer_text", ""))
+        session.pending_follow_up = _need_str("pending_follow_up")
+        session.interviewer_history = list(data.get("interviewer_history") or [])
+        rewrite_ctx = data.get("_rewrite_ctx")
+        if rewrite_ctx is not None and not isinstance(rewrite_ctx, dict):
+            raise SnapshotError("快照字段 _rewrite_ctx 应为 dict 或 null")
+        session._rewrite_ctx = rewrite_ctx
+        # —— 权重 ——
+        dim_weights = data["dim_weights"]
+        if not isinstance(dim_weights, dict):
+            raise SnapshotError("快照字段 dim_weights 应为 dict")
+        session.dim_weights = dict(dim_weights)
+        session.weight_reason = str(data.get("weight_reason", ""))
+        session.weight_source = str(data.get("weight_source", "default"))
+        session._weights_ready = bool(data.get("_weights_ready", False))
+        # —— 薄弱点 / 恢复 ——
+        session.weakness_tags = _need_list("weakness_tags")
+        weakness_counts = data["_weakness_counts"]
+        if not isinstance(weakness_counts, dict):
+            raise SnapshotError("快照字段 _weakness_counts 应为 dict")
+        session._weakness_counts = dict(weakness_counts)
+        session.recovery_active = bool(data["recovery_active"])
+        session.recovery_streak = _int("recovery_streak")
+        session.recovery_total = _int("recovery_total")
+        session._recovery_advice_done = bool(data.get("_recovery_advice_done", False))
+        # —— 去重台账 ——
+        session._injected_hashes = set(data.get("_injected_hashes") or [])
+        session._kb_hashes = set(data.get("_kb_hashes") or [])
+        session.asked_questions = list(data.get("asked_questions") or [])
+        session.asked_question_hashes = set(data.get("asked_question_hashes") or [])
+        session.long_term_memory = list(data.get("long_term_memory") or [])
+        session.pressure_injected = _int("pressure_injected")
+        # —— 难度调度器：状态整体恢复，旋钮按当前 config 重建（__init__ 已做）——
+        difficulty = data["difficulty"]
+        if not isinstance(difficulty, dict):
+            raise SnapshotError("快照字段 difficulty 应为 dict")
+        try:
+            session.difficulty.state = DifficultyState.from_dict(difficulty)
+        except (TypeError, ValueError) as e:
+            raise SnapshotError(f"难度状态损坏: {e}")
+        pending_difficulty = data.get("pending_difficulty")
+        if pending_difficulty is not None and not isinstance(pending_difficulty, dict):
+            raise SnapshotError("快照字段 pending_difficulty 应为 dict 或 null")
+        session.pending_difficulty = pending_difficulty
+        # —— 技能活动状态 ——
+        skill = data["skill"]
+        if not isinstance(skill, dict):
+            raise SnapshotError("快照字段 skill 应为 dict")
+        session.active_skill = str(skill.get("active_skill", ""))
+        ctx_data = skill.get("skill_ctx")
+        if ctx_data is not None:
+            if not isinstance(ctx_data, dict):
+                raise SnapshotError("快照字段 skill.skill_ctx 应为 dict 或 null")
+            ctx = SkillContext(
+                session_id=str(ctx_data.get("session_id", "")),
+                mode=str(ctx_data.get("mode", "simulation")),
+                weak_tags=list(ctx_data.get("weak_tags") or []),
+            )
+            try:
+                ctx.step = int(ctx_data.get("step", 1))
+            except (TypeError, ValueError):
+                raise SnapshotError(f"快照字段 skill.skill_ctx.step 不是整数: {ctx_data.get('step')!r}")
+            ctx.metadata = dict(ctx_data.get("metadata") or {})
+            session.skill_ctx = ctx
+        session.skill_history = list(skill.get("skill_history") or [])
+        # —— 流程位置 ——
+        try:
+            session.flow_state = FlowState(_need_str("flow_state"))
+        except ValueError:
+            raise SnapshotError(f"flow_state 不识别: {data['flow_state']!r}")
+        session.answered_count = _int("answered_count")
+        session.self_intro_done = bool(data.get("self_intro_done", False))
+
+        # 重建 record_answer 建立的别名关系：live 对象里 round_diagnoses 与
+        # all_diagnoses 尾部持有同一个 dict（追问补评原地改分同时作用于两处）。
+        # JSON 往返后值相等但身份断开，这里按值相等重新接上——否则复活后
+        # 本轮均分读不到补评改过的分数。
+        rd, ad = session.round_diagnoses, session.all_diagnoses
+        for i in range(len(rd)):
+            j = len(ad) - len(rd) + i
+            if 0 <= j < len(ad) and rd[i] == ad[j]:
+                rd[i] = ad[j]
+        return session
 
     def closing_instruction(self) -> str:
         """返回注入出题 prompt 的内部收尾指令（非收尾阶段返回空串）。"""

@@ -20,14 +20,17 @@ import asyncio
 import json
 import threading
 import time
+from unittest.mock import MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from backend.config import config
-from backend.db import get_report, get_session, save_session
+from backend.db import get_report, get_session, save_session, update_session_snapshot
+from backend.dimension_weights import DIM_KEYS
 from backend.interview_engine.flow import FlowDecision, FlowState, NextAction
+from backend.interview_engine.session import InterviewSession
 from backend.routers import state
 
 SESSION_ID = "ws-itest-session"
@@ -483,3 +486,108 @@ class TestHandshake:
         with ws_client.websocket_connect(f"/ws/interview/{SESSION_ID}") as ws:
             msg = _recv_with_timeout(ws)
             assert msg["type"] == "interviewer_info"
+
+
+# ===== v8.21: 快照复活（进程重启后"重建继续"）=====
+
+def _snapshot_mid_interview(session_id: str) -> InterviewSession:
+    """构造真实 InterviewSession，推进到"第 1 题已答、指针指向第 2 题"。"""
+    s = InterviewSession(
+        session_id=session_id,
+        resume_text="5 年后端经验，主导订单系统重构，QPS 从 800 优化到 3000",
+        jd_text="招聘高级 Python 后端工程师",
+        llm_client=MagicMock(),
+        diagnosis_engine=MagicMock(),
+    )
+    s.round_questions = [
+        {"question": "重启前的问题", "question_type": "project"},
+        {"question": "重启后应当续问的问题", "question_type": "project"},
+    ]
+    s.record_answer("重启前的回答，讲了订单系统的拆分与缓存优化" * 3, {
+        "overall_score": 4.0, "round": 0, "question_idx": 0,
+        "dimensions": {k: 4 for k in DIM_KEYS},
+        "follow_up_question": "", "weakness_tags": [],
+    })
+    s.set_flow_state(FlowState.WAITING_ANSWER, answered=1)
+    s._weights_ready = True   # 复活握手的 dimension_weights 不再触发 LLM
+    return s
+
+
+def _raw_exec(sql: str, params: tuple = ()) -> None:
+    """裸 SQL 改临时库（绕过 API 层语义，用于构造存量/异常数据场景）。"""
+    import sqlite3
+    conn = sqlite3.connect(config.DB_PATH)
+    try:
+        conn.execute(sql, params)
+        conn.commit()
+    finally:
+        conn.close()
+
+
+class TestSnapshotRevival:
+    def _persist(self, session: InterviewSession, status: str = "active"):
+        """把会话行 + 快照写进临时库；刻意不注册 active_sessions（模拟进程重启）。"""
+        _run(save_session(session.session_id, resume_text=session.resume_text,
+                          jd_text=session.jd_text))
+        _run(update_session_snapshot(session.session_id, session.to_snapshot()))
+        if status != "active":
+            # update_session_status 对终态会清快照；这里用裸 UPDATE 绕开，
+            # 构造"status=interrupted 但快照仍在"的存量行，验证 status 闸门优先
+            _raw_exec("UPDATE sessions SET status = ? WHERE id = ?",
+                      (status, session.session_id))
+
+    def test_revived_session_continues_from_snapshot(self, ws_client):
+        """内存无会话但 DB 快照存在且 active → 握手复活，从断点继续出题。"""
+        s = _snapshot_mid_interview(SESSION_ID)
+        self._persist(s)
+
+        with ws_client.websocket_connect(f"/ws/interview/{SESSION_ID}") as ws:
+            msgs = _drain_until(ws, {"question"})
+            question = next(m for m in msgs if m["type"] == "question")
+            # 复活的会话从快照指针继续：第 2 题，而不是重新出题或从头开始
+            assert question["data"]["question"] == "重启后应当续问的问题"
+            assert question["data"]["round"] == 0
+            assert question["data"]["index"] == 2
+            assert SESSION_ID in state.active_sessions
+            # 复活会话的诊断历史随行——重启前那道题的评分仍在
+            assert len(state.active_sessions[SESSION_ID].all_diagnoses) == 1
+
+        assert _wait_until(_sessions_clean)
+
+    def test_interrupted_session_is_not_revived(self, ws_client):
+        """status=interrupted（断连已落部分报告）的会话不得复活——
+        复活条件是 active；否则每场被中断的面试重连都会"诈尸"。"""
+        s = _snapshot_mid_interview(SESSION_ID)
+        self._persist(s, status="interrupted")
+
+        with ws_client.websocket_connect(f"/ws/interview/{SESSION_ID}") as ws:
+            msg = ws.receive_json()
+            assert msg["type"] == "error"
+            assert "会话不存在" in msg["data"]["message"]
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()
+
+    def test_active_session_without_snapshot_is_not_revived(self, ws_client):
+        """创建了但从未被 WS 接管（无快照）的会话维持原语义：会话不存在。"""
+        _run(save_session(SESSION_ID))
+
+        with ws_client.websocket_connect(f"/ws/interview/{SESSION_ID}") as ws:
+            msg = ws.receive_json()
+            assert msg["type"] == "error"
+            assert "会话不存在" in msg["data"]["message"]
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()
+
+    def test_corrupted_snapshot_degrades_to_not_found(self, ws_client):
+        """快照 JSON 损坏 → 降级为"不复活"，绝不带残缺状态继续面试。"""
+        s = _snapshot_mid_interview(SESSION_ID)
+        self._persist(s)
+        _raw_exec("UPDATE sessions SET snapshot_json = '{not json' WHERE id = ?",
+                  (SESSION_ID,))
+
+        with ws_client.websocket_connect(f"/ws/interview/{SESSION_ID}") as ws:
+            msg = ws.receive_json()
+            assert msg["type"] == "error"
+            assert "会话不存在" in msg["data"]["message"]
+            with pytest.raises(WebSocketDisconnect):
+                ws.receive_json()

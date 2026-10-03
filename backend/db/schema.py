@@ -233,11 +233,15 @@ async def _ensure_session_columns(db) -> None:
     async with db.execute("PRAGMA table_info(sessions)") as cur:
         existing = {row[1] for row in await cur.fetchall()}
     for col in ("resume_id", "position_id",
-                "flow_state", "flow_updated_at", "answered_count"):
+                "flow_state", "flow_updated_at", "answered_count",
+                "snapshot_json"):
         if col in existing:
             continue
         if col == "answered_count":
             await db.execute("ALTER TABLE sessions ADD COLUMN answered_count INTEGER DEFAULT 0")
+        elif col == "snapshot_json":
+            # v8.21: 会话进行时快照（JSON），支撑进程重启后重建继续
+            await db.execute("ALTER TABLE sessions ADD COLUMN snapshot_json TEXT")
         else:
             await db.execute(f"ALTER TABLE sessions ADD COLUMN {col} TEXT")
         logger.info(f"[db] sessions 迁移：新增 {col} 列")

@@ -49,6 +49,15 @@ class DifficultyState:
             "trace": list(self.trace),
         }
 
+    @classmethod
+    def from_dict(cls, data: dict) -> "DifficultyState":
+        """从 to_dict 的产物重建（v8.21 会话快照复活用；字段缺省回零值）。"""
+        state = cls(level=int(data.get("level", 3)))
+        state.consec_up = int(data.get("consec_up", 0))
+        state.consec_down = int(data.get("consec_down", 0))
+        state.trace = list(data.get("trace") or [])
+        return state
+
 
 class DifficultyScheduler:
     """轮内难度自适应：连续 N 次达标升档、连续 N 次失手降档。

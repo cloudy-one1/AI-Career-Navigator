@@ -59,6 +59,7 @@ from .sessions import (
     save_report,
     save_session,
     update_session_flow,
+    update_session_snapshot,
     update_session_status,
 )
 from .weakness import (
@@ -131,6 +132,7 @@ __all__ = [
     "update_question",
     "update_resume",
     "update_session_flow",
+    "update_session_snapshot",
     "update_session_status",
     "upsert_weakness_memory",
 ]

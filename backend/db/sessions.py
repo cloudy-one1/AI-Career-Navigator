@@ -65,24 +65,57 @@ async def update_session_flow(session_id: str, flow_state: str,
         await db.close()
 
 
-async def update_session_status(session_id: str, status: str) -> None:
+async def update_session_snapshot(session_id: str, snapshot: dict) -> None:
+    """v8.21: 落会话进行时快照（关键节点调用；序列化失败由调用方兜底不阻断）。"""
     db = await get_db()
     try:
         await db.execute(
-            "UPDATE sessions SET status = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
-            (status, session_id),
+            """UPDATE sessions SET snapshot_json = ?,
+               updated_at = datetime('now', 'localtime') WHERE id = ?""",
+            (json.dumps(snapshot, ensure_ascii=False), session_id),
         )
         await db.commit()
     finally:
         await db.close()
 
 
-async def get_session(session_id: str) -> Optional[dict]:
+async def update_session_status(session_id: str, status: str) -> None:
+    """v8.21: 终态（completed/interrupted/error）同时清空快照——快照是进行时
+    持久化，会话已终态后留着只会撑大行宽，且复活条件本就要求 status=active。"""
+    db = await get_db()
+    try:
+        if status in ("completed", "interrupted", "error"):
+            await db.execute(
+                """UPDATE sessions SET status = ?, snapshot_json = NULL,
+                   updated_at = datetime('now', 'localtime') WHERE id = ?""",
+                (status, session_id),
+            )
+        else:
+            await db.execute(
+                "UPDATE sessions SET status = ?, updated_at = datetime('now', 'localtime') WHERE id = ?",
+                (status, session_id),
+            )
+        await db.commit()
+    finally:
+        await db.close()
+
+
+async def get_session(session_id: str, include_snapshot: bool = False) -> Optional[dict]:
+    """查询单个会话。
+
+    v8.21: 默认剥离 snapshot_json——快照可能达数百 KB，详情/报告路径不该驮它；
+    快照复活路径传 include_snapshot=True 取走完整行。
+    """
     db = await get_db()
     try:
         async with db.execute("SELECT * FROM sessions WHERE id = ?", (session_id,)) as cur:
             row = await cur.fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            result = dict(row)
+            if not include_snapshot:
+                result.pop("snapshot_json", None)
+            return result
     finally:
         await db.close()
 
@@ -91,11 +124,16 @@ async def list_sessions(limit: int = 50) -> list[dict]:
     """最近 N 个会话，按更新时间倒序。
 
     v8.3: owner_id 过滤参数随认证下线——单用户下"按归属过滤"等价于"不过滤"。
+    v8.21: 改为显式列清单——SELECT * 会把 snapshot_json（可达数百 KB/场）拖进
+    历史列表接口，列表只需要元信息。
     """
     db = await get_db()
     try:
         async with db.execute(
-            "SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?", (limit,)
+            """SELECT id, style, resume_filename, resume_text, jd_text, status,
+                      created_at, updated_at, resume_id, position_id,
+                      flow_state, flow_updated_at, answered_count
+               FROM sessions ORDER BY updated_at DESC LIMIT ?""", (limit,)
         ) as cur:
             return [dict(row) for row in await cur.fetchall()]
     finally:

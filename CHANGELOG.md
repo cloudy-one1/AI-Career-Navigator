@@ -8,7 +8,7 @@
 
 ---
 
-## v8.21 结构性整改（进行中）
+## v8.21 结构性整改：三件存量结构级改造（2026-10-02 立项，2026-10-03 完成）
 
 > v8.17→v8.20 完成全项目逐文件审查与三个修复批次后，剩余三件**结构级改造**
 > 单独立项（任务书：docs/specs/2026-10-02-v8.21-结构性整改任务书.md，本地不入库）：
@@ -135,6 +135,57 @@
     结构重建生效）✓ 收尾口令（不诊断不计分，报告落库 status=completed）✓；
   - 第二场确认修复前症状（每答一题收一轮），第三场确认修复后：计划题问完、
     补题按配额追加、轮次按结算推进，无回归。
+
+---
+
+### 任务三：会话状态快照序列化（2026-10-03）
+
+- **快照协议**：`InterviewSession.to_snapshot() / from_snapshot()`（版本号 v1 +
+  必填字段清单 fail-fast，版本不识别/字段缺失/类型不符一律 `SnapshotError`）。
+  字段面覆盖任务书全部要求：创建期输入（mode/stage/style/rounds/
+  question_type_mix/resume_points/jd_gaps/company_profile）、轮次与题目状态
+  （round_questions/current_question_idx/round_answers/round_diagnoses/
+  all_diagnoses/answer_history/extra_questions_added）、追问状态
+  （pending_follow_up/follow_up_count/last_answer_text/_rewrite_ctx）、恢复态
+  （recovery_streak/recovery_active/recovery_total/_recovery_advice_done）、
+  难度调度器（DifficultyState 新增 from_dict，与 to_dict 对称）、薄弱点缓存、
+  权重、去重台账（_injected_hashes/_kb_hashes/asked_questions/
+  asked_question_hashes，set↔list 转换）、技能活动状态（active_skill/skill_ctx/
+  skill_history——registry 定义本身无会话内状态，复活方 default_registry 重建）、
+  流程位置（flow_state/answered_count）。刻意排除三类：运行时依赖
+  （db/llm/diagnosis 由复活方注入）、可惰性重建（_retriever）、只写死字段
+  （pending_status/current_question_context）。
+- **别名关系重建**：record_answer 把同一个 diagnosis dict 同时放进
+  round_diagnoses 与 all_diagnoses（追问补评原地改分同时作用于两处）；JSON
+  往返后值相等、身份断开，from_snapshot 按值相等重新接上——否则复活后本轮
+  均分读不到补评改过的分数。
+- **落库载体**：sessions 表加 `snapshot_json` 列（_ensure_session_columns 的
+  PRAGMA+ALTER 迁移范式，老库自动补列）；`update_session_snapshot` 新增；
+  终态（completed/interrupted/error）落状态时同时清空快照（进行时持久化不留
+  死数据，复活条件本就要求 status=active）；`get_session` 默认剥离
+  snapshot_json、`list_sessions` 改显式列清单——快照单场可达数十 KB，不进
+  列表/详情接口。
+- **写入时机=关键节点**：出题后 / 诊断完成后 / 追问交换完成后 / 补题后 /
+  轮次推进后 / 模式切换后，复用 `_mark_flow` 的"锦上添花不阻断"纪律
+  （try/except + debug 日志）；**不在**流式 chunk 上写。
+- **恢复入口**：WS 握手在 `acquire_ws_session` 前加"快照复活"一步——内存无此
+  会话但 DB 快照存在且 status=active → `from_snapshot` 重建继续（v8.18 的
+  单连接认领 / TTL 豁免语义不推翻，只是在认领前多一步复活）；JSON 损坏 /
+  快照残缺 / 意外形态损坏一律降级为"会话不存在"，绝不带残缺状态继续面试。
+  `register_session` 加防并发复活覆盖守卫（后注册者不得顶掉先认领者的对象）。
+- **恢复语义（CHARTER DC-12）**：采用任务书推荐的**"重建继续"**；任务书规定
+  的 reviewer 确认环节因无人值守未获应答，按任务书自身推荐执行并在 DC-12
+  显式记录取舍（放弃的替代方案"只读复盘"及回退路径一并留档）。
+
+### 验证（2026-10-03，本机，任务三）
+
+- 全量 pytest 1204 passed / 1 skipped（+25：字段级往返一致性 21 例 +
+  WS 复活集成 4 例）；run.py lint KEPT；前端三件套未涉及（无前端改动）。
+- **真实 LLM 端到端重启验证**：创建会话答题一题 → 推进到第二轮 →
+  **杀掉服务端进程**（WS 连接开着杀，status 停在 active、快照留在 DB）→
+  重启 → 同 session_id 重连 → 复活后首题与重启前屏幕所见**完全一致** →
+  继续作答 → 收尾口令 → 报告 qa_breakdown 同时包含重启前与重启后的题目与
+  诊断，status=completed。
 
 ---
 

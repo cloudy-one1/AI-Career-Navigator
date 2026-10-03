@@ -36,8 +36,15 @@ provider_lock = asyncio.Lock()   # 保护 llm_client / diagnosis_engine 重赋�
 
 
 async def register_session(session_id: str, session: InterviewSession) -> None:
-    """WS 尚未接管的会话条目登记（含创建时刻）。调用方无需自己持锁。"""
+    """WS 尚未接管的会话条目登记（含创建时刻）。调用方无需自己持锁。
+
+    v8.21: 已有同名条目时保留先到者——并发快照复活场景下，两个握手可能各自
+    重建了会话对象，后注册者覆盖会让先认领成功的主循环驱动一个脱离注册表的
+    孤儿对象。
+    """
     async with session_lock:
+        if session_id in active_sessions:
+            return
         active_sessions[session_id] = session
         session_created_at[session_id] = time.monotonic()
 
