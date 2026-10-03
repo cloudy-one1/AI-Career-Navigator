@@ -121,6 +121,15 @@ class TestDecideNextBranches:
         d = decide_next(snap(follow_up_count=3, has_follow_up_question=True))
         assert d.action != NextAction.GENERATE_FOLLOW_UP
 
+    def test_follow_up_not_retriggered_at_settlement(self):
+        """追问机会一次性门（v8.21 第二段）：追问已发生（count>0）后，结算点
+        再带着同一份诊断来问，不得重新追问——主循环在诊断后与结算点各调用
+        一次 decide_next，不设此门追问会无终止。这也是老路径的既有行为
+        （每次回答至多一次追问）。"""
+        d = decide_next(snap(follow_up_count=1, has_follow_up_question=True))
+        assert d.action != NextAction.GENERATE_FOLLOW_UP
+        assert d.action == NextAction.ADVANCE_ROUND
+
     def test_extra_question_when_round_not_passed(self):
         d = decide_next(snap(round_passed=False, extra_added=0, max_extra=2))
         assert d.action == NextAction.GENERATE_EXTRA

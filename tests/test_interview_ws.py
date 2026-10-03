@@ -135,16 +135,20 @@ class FakeSession:
         yield {"type": "diagnosis_done", "data": diag}
 
     def decide(self):
-        """v8.21: WS 层追问判定走 decide_next 纯函数（会话层契约成员）。
+        """v8.21: WS 层追问/补题判定走 decide_next 纯函数（会话层契约成员）。
 
-        桩里给最小决策：默认不追问、按"推进"结算——与桩的
-        check_round_quality（首答即达标）配套；补题分支由该桩的
-        check_round_quality 侧驱动，不经过本决策。
+        桩决策与桩的 check_round_quality 口径一致：trigger_extra 场景首次结算
+        给 GENERATE_EXTRA（补题后质量达标收轮），其余收轮推进。诊断后的 P1
+        调用点只消费追问类动作，GENERATE_EXTRA 在该点被忽略、留待结算点——
+        与真实 decide_next 的时序一致。
 
         契约钉：老方法 should_follow_up 的桩已随 v8.21 收敛删除——
         WS 层若有人把老调用改回来，这里立即 AttributeError 让测试变红，
         而不是静默走老逻辑。
         """
+        if self.trigger_extra and self.extra_questions_added == 0:
+            return FlowDecision(NextAction.GENERATE_EXTRA, FlowState.ASKING,
+                                "桩：触发补题")
         return FlowDecision(NextAction.ADVANCE_ROUND, FlowState.ADVANCING_ROUND,
                             "桩：默认收轮推进")
 

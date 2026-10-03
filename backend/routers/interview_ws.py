@@ -561,7 +561,12 @@ async def ws_interview(websocket: WebSocket, session_id: str):
 
                     answer_received = True
 
-                # 本轮题目问完 → 质量驱动推进检查
+                # 本轮题目问完 → 轮次结算
+                # v8.21: 补题判定收敛到 decide_next 纯函数（D9/D10：not round_passed
+                # 含"已答题"前提；below_min_questions 继续出题是纯函数独有的规则，
+                # 老路径从未实现）。check_round_quality 降级为 round_quality_check
+                # 帧的数据源（前端展示），不再驱动推进。追问类动作在此处不可能是
+                # 决策结果——追问机会一次性门（follow_up_count>0 时 ③ 跳过）。
                 # v8.19: 用户已宣布结束（退出口令）就不再做质量检查与追加题——
                 # 此前 break 只跳出答题等待循环，随后仍会打一次 LLM 生成追加题，
                 # 前端在 interview_end_signal 之后收到自相矛盾的出题事件
@@ -572,8 +577,11 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                         "data": quality
                     })
 
-                    if quality["passed"] or not quality["can_add_extra"]:
+                    decision = session.decide()
+                    if decision.action != NextAction.GENERATE_EXTRA:
+                        # 推进 / 收尾：break 交还外层轮次循环（推进副作用在循环尾部）
                         break
+                    logger.info("[flow] %s 补题判定: %s", session_id[:8], decision.reason)
 
                     # v2.6: 未达标 → 针对薄弱维度追加定向题
                     extra_q = await session.generate_extra_question()

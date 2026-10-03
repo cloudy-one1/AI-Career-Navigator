@@ -85,6 +85,20 @@
   `should_follow_up` 桩、补 `decide` 契约桩（WS 层回摸老方法会立即
   AttributeError 变红）。
 
+#### 第二段：补题判定并入纯函数（2026-10-03）
+
+- `flow.py`：追问判定加**追问机会一次性门**（`follow_up_count == 0` 才参与
+  ③）——主循环在诊断后（P1）与结算点（P2）各调用一次 decide_next，不设此门
+  同一份诊断的追问文本会在 P2 再次命中、追问无终止；"每答至多一追"是老路径
+  既有行为，现在成为纯函数的显式规则。
+- `interview_ws.py`：题目循环的结算块改为 `decide()` 分派——仅
+  `GENERATE_EXTRA` 时追加补强题，其余动作（推进/收尾）break 交还外层轮次
+  循环；`check_round_quality` 降级为 `round_quality_check` 帧的数据源，
+  `passed`/`can_add_extra` 不再驱动推进。D9（"已答题"前提）与 D10
+  （below_min_questions 继续出题）自此在生产生效。
+- `test_flow.py` 新增 P2 不重追问的钉子用例；FakeSession 的 decide 桩与桩的
+  质量口径对齐（trigger_extra 场景首次结算给 GENERATE_EXTRA）。
+
 ---
 
 ## v8.20 审查整改第三批：内容护栏纠偏 / 诊断失败可感知 / 数据层埋雷拆除（2026-10-02）

@@ -91,6 +91,9 @@ class FlowSnapshot:
     below_min_questions: bool = False      # 本轮答题数是否还没到下限
 
     # 追问维度
+    # v8.21 语义：当前题的追问计数（record_answer 清零 / generate_follow_up 递增）。
+    # 非零 = 本次回答的追问机会已使用——③ 的追问规则不再参与（每答至多一追），
+    # 结算点再用同一份诊断重新追问会无终止。
     follow_up_count: int = 0
     # v8.20: 默认值与 config.FOLLOW_UP_MAX_COUNT 对齐（此前写死 3，与生产配置 2
     # 不一致——生产路径经 snapshot() 显式覆盖无害，但直接构造 FlowSnapshot 的
@@ -169,8 +172,12 @@ def decide_next(s: FlowSnapshot) -> FlowDecision:
                             "收尾阶段题目已出完，结束面试")
 
     # ③ 追问判定 —— 先于"出下一题"：生产主循环的既有时序是答 → 诊 → 可能
-    #    追问 → 下一题，追问不依赖"本轮题目是否已问完"。
-    if not s.follow_up_exhausted:
+    #    追问 → 下一题，追问不依赖"本轮题目是否已问完"。同时只在本题本次回答
+    #    的追问机会未被使用时参与（follow_up_count 由 record_answer 清零、
+    #    generate_follow_up 递增）：主循环诊断后与结算点各调用一次本函数，
+    #    若不设此门，同一份诊断的追问文本会在追问发生后的结算点再次命中，
+    #    追问无终止。这也是老路径的既有行为——每次回答至多一次追问。
+    if s.follow_up_count == 0 and not s.follow_up_exhausted:
         if s.has_follow_up_question:
             return FlowDecision(NextAction.GENERATE_FOLLOW_UP,
                                 FlowState.GENERATING_FOLLOW_UP,
