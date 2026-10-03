@@ -68,6 +68,7 @@ AI 求职领航把求职拆成五步主线，每一步都有数据支撑与产�
 **工程保障**
 
 - **多 AI 后端与优雅降级**：DeepSeek / 通义千问 / 智谱 GLM / OpenAI 可切换，`AI_PROVIDER=auto` 自动探测；主模型失败按回落链自动切备用模型
+- **会话快照与断点续答**：面试进行中在关键节点自动落快照，进程重启后重连同一会话可从断点继续作答，重启前的题目与诊断不丢（快照残缺时降级为不复活，绝不带残缺状态继续）
 - import-linter 强制 L1–L4 分层契约、1000+ pytest 用例（含黄金样本评测与 live-LLM 抽检）、前端 vitest、GitHub Actions CI、dependabot 每周维护依赖
 
 ## 快速开始
@@ -163,7 +164,7 @@ DEEPSEEK_API_KEY=sk-xxx
 | [docs/testing.md](docs/testing.md) | 测试五层分工、常用命令、CI 与 dependabot 口径 |
 | [docs/API.md](docs/API.md) | 59 个 HTTP 端点 + 1 个 WebSocket 的逐条清单与限流档位 |
 | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | 已知局限与架构取舍（含可选演进方向） |
-| [CHARTER.md](CHARTER.md) | 项目宪章：产品命题、架构约束、决策记录卡 DC-01 ~ DC-10 |
+| [CHARTER.md](CHARTER.md) | 项目宪章：产品命题、架构约束、决策记录卡 DC-01 ~ DC-12 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本迭代叙事（v8.0 起；更早见 [docs/changelog-archive.md](docs/changelog-archive.md)） |
 
 ## 开发与贡献
@@ -182,7 +183,7 @@ cd frontend && npm run test && npm run build
 
 ## 已知局限（诚实披露）
 
-以下不是待修的 bug，而是**单用户本地工具**定位下的刻意取舍，全文 28 条见
+以下不是待修的 bug，而是**单用户本地工具**定位下的刻意取舍，全文 30 条见
 [docs/LIMITATIONS.md](docs/LIMITATIONS.md)：
 
 - **无认证 / 无身份校验**：v7.0 曾引入，v8.3 经决策卡 DC-10 整体下线；数据全存本机
@@ -191,7 +192,6 @@ cd frontend && npm run test && npm run build
 - **诊断质量依赖 LLM**：1000+ 用例验证的是**工程正确性**，诊断有效性靠黄金样本回归 +
   live-LLM 抽检做可观测，模型质量仍需人工评审
 - **SQLite 单文件库 + 全局单例**：多 Worker 下 WebSocket 需 sticky session
-- **无断点续答**：流程位置已落库，但进程重启后不从 DB 重建会话
 
 ## 许可证
 
