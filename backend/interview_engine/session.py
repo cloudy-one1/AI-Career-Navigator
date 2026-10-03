@@ -391,10 +391,12 @@ class InterviewSession:
         # 当本轮还没答过题时 avg=0，而部分轮次的 advance_threshold 也是 0
         # （例如"破冰环节"不设门槛），此时会得到"未答一题却判定通过"。
         # 这里补上"必须有答题记录"的前提 —— 语义上"通过"只能建立在答题之上。
-        # 该修正只影响新的纯函数决策，旧的 advance_round 走的是另一条路径。
         answered = len(self.round_answers)
         round_passed = bool(quality.get("passed")) and answered > 0
-        avg_below = round_passed is False
+
+        # v8.21: 单题低分信号，口径对齐原 should_follow_up（每题答完即判）：
+        # score 为 0/缺失不触发——那是诊断失败/兜底结构的特征，不是低分回答。
+        last_score = (diag or {}).get("overall_score", 0)
 
         snap = FlowSnapshot(
             flow_state=self.flow_state,
@@ -419,7 +421,9 @@ class InterviewSession:
             answer_too_short=(
                 len((self.last_answer_text or "").strip()) < config.FOLLOW_UP_MIN_LENGTH
             ),
-            round_avg_below_threshold=avg_below,
+            answer_score_below_threshold=bool(
+                last_score and last_score < config.FOLLOW_UP_SCORE_THRESHOLD
+            ),
             recovery_streak=self.recovery_streak,
             recovery_skip_threshold=RECOVERY_SKIP_THRESHOLD,
             recovery_advice_done=self._recovery_advice_done,
@@ -1384,52 +1388,8 @@ class InterviewSession:
         if skipped_q:
             d["skipped_follow_up"] = skipped_q
 
-    # ===== 追问判断 =====
-
-    def should_follow_up(self, answer_text: str = "", diagnosis: dict | None = None) -> bool:
-        """
-        是否需要追问。兼容 main.py 的两参调用与内部无参调用。
-        v2.6: 优先采信流式诊断直接产出的 follow_up_question，避免二次 LLM 往返。
-        v6.0: 采信诊断同轮产出的 next_action 三态（follow_up/next_question/complete）：
-          - 模型产出追问文本 → 追问（同轮决策，最高优先）；
-          - next_question/complete 且无追问文本 → 尊重模型推进决策，
-            不再因低分强行追问；但回答过短仍强制追问，防止敷衍回答被"放行"；
-          - 未声明 → 走原有阈值规则兜底（向后兼容）。
-        """
-        # v6.3: 连续恢复达阈值时，"建议跳过当前方向"是保护性干预而非追问，
-        # 必须允许突破 FOLLOW_UP_MAX_COUNT —— 否则它恰好会被"第 3 次追问"拦掉，
-        # 保护机制在最需要它的时刻失效。
-        if self.recovery_streak >= RECOVERY_SKIP_THRESHOLD and not self._recovery_advice_done:
-            return True
-
-        if self.follow_up_count >= config.FOLLOW_UP_MAX_COUNT:
-            return False
-
-        # v6.2: 收尾阶段工程强控 —— 一律不再追问（含"回答过短强制追问"）。
-        # 收尾轮（反问收尾/自定义环节）答完即收束，避免最后一题被无限追问拖住。
-        if self.is_closing_round():
-            return False
-
-        diag = diagnosis if diagnosis is not None else (
-            self.round_diagnoses[-1] if self.round_diagnoses else None
-        )
-
-        if diag and str(diag.get("follow_up_question", "") or "").strip():
-            return True
-
-        answer = answer_text or self.last_answer_text
-        if len(answer.strip()) < config.FOLLOW_UP_MIN_LENGTH:
-            return True
-
-        if diag:
-            # v6.0: 模型明确决定"进入下一题/收束议题"时，低分不再触发强制追问
-            if str(diag.get("next_action", "") or "").strip() in ("next_question", "complete"):
-                return False
-            score = diag.get("overall_score", 0)
-            if score and score < config.FOLLOW_UP_SCORE_THRESHOLD:
-                return True
-
-        return False
+    # ===== 追问生成（v8.21 起是否追问由 flow.decide_next 判定，本方法是
+    # 决策通过后的副作用执行器：复用诊断产出的追问文本，或回退单独生成）=====
 
     async def generate_follow_up(self, diagnosis: dict | None = None) -> str:
         """

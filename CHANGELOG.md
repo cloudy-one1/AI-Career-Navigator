@@ -42,6 +42,51 @@
 
 ---
 
+### 任务二：flow.decide_next 双轨收敛（2026-10-03，三段提交）
+
+> 背景：生产主循环走老路径（`should_follow_up` / `check_round_quality` /
+> `advance_round`），v7.0 建的纯函数 `decide_next()` 只经 `_mark_flow` 作遥测、
+> 从不参与决策，两轨规则已实际分叉（`below_min_questions` 继续出题、
+> OFFER_RECOVERY 优先于追问上限等规则只存在于纯函数）。收敛方向：**flow.py
+> 为唯一推进出处**（它有测试守护），老方法降级为纯函数消费的原子操作或删除。
+
+#### 规则 diff 清单（逐条对比两轨的取舍记录）
+
+| # | 规则 | 老路径 | 纯函数（原版） | 以哪边为准 |
+|---|------|--------|---------------|-----------|
+| D1 | 追问时机 | **每题答完即判**，与"本轮是否还有未问题目"无关 | 只在"本轮题目已问完"后判（`has_more_questions` 短路了追问） | **老路径**（第一段已并入：追问判定挪到出题判定之前） |
+| D2 | 恢复干预突破追问上限 | 最优先 | ① 最优先 | 一致 |
+| D3 | 追问次数上限 | `follow_up_count >= FOLLOW_UP_MAX_COUNT` 不追 | `follow_up_exhausted` | 一致 |
+| D4 | 收尾轮不追问（含过短强制） | 有 | ② closing 强控 | 一致 |
+| D5 | 诊断追问文本优先 | 有 | ③a | 一致 |
+| D6 | 过短强制追问（模型说下一题也强制） | 有，先于 next_action 检查 | ③b | 一致 |
+| D7 | next_question/complete 抑制低分追问 | 有 | ③c | 一致 |
+| D8 | 低分追问口径 | **单题**分 < FOLLOW_UP_SCORE_THRESHOLD（0 分不触发） | **轮均分**未达推进阈值 | **老路径**（第一段已换：新增 `answer_score_below_threshold` 输入，删除 `round_avg_below_threshold`——轮均分达标时单题敷衍会被放行，口径过粗） |
+| D9 | 补题：未达标且配额未用 | `passed`（avg≥threshold，**无"已答题"前提**，0 分轮遇 threshold=0 会"未答先过"） | `round_passed`（含"已答题"前提） | **纯函数**（第二段切） |
+| D10 | 补题：below_min_questions 继续出题 | **无此规则**（min_questions 仅展示） | 有 | **纯函数**（任务书点名；第二段切） |
+| D11 | 收尾轮答完即收束 | interview_closing 帧 → advance → is_finished | ② FINISH | 语义一致（第三段切） |
+| D12 | 出题失败容错（零题轮直接推进） | WS 层 advance+continue | 无此分支 | 留 WS 层（工程容错，不属于流程决策） |
+| D13 | user_ended 口令收束 | 跳过质量检查与补题 | 无 | 留 WS 层 |
+| D14 | round_quality_check / round_summary 帧 | 每轮发送 | 无 | 保留（`check_round_quality` 降级为帧数据源） |
+
+#### 第一段：追问判定并入纯函数（2026-10-03）
+
+- `flow.py`：判定顺序重排——追问判定（③）提前到"出下一题"（④）之前，
+  对齐老路径"每题答完即判"时序；`FlowSnapshot.round_avg_below_threshold`
+  替换为 `answer_score_below_threshold`（单题分口径，0 分不触发）。
+- `session.py`：**删除 `should_follow_up`**（规则已全部并入纯函数，保留即双轨续存）；
+  `snapshot()` 换填新字段；`generate_follow_up` 保留为决策的副作用执行器。
+- `interview_ws.py`：诊断完成后的追问判定改为 `session.decide()` 分派
+  （`GENERATE_FOLLOW_UP` / `OFFER_RECOVERY` 共用追问副作用，恢复建议仍经
+  `pending_follow_up` 守卫话术送达）。
+- 测试：`test_session.py::TestFollowUp` 重写为"会话状态 → snapshot → decide"
+  接线用例（8 条，快照漏装配字段先炸）；`test_flow.py` 新增 D1/D8 收敛钉子
+  用例、一致性层改写为纯接线断言；`test_interview_ws.py` 的 FakeSession 删
+  `should_follow_up` 桩、补 `decide` 契约桩（WS 层回摸老方法会立即
+  AttributeError 变红）。
+
+---
+
 ## v8.20 审查整改第三批：内容护栏纠偏 / 诊断失败可感知 / 数据层埋雷拆除（2026-10-02）
 
 > v8.19 之后的存量项：security 护栏的两处误伤与一处完全失效、诊断链路失败

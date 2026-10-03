@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from backend.config import config as cfg  # Config 实例
 from backend.dimension_weights import DEFAULT_WEIGHTS, DIM_KEYS
 from backend.interview_engine import session as session_mod
+from backend.interview_engine.flow import NextAction
 from backend.interview_engine.session import InterviewSession
 
 
@@ -202,44 +203,65 @@ class TestAnswerFlow:
         assert "补充回答" in s.answer_history[-1].get("follow_ups", [])
 
 
-class TestFollowUp:
-    def test_should_follow_up_branches(self):
-        s, _, _ = _make_session()
-        # 达到追问上限 -> False
-        s.follow_up_count = cfg.FOLLOW_UP_MAX_COUNT
-        assert s.should_follow_up("很长很长很长的回答" * 10) is False
-        s.follow_up_count = 0
-        # 诊断自带追问 -> True
-        assert s.should_follow_up("x" * 50, {"follow_up_question": "追问?"}) is True
-        # 回答过短 -> True
-        assert s.should_follow_up("太短", {}) is True
-        # 分数低于阈值 -> True
-        assert s.should_follow_up("x" * 50, {"overall_score": 2.0}) is True
-        # 正常 -> False
-        assert s.should_follow_up("x" * 50, {"overall_score": 4.0}) is False
+class TestFollowUpDecision:
+    """v8.21: should_follow_up 老方法已删除，追问判定收敛到 flow.decide_next。
 
-    def test_should_follow_up_honors_next_action(self):
-        """v6.0: 采信诊断同轮产出的 next_action 三态决策。"""
+    本类钉住"会话状态 → snapshot → decide"整条链路的每条追问规则——
+    快照装配漏字段（如低分信号、追问文本）在这里先炸。
+    """
+
+    def _answered(self, s, answer, diag_extra=None):
+        """把会话摆到"刚答完一题、诊断已入库"的判定点。"""
+        s.round_questions = [{"question": "介绍一下你的项目", "question_type": "project"}]
+        s.record_answer(answer, _diag_data(**(diag_extra or {})))
+
+    def test_follow_up_limit_blocks(self):
         s, _, _ = _make_session()
-        # 模型声明 next_question/complete 且无追问文本：低分也不再强制追问
-        assert s.should_follow_up(
-            "x" * 50, {"overall_score": 2.0, "next_action": "next_question"}
-        ) is False
-        assert s.should_follow_up(
-            "x" * 50, {"overall_score": 4.0, "next_action": "complete"}
-        ) is False
-        # 但回答过短仍强制追问（防敷衍回答被"放行"）
-        assert s.should_follow_up(
-            "太短", {"overall_score": 4.0, "next_action": "complete"}
-        ) is True
-        # 声明 next_question 但模型仍产出追问文本 → 仍追问（追问优先）
-        assert s.should_follow_up(
-            "x" * 50,
-            {"overall_score": 4.0, "next_action": "next_question",
-             "follow_up_question": "追问?"},
-        ) is True
-        # 未声明 next_action → 走原有阈值规则（向后兼容）
-        assert s.should_follow_up("x" * 50, {"overall_score": 2.0}) is True
+        self._answered(s, "x" * 50)
+        s.follow_up_count = cfg.FOLLOW_UP_MAX_COUNT
+        assert s.decide().action != NextAction.GENERATE_FOLLOW_UP
+
+    def test_diagnosis_follow_up_text_wins(self):
+        s, _, _ = _make_session()
+        self._answered(s, "x" * 50, {"follow_up_question": "追问?"})
+        assert s.decide().action == NextAction.GENERATE_FOLLOW_UP
+
+    def test_short_answer_forced_follow_up(self):
+        s, _, _ = _make_session()
+        self._answered(s, "太短")
+        assert s.decide().action == NextAction.GENERATE_FOLLOW_UP
+
+    def test_low_score_triggers_follow_up(self):
+        s, _, _ = _make_session()
+        self._answered(s, "x" * 50, {"overall_score": 2.0})
+        assert s.decide().action == NextAction.GENERATE_FOLLOW_UP
+
+    def test_normal_score_no_follow_up(self):
+        s, _, _ = _make_session()
+        self._answered(s, "x" * 50, {"overall_score": 4.0})
+        assert s.decide().action != NextAction.GENERATE_FOLLOW_UP
+
+    def test_next_action_suppresses_low_score_follow_up(self):
+        """v6.0 规则：模型声明 next_question/complete 且无追问文本时，
+        低分不再强制追问。"""
+        s, _, _ = _make_session()
+        self._answered(s, "x" * 50,
+                       {"overall_score": 2.0, "next_action": "next_question"})
+        assert s.decide().action != NextAction.GENERATE_FOLLOW_UP
+
+    def test_short_answer_still_forced_when_model_says_next(self):
+        """但回答过短必须强制追问 —— 防止敷衍回答被模型"放行"。"""
+        s, _, _ = _make_session()
+        self._answered(s, "太短", {"overall_score": 4.0, "next_action": "complete"})
+        assert s.decide().action == NextAction.GENERATE_FOLLOW_UP
+
+    def test_follow_up_text_wins_over_next_question(self):
+        """声明 next_question 但诊断仍产出追问文本 → 追问（追问优先）。"""
+        s, _, _ = _make_session()
+        self._answered(s, "x" * 50,
+                       {"overall_score": 4.0, "next_action": "next_question",
+                        "follow_up_question": "追问?"})
+        assert s.decide().action == NextAction.GENERATE_FOLLOW_UP
 
     @pytest.mark.asyncio
     async def test_generate_follow_up_prefers_preset(self):

@@ -17,7 +17,7 @@ from ..db import (
     save_report, update_session_status, save_weakness_profile, update_session_flow,
     get_session,
 )
-from ..interview_engine.flow import FlowState
+from ..interview_engine.flow import FlowState, NextAction
 from ..interview_engine.session import is_end_signal
 from ..schemas import InterviewMode, InterviewStage
 from ..security import full_check, check_output
@@ -472,8 +472,15 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                         "data": session.weakness_payload()
                     })
 
-                    # v2.6: 追问已由诊断一次性产出，无需二次 LLM 调用
-                    if session.should_follow_up(answer_text, diag):
+                    # v8.21: 是否追问收敛到 decide_next 纯函数——"接下来该做什么"
+                    # 的唯一出处（should_follow_up 老方法已删除，规则逐条并入纯
+                    # 函数，取舍记录在本提交描述的规则 diff 清单）。OFFER_RECOVERY
+                    # 与追问共用同一段副作用：恢复建议经 pending_follow_up 的
+                    # 守卫话术（record_answer 内替换）由 generate_follow_up 送达。
+                    decision = session.decide()
+                    if decision.action in (NextAction.GENERATE_FOLLOW_UP,
+                                           NextAction.OFFER_RECOVERY):
+                        logger.info("[flow] %s 追问判定: %s", session_id[:8], decision.reason)
                         follow_up_q = await session.generate_follow_up(diag)
                         await _mark_flow(session_id, session, FlowState.GENERATING_FOLLOW_UP)
                         await websocket.send_json({

@@ -22,6 +22,7 @@ from backend import question_gen as qg
 from backend.config import config
 from backend.diagnosis_engine import _build_diagnostician_system, normalize_result
 from backend.dimension_weights import DIM_KEYS
+from backend.interview_engine.flow import NextAction
 from backend.interview_engine.report import build_report
 from backend.interview_engine.session import (
     RECOVERY_FALLBACK_PROMPT,
@@ -439,12 +440,12 @@ class TestRecoveryGuards:
         text = "你刚才提到 QPS 提升了 3 倍，这个数字怎么测的？"
         assert s._guard_recovery_output(text, False) == text
 
-    def test_should_follow_up_allows_advice_beyond_cap(self):
-        """建议跳过是保护性干预，必须能突破追问次数上限。"""
+    def test_recovery_advice_beyond_follow_up_cap(self):
+        """建议跳过是保护性干预，必须能突破追问次数上限（v8.21 起 OFFER_RECOVERY）。"""
         s = _make_session()
         s.follow_up_count = 99
         s.recovery_streak = RECOVERY_SKIP_THRESHOLD
-        assert s.should_follow_up("", {}) is True
+        assert s.decide().action == NextAction.OFFER_RECOVERY
 
     @pytest.mark.asyncio
     async def test_assisted_flag_recorded(self):

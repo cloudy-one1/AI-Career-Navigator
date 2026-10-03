@@ -17,8 +17,11 @@ is_closing_round / advance_round）。它们各自都能工作，但组合起来
 把决策**输出**收敛成枚举 NextAction，中间所有规则写成一个无副作用的纯函数
 decide_next()。副作用（改状态、写库、发消息）仍然留在 InterviewSession 里。
 
-注意：本文件不替代既有方法。decide_next() 先用于"预演与可观测"，
-再由调用方逐步改为以它为准 —— 两者行为一致由 tests/test_flow.py 守护。
+注意：v8.21 起 decide_next() 是推进决策的**唯一出处**，生产主循环按它分派
+副作用（追问 / 补题 / 推进 / 收尾）；此前与之并行的
+should_follow_up / check_round_quality 老方法或者已删除（规则逐条并入纯函数，
+取舍记录在 v8.21 提交描述的规则 diff 清单），或者降级为纯函数消费的
+原子操作 / 展示帧的数据源。两者行为一致由 tests/test_flow.py 守护。
 
 设计参照：竞品 Gua-AI-interview 深度研读 §2.2（节点只做动作，路由由条件边决定）
 """
@@ -98,7 +101,11 @@ class FlowSnapshot:
     has_follow_up_question: bool = False   # 诊断已产出追问文本
     next_action: Optional[str] = None      # 诊断 next_action：follow_up/next_question/complete
     answer_too_short: bool = False         # 回答长度低于追问下限
-    round_avg_below_threshold: bool = False  # 低分（兜底强制追问用）
+    # v8.21: 单题低分信号——刚答完的题 overall_score 低于 FOLLOW_UP_SCORE_THRESHOLD。
+    # 口径以原 should_follow_up 为准（每题的质量杠杆），不是轮均分：
+    # 轮均分达标时单题敷衍回答仍应被追问拦住。0 分不触发——那是诊断失败/兜底
+    # 结构的特征，把链路失败当"低分回答"追问是荒谬的。
+    answer_score_below_threshold: bool = False
 
     # 不会答恢复（v6.3）
     recovery_streak: int = 0
@@ -135,6 +142,14 @@ def decide_next(s: FlowSnapshot) -> FlowDecision:
     """给定快照，决定下一步动作。**纯函数：无 IO、无随机、无全局状态。**
 
     判定顺序即优先级；调整顺序等于调整业务规则，请谨慎。
+
+    v8.21 双轨收敛：本函数是"接下来该做什么"的唯一出处，生产主循环按它分派
+    副作用。与原 InterviewSession.should_follow_up 逐条对比后的取舍——
+    - 追问**时机**以老路径为准：每题答完即判，与"本轮是否还有未问题目"无关
+      （本函数原版把它放在题目问完之后，会漏掉中间题的追问）；
+    - 低分追问以老路径为准：单题分低于阈值（原版用轮均分，口径过粗——
+      轮均分达标时单题敷衍会被放行）；
+    - below_min_questions 继续出题以本函数为准（老路径无此规则）。
     """
     # ① 保护性干预优先：连续"不会答"达阈值时给换方向建议。
     #    刻意排在追问上限之前 —— 否则它恰好会被"第 N 次追问"拦掉，
@@ -153,12 +168,8 @@ def decide_next(s: FlowSnapshot) -> FlowDecision:
         return FlowDecision(NextAction.FINISH, FlowState.FINISHED,
                             "收尾阶段题目已出完，结束面试")
 
-    # ③ 本轮还有未提问的题目 → 直接出，不进入轮次结算。
-    if s.has_more_questions:
-        return FlowDecision(NextAction.AWAIT_ANSWER, FlowState.WAITING_ANSWER,
-                            f"本轮还有 {s.questions_in_round - s.question_idx} 题未问")
-
-    # ④ 本轮题目已问完：先看还能不能/需不需要追问。
+    # ③ 追问判定 —— 先于"出下一题"：生产主循环的既有时序是答 → 诊 → 可能
+    #    追问 → 下一题，追问不依赖"本轮题目是否已问完"。
     if not s.follow_up_exhausted:
         if s.has_follow_up_question:
             return FlowDecision(NextAction.GENERATE_FOLLOW_UP,
@@ -168,10 +179,16 @@ def decide_next(s: FlowSnapshot) -> FlowDecision:
             return FlowDecision(NextAction.GENERATE_FOLLOW_UP,
                                 FlowState.GENERATING_FOLLOW_UP,
                                 "回答过短，强制追问以防敷衍被放行")
-        if s.round_avg_below_threshold and s.next_action not in ("next_question", "complete"):
+        if (s.answer_score_below_threshold
+                and s.next_action not in ("next_question", "complete")):
             return FlowDecision(NextAction.GENERATE_FOLLOW_UP,
                                 FlowState.GENERATING_FOLLOW_UP,
-                                "本轮均分偏低，按阈值规则追问")
+                                "回答得分低于追问阈值，按质量杠杆追问")
+
+    # ④ 本轮还有未提问的题目 → 直接出，不进入轮次结算。
+    if s.has_more_questions:
+        return FlowDecision(NextAction.AWAIT_ANSWER, FlowState.WAITING_ANSWER,
+                            f"本轮还有 {s.questions_in_round - s.question_idx} 题未问")
 
     # ⑤ 不再追问：结算本轮 —— 未达标且还能追加 → 补强题；否则推进下一轮。
     if not s.round_passed and s.extra_added < s.max_extra:

@@ -25,6 +25,7 @@ from backend.diagnosis_engine import (
     _build_diagnostician_system,
     normalize_result,
 )
+from backend.interview_engine.flow import NextAction
 from backend.interview_engine.report import (
     _fallback_impact,
     _norm_thinking,
@@ -87,11 +88,21 @@ class TestClosingPhase:
         assert s.closing_instruction()  # 收尾轮必须有指令；具体文案是配置实现细节
 
     def test_follow_up_forbidden_on_closing(self):
-        """收尾阶段一律不追问 —— 连"回答过短强制追问"也被强控掉。"""
+        """收尾阶段一律不追问 —— 连"回答过短强制追问"也被强控掉。
+
+        v8.21: should_follow_up 删除后经 decide() 验证；把最顽固的两个追问
+        信号（追问文本 + 过短回答）都摆上，收尾强控仍必须胜出。
+        """
         s = _make_session()
         s.current_round = len(s.rounds) - 1
-        assert s.should_follow_up("太短", {"follow_up_question": "再展开？"}) is False
-        assert s.should_follow_up("太短", {"overall_score": 1.0}) is False
+        s.round_questions = [{"question": "q"}]
+        s.current_question_idx = 1          # 题目已问完
+        s.last_answer_text = "太短"
+        s.round_diagnoses = [{
+            "overall_score": 1.0,
+            "follow_up_question": "再展开？",
+        }]
+        assert s.decide().action == NextAction.FINISH
 
     @pytest.mark.asyncio
     async def test_no_extra_question_on_closing(self):

@@ -27,6 +27,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from backend.config import config
 from backend.db import get_report, get_session, save_session
+from backend.interview_engine.flow import FlowDecision, FlowState, NextAction
 from backend.routers import state
 
 SESSION_ID = "ws-itest-session"
@@ -133,8 +134,19 @@ class FakeSession:
         self.answered_count += 1
         yield {"type": "diagnosis_done", "data": diag}
 
-    def should_follow_up(self, answer_text, diag):
-        return False
+    def decide(self):
+        """v8.21: WS 层追问判定走 decide_next 纯函数（会话层契约成员）。
+
+        桩里给最小决策：默认不追问、按"推进"结算——与桩的
+        check_round_quality（首答即达标）配套；补题分支由该桩的
+        check_round_quality 侧驱动，不经过本决策。
+
+        契约钉：老方法 should_follow_up 的桩已随 v8.21 收敛删除——
+        WS 层若有人把老调用改回来，这里立即 AttributeError 让测试变红，
+        而不是静默走老逻辑。
+        """
+        return FlowDecision(NextAction.ADVANCE_ROUND, FlowState.ADVANCING_ROUND,
+                            "桩：默认收轮推进")
 
     def annotate_server_thinking(self, server_seconds):
         """v8.6: 服务端墙钟差校验。

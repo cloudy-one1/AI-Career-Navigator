@@ -1,13 +1,14 @@
 """
-test_flow.py —— v7.0 面试流程状态显式化
+test_flow.py —— v7.0 面试流程状态显式化；v8.21 起为推进决策唯一出处的守护层。
 
-核心诉求：把"接下来该做什么"从六个分散的实例方法里收敛成一个纯函数 decide_next()，
-让分支判定第一次能被单测覆盖（对应 README「已知局限」的"测试偏纯函数、覆盖不到流程决策"）。
+decide_next() 已收敛"接下来该做什么"的全部规则（v8.21 把 should_follow_up
+老方法的规则逐条并入，取舍记录在 v8.21 提交描述的规则 diff 清单），
+生产主循环按它分派副作用。
 
 测试分两层：
 1. 纯函数层：decide_next 的每条分支与优先级（不需要构造会话）
-2. 一致性层：session.decide() 与既有 should_follow_up 的结论必须一致 ——
-   保证"新增的纯函数"与"正在生效的旧逻辑"没有分歧
+2. 接线层：session.decide() 从真实会话状态取数（诊断文本 / 低分 / 过短），
+   保证快照装配没漏字段——每条老路径既有行为在纯函数侧有对应用例
 """
 
 from unittest.mock import AsyncMock, MagicMock
@@ -85,12 +86,30 @@ class TestDecideNextBranches:
     def test_follow_up_when_answer_too_short(self):
         assert decide_next(snap(answer_too_short=True)).action == NextAction.GENERATE_FOLLOW_UP
 
-    def test_follow_up_when_round_avg_low(self):
-        assert decide_next(snap(round_avg_below_threshold=True)).action == NextAction.GENERATE_FOLLOW_UP
+    def test_follow_up_even_when_questions_remain(self):
+        """v8.21 收敛钉子（D1）：每题答完都可能追问，与"是否还有未问题目"无关。
+
+        老路径时序是 答 → 诊 → 可能追问 → 下一题；纯函数原版把追问判定放在
+        "本轮题目已问完"之后，会漏掉中间题的追问——切换时以老路径为准。
+        """
+        d = decide_next(snap(question_idx=0, questions_in_round=3,
+                             has_follow_up_question=True))
+        assert d.action == NextAction.GENERATE_FOLLOW_UP
+
+    def test_mid_round_moves_on_without_follow_up_signal(self):
+        """中间题答完、无追问信号 → 出下一题（而不是稀里糊涂进入结算）。"""
+        d = decide_next(snap(question_idx=0, questions_in_round=3))
+        assert d.action == NextAction.AWAIT_ANSWER
+        assert d.next_state == FlowState.WAITING_ANSWER
+
+    def test_follow_up_when_answer_score_low(self):
+        """v8.21 收敛钉子（D8）：低分追问以单题分为口径（老路径），不是轮均分。"""
+        assert decide_next(snap(answer_score_below_threshold=True)).action == \
+            NextAction.GENERATE_FOLLOW_UP
 
     def test_model_next_question_suppresses_low_score_follow_up(self):
         """模型明确说"下一题"时，低分不再强行追问（v6.0 尊重模型决策）。"""
-        d = decide_next(snap(round_avg_below_threshold=True, next_action="next_question"))
+        d = decide_next(snap(answer_score_below_threshold=True, next_action="next_question"))
         assert d.action != NextAction.GENERATE_FOLLOW_UP
 
     def test_short_answer_still_forced_even_if_model_says_next(self):
@@ -219,38 +238,45 @@ class TestSessionIntegration:
         assert now.answered_in_round == 2
 
     def test_decide_agrees_when_diagnosis_has_follow_up(self):
-        """诊断给了追问文本 → 两边都应判定为追问。"""
-        s = _make_session()
-        _answered_round(s)
-        diag = {"follow_up_question": "能具体说说性能提升了多少吗？"}
-        assert s.should_follow_up(s.last_answer_text, diag) is True
-        # 用同一份诊断喂给快照，否则两边看到的数据不同（一致性断言失去意义）
-        assert s.decide(has_follow_up_question=True).action == NextAction.GENERATE_FOLLOW_UP
+        """诊断给了追问文本 → 决策为追问。
 
-    def test_decide_agrees_when_no_follow_up_signal(self):
-        """没有追问信号、轮次也达标 → 两边都应判定为不追问。"""
+        v8.21 起不再用 overrides 喂结论，而是把诊断真的放进会话状态——
+        这测的是 snapshot() 的接线（diag → has_follow_up_question），
+        快照漏装配字段时这里先炸。
+        """
         s = _make_session()
         _answered_round(s)
-        # 先让本轮"达标"，否则会走补题分支而到不了"推进/结束"
+        s.round_diagnoses = [{
+            "overall_score": 4.0,
+            "dimensions": {k: 4 for k in DIM_KEYS},
+            "follow_up_question": "能具体说说性能提升了多少吗？",
+        }]
+        assert s.decide().action == NextAction.GENERATE_FOLLOW_UP
+
+    def test_decide_moves_on_when_no_follow_up_signal(self):
+        """没有追问信号、轮次也达标 → 推进下一轮。"""
+        s = _make_session()
+        _answered_round(s)
         s.round_diagnoses = [{
             "overall_score": 4.5,
             "dimensions": {k: 4 for k in DIM_KEYS},
             "follow_up_question": "",
             "next_action": "next_question",
         }]
-        diag = {"follow_up_question": "", "next_action": "next_question"}
-        assert s.should_follow_up(s.last_answer_text, diag) is False
-        # 与 should_follow_up 用同一份诊断做快照输入，避免"两边看到的数据不同"
-        assert s.decide(next_action=diag.get("next_action"),
-                        has_follow_up_question=False).action == NextAction.ADVANCE_ROUND
+        d = s.decide()
+        assert d.action == NextAction.ADVANCE_ROUND
 
     def test_decide_closing_round_never_follows_up(self):
-        """收尾轮：既有方法返回 False，纯函数也必须 FINISH 而不是追问。"""
+        """收尾轮：即使诊断给了追问文本也必须 FINISH 而不是追问。"""
         s = _make_session()
         _answered_round(s)
         s.current_round = len(s.rounds) - 1          # 最后一轮 = 收尾轮
+        s.round_diagnoses = [{
+            "overall_score": 2.0,
+            "dimensions": {k: 2 for k in DIM_KEYS},
+            "follow_up_question": "再展开讲讲？",
+        }]
         assert s.is_closing_round() is True
-        assert s.should_follow_up(s.last_answer_text, None) is False
         assert s.decide().action == NextAction.FINISH
 
     def test_decide_returns_extra_question_when_round_weak(self):
@@ -275,7 +301,7 @@ class TestSessionIntegration:
         s = _make_session()
         _answered_round(s)
         # 先摆到一个"不会追问"的基准态
-        assert s.decide(round_passed=True, round_avg_below_threshold=False,
+        assert s.decide(round_passed=True, answer_score_below_threshold=False,
                         has_follow_up_question=False).action != NextAction.GENERATE_FOLLOW_UP
         # 假如这次回答很短 —— 预演应生效，且不该真的改动会话状态
         assert s.decide(answer_too_short=True).action == NextAction.GENERATE_FOLLOW_UP
