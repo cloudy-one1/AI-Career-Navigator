@@ -181,10 +181,12 @@ cd frontend && npm run test && npm run build
 提交 Issue 前请先读 [docs/LIMITATIONS.md](docs/LIMITATIONS.md) 与
 [.github/SECURITY.md](.github/SECURITY.md)——欢迎 Star ⭐ 与真实使用反馈。
 
-## 已知局限（诚实披露）
+## 许可证
 
-以下不是待修的 bug，而是**单用户本地工具**定位下的刻意取舍，全文 30 条见
-[docs/LIMITATIONS.md](docs/LIMITATIONS.md)：
+[MIT License](LICENSE)。
+
+<details>
+<summary>已知局限（诚实披露）——单用户本地工具定位下的刻意取舍，非待修 bug，全文 30 条见 <a href="docs/LIMITATIONS.md">docs/LIMITATIONS.md</a></summary>
 
 - **无认证 / 无身份校验**：v7.0 曾引入，v8.3 经决策卡 DC-10 整体下线；数据全存本机
 - **内容护栏是启发式，不是安全边界**：正则防不住认真的攻击者，已知绕过方式见
@@ -193,6 +195,4 @@ cd frontend && npm run test && npm run build
   live-LLM 抽检做可观测，模型质量仍需人工评审
 - **SQLite 单文件库 + 全局单例**：多 Worker 下 WebSocket 需 sticky session
 
-## 许可证
-
-[MIT License](LICENSE)。
+</details>
