@@ -28,7 +28,7 @@ charset-normalizer==3.5.1
 click==8.5.0
 colorama==0.4.6
 coverage==7.16.1
-cryptography==50.0.1
+cryptography==50.0.2
 Deprecated==3.0.0
 fastapi==0.141.1
 greenlet==3.5.6
