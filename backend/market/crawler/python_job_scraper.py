@@ -24,8 +24,6 @@ import time
 import random
 import logging
 from datetime import datetime, timezone
-from playwright.sync_api import sync_playwright
-from playwright_stealth import Stealth
 
 from .job_site_dicts import (
     CITY_CODES,
@@ -33,6 +31,10 @@ from .job_site_dicts import (
     CITY_PINYIN,
     JS_FETCH_API,
 )
+
+# playwright 延迟导入（在 scrape_jobs 内）：让本模块在未安装 playwright 的环境
+# 仍可被 import——纯函数（to_job_record/resolve_city_code 等）供 Scrapling
+# 回落引擎复用，只有真正启动采集才需要 playwright。
 
 _logger = logging.getLogger('market.crawler')
 
@@ -211,6 +213,9 @@ def scrape_jobs(keyword, cities, pages_per_city=3, sort_type='0', progress_callb
           调用方(比如Flask路由)要注意这是同步阻塞调用,不要在每个普通请求里
           都触发,只应该作为一个用户主动点击的"实时采集"动作。
     """
+    from playwright.sync_api import sync_playwright  # noqa: PLC0415
+    from playwright_stealth import Stealth  # noqa: PLC0415
+
     valid_cities = []
     for c in cities:
         code = resolve_city_code(c)
