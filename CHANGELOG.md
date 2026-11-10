@@ -1,10 +1,44 @@
 # 变更日志（CHANGELOG）
 
-> 记录 **v8.0 → v8.21** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
+> 记录 **v8.0 → v8.22** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
 > 历史见 [docs/changelog-archive.md](docs/changelog-archive.md)。不变的架构约束与决策记录见
 > [CHARTER.md](CHARTER.md)，贡献流程见 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的“AI 求职陪跑”为历史名称，保留不删。**
+
+---
+
+## v8.22 采集层回落链：Scrapling/Camoufox 备胎引擎（2026-11-11）
+
+> 实时采集此前是单引擎：51job 升级 WAF 或改版 → Playwright 路径失败/静默空手而归
+> → 实时采集全停，只能等人工追修复。本版把 LLM 回落链的哲学移植到采集层：
+> 主路径失败时用另一套反指纹引擎（Scrapling StealthySession/Camoufox）重采一次，
+> 把单点故障变成双保险。
+
+### 实测侦察（验证先行，2026-11-11 single-run）
+
+- 纯 HTTP 直调 search-pc 返回 `_waf_bd8ce2ce37` JS 挑战页（200 包挑战体）→ 必须真实浏览器，解释了主路径选 Playwright 的原因；
+- Camoufox 打开搜索页即过 WAF，`record_requests=True` 被动捕获页面自身 search-pc XHR 可拿到完整 JSON（约 200KB/页 20 条）——回落通道无需维护页内注入 JS；
+- 速度与主路径相当（10.4s vs 12.5s，各单次），瓶颈同在浏览器启动+WAF 求解。
+
+### 改动
+
+- 新增 `market/crawler/scrapling_fallback.py`：契约与 `scrape_jobs` 对齐（同参数/同返回/同 CrawlCancelled），复用主路径纯函数做字段映射；响应筛选按 (jobArea, pageNum) 匹配网络历史并取含 resultbody 的最新一条，SPA 结构变更时只要页面还调 search-pc 就能拿到数据；
+- `tasks._run_crawl` 回落派发：主路径异常或整场 0 条（WAF 静默拦截形态）触发；部分城市有数据视为成功不重采；取消/硬超时穿透不触发；回落失败不掩盖主路径错误。开关 `MARKET_CRAWL_SCRAPLING_FALLBACK`（默认开）；
+- `python_job_scraper` 的 playwright 顶层导入改函数内延迟导入——纯函数（to_job_record 等）可脱离 playwright 引用，回落引擎才能借用；也是"playwright 未装但 scrapling 装了"组合下回落可用的前提；
+- scrapling 进 requirements/constraints（test_dependencies 依赖门禁要求：backend 内 import 必须声明）。
+
+### 已知取舍（如实记录）
+
+- 回落通道每城只能取第 1 页（20 条）：SPA 全新导航忽略 URL 里的 pageNum（诊断实测携带 pageNum=2 打开仍拉第 1 页），翻页需页面内交互触发；多页需求由主路径满足。多页支持留待将来逆向 SPA 初始状态参数（可用 REA 分析 SPA bundle）再补；
+- sort_type 透传未验证，回落路径排序可能退化为默认综合排序。
+
+### 验证（2026-11-11，本机）
+
+- pytest 全量回归 1219 passed / 1 skipped；新增 `tests/test_market_crawler_fallback.py` 14 例：响应筛选纯逻辑 / scrapling 缺失降级 / 派发状态机（成功跳过回落、空结果触发、异常触发、回落关闭维持原错误、取消穿透）；
+- `run.py lint` 分层契约 KEPT（71 files / 179 deps）；
+- 回落引擎真机冒烟：杭州 1 页 20 条真实岗位入库字段完整、job_url 全去重；
+- 主路径回归：`scrape_jobs` 原样可用（延迟导入改动后基线复跑通过）。
 
 ---
 

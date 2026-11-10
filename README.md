@@ -61,7 +61,7 @@ AI 求职领航把求职拆成五步主线，每一步都有数据支撑与产�
 
 - **简历库 / 岗位库**：跨会话复用的输入资产，一次上传解析、反复选用
 - **长期记忆**：薄弱点跨场累计，做 EMA 衰减与过期淘汰，回注入后续面试；2D 记忆图谱可视化
-- **市场数据**：内嵌 Playwright 实时采集 + 存量数据导入，含岗位检索、统计图表与 AI 解读
+- **市场数据**：内嵌 Playwright 实时采集（异常或整场空手而归时自动回落 Scrapling/Camoufox 反指纹引擎重采，可选依赖）+ 存量数据导入，含岗位检索、统计图表与 AI 解读
 - **Gap 分析与职业规划**：简历-岗位六维透明匹配、一份简历对多岗位的择岗建议，并以 Gap 快照为基线推理多阶段时间轴路径
 - **语音交互**：小米 MiMo 云端 TTS/ASR 优先，未配 Key 或失败自动降级浏览器原生语音
 
@@ -89,6 +89,7 @@ source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install -r requirements.txt -c constraints.txt   # constraints 锁定"被验证过的版本组合"
 
 python -m playwright install chromium   # 可选：市场数据实时采集需要
+pip install "scrapling[all]" && scrapling install --force   # 可选：采集回落引擎（未装则主路径失败直接报错，不影响其余功能）
 cp .env.example .env                    # 填入至少一个 AI 后端的 Key
 
 python run.py                    # → http://localhost:8000（API 文档 /docs）
