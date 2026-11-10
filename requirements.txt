@@ -18,6 +18,9 @@ pyyaml>=6.0.3                   # 公司风格配置层（company_profiles/*.yam
 # 实时采集（内嵌 job-crawler 采集器）：需额外执行 playwright install chromium
 playwright>=1.62.0
 playwright-stealth>=1.0.6
+# v8.22 采集回落引擎（主路径失败/空手而归时重采）：需额外执行 scrapling install --force
+# 未执行则回落时自动跳过，主路径语义不变
+scrapling[all]>=0.5
 
 # 测试
 pytest>=8.0.0

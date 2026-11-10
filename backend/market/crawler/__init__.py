@@ -4,10 +4,13 @@
 从开源项目 job-crawler (https://github.com/cloudy-one1/job-crawler) 内嵌整合，
 提供 51job 实时采集能力：
 
-- ``python_job_scraper``  采集器本体（Playwright + Stealth 过 WAF，原样保留）
+- ``python_job_scraper``  采集器本体（Playwright + Stealth 过 WAF，原样保留；
+                          v8.22 起 playwright 延迟导入，纯函数可脱离 playwright 引用）
+- ``scrapling_fallback``  v8.22 回落引擎（Scrapling/Camoufox 过 WAF + 被动捕获
+                          页面自身 search-pc JSON；可选依赖，未安装自动跳过）
 - ``salary_parser``       薪资解析（千元/月，原样保留）
 - ``adapters``            采集原始数据 → 标准岗位 dict（对齐 store.upsert_jobs 契约）
-- ``tasks``               后台任务管理器（互斥、进度回调、线程安全）
+- ``tasks``               后台任务管理器（互斥、进度回调、线程安全、v8.22 回落派发）
 
 分层约定：本子包随 ``backend.market`` 位于 L2 层，
 只允许依赖 ``backend.config / backend.logger / backend.market.*``，

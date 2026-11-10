@@ -367,6 +367,10 @@ class Config:
     MARKET_CRAWL_PAGE_LIMIT = int(os.getenv("MARKET_CRAWL_PAGE_LIMIT", "5"))
     # 采集接口限流（Playwright 较重，防滥用）
     MARKET_CRAWL_RATE_LIMIT = os.getenv("MARKET_CRAWL_RATE_LIMIT", "3/minute")
+    # v8.22: 主路径(Playwright)异常或整场 0 条时，回落 Scrapling(Camoufox) 引擎重采。
+    # 可选依赖: pip install "scrapling[all]" 且 scrapling install --force；
+    # 未安装时回落自动跳过，主路径语义不变。0=关闭回落
+    MARKET_CRAWL_SCRAPLING_FALLBACK = os.getenv("MARKET_CRAWL_SCRAPLING_FALLBACK", "1") == "1"
 
     # ===== v4.2: 小米 MiMo 云端语音（可选）=====
     # 未配置 MIMO_API_KEY 时，前端自动降级为浏览器原生语音（speechSynthesis / SpeechRecognition）

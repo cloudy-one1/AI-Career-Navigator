@@ -11,6 +11,9 @@
 - 采集完成自动回灌 market.db（store.upsert_jobs，按 (source, source_id) 去重）。
 - v8.18: 支持协作式取消（用户取消 / 硬超时）——此前一次僵死就会让唯一采集槽
   永久占用，只能重启进程恢复。
+- v8.22: Playwright 主路径异常或整场空手而归（WAF 静默拦截的典型形态）时，
+  回落 Scrapling(Camoufox) 引擎重采一次（scrapling_fallback），把
+  "51job 改版 → 实时采集单点故障"变成双保险；取消/硬超时不触发回落。
 """
 import asyncio
 import logging
@@ -20,6 +23,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Optional
 
+from ...config import config
 from . import adapters
 from .. import store
 
@@ -178,18 +182,32 @@ def _should_cancel(task_id: str) -> bool:
         return time.time() - task.created_at > _HARD_DEADLINE
 
 
-def _run_crawl(task_id: str) -> None:
-    """采集线程入口：scrape_jobs → adapters → store.upsert_jobs 回灌 market.db。"""
+def _scrapling_fallback_enabled() -> bool:
+    """v8.22 回落开关（每次调用读取，便于运行中用 env 重启生效与测试替换）。"""
+    return bool(getattr(config, "MARKET_CRAWL_SCRAPLING_FALLBACK", True))
+
+
+def _run_scrapling_fallback(task_id: str) -> Optional[tuple]:
+    """尝试 Scrapling 回落采集；返回 (jobs, pages_collected) 或 None（不可用/失败）。
+
+    取消与硬超时（CrawlCancelled）穿透上抛，由 _run_crawl 的既有终态逻辑处理；
+    其他任何回落失败都吞掉返回 None，让主路径的错误/空结果语义维持原样。
+    """
+    try:
+        # 延迟导入：scrapling 未安装时回落自动跳过，不影响应用其余部分；
+        # CrawlCancelled 与主路径同源（python_job_scraper 已无 playwright 顶层依赖）
+        from .python_job_scraper import CrawlCancelled  # noqa: PLC0415
+        from .scrapling_fallback import scrape_jobs_scrapling  # noqa: PLC0415
+    except Exception as e:  # noqa: BLE001 - 回落模块自身不可导入也按"不可用"处理
+        logger.warning("Scrapling 回落不可用 id=%s: %s", task_id, e)
+        return None
+
     task = _tasks.get(task_id)
     if task is None:
-        return
+        return None
+    _update(task_id, message="主路径未取到数据，正在用 Scrapling 回落引擎重采…")
     try:
-        # 延迟导入：playwright 未安装时，应用本身与状态轮询仍可用，
-        # 只有真正启动采集时才在任务内转为 failed 并给出安装指引
-        from .python_job_scraper import scrape_jobs, CrawlCancelled  # noqa: PLC0415
-
-        _update(task_id, status="running", message="正在启动浏览器…")
-        jobs, pages_collected = scrape_jobs(
+        jobs, pages_collected = scrape_jobs_scrapling(
             keyword=task.keyword,
             cities=task.cities,
             pages_per_city=task.pages,
@@ -197,6 +215,67 @@ def _run_crawl(task_id: str) -> None:
             progress_callback=lambda c, p, n: _on_progress(task_id, c, p, n),
             should_cancel=lambda: _should_cancel(task_id),
         )
+    except CrawlCancelled:
+        raise
+    except Exception as e:  # noqa: BLE001 - 回落失败不掩盖主路径的失败原因
+        logger.warning("Scrapling 回落失败 id=%s: %s", task_id, e)
+        return None
+    logger.info(
+        "Scrapling 回落采集成功 id=%s keyword=%s 采集=%d 页=%s",
+        task_id, task.keyword, len(jobs), pages_collected,
+    )
+    return jobs, pages_collected
+
+
+def _run_crawl(task_id: str) -> None:
+    """采集线程入口：scrape_jobs → adapters → store.upsert_jobs 回灌 market.db。
+
+    v8.22 回落派发（顺序敏感）：
+    1. 主路径异常 → 记下 primary_error，尝试回落；
+    2. 主路径"成功但整场 0 条"（WAF 静默拦截的典型形态）→ 同样尝试回落；
+    3. 部分城市有数据视为成功，不触发回落（避免重复采集已到手的城市）；
+    4. 回落也拿不到数据 → 维持主路径的失败/空结果语义，错误信息不掩盖。
+    """
+    task = _tasks.get(task_id)
+    if task is None:
+        return
+    try:
+        # 延迟导入：playwright 未安装时模块仍可导入（v8.22 起纯函数与本模块
+        # 可脱离 playwright 引用），只有 scrape_jobs 调用时才会因缺依赖抛错
+        from .python_job_scraper import scrape_jobs, CrawlCancelled  # noqa: PLC0415
+
+        _update(task_id, status="running", message="正在启动浏览器…")
+        jobs, pages_collected = None, None
+        primary_error = None
+        try:
+            jobs, pages_collected = scrape_jobs(
+                keyword=task.keyword,
+                cities=task.cities,
+                pages_per_city=task.pages,
+                sort_type=task.sort_type,
+                progress_callback=lambda c, p, n: _on_progress(task_id, c, p, n),
+                should_cancel=lambda: _should_cancel(task_id),
+            )
+        except CrawlCancelled:
+            raise
+        except Exception as e:  # noqa: BLE001 - 主路径失败交给回落链评估
+            primary_error = e
+            logger.warning(
+                "Playwright 主路径失败 id=%s keyword=%s err=%s",
+                task_id, task.keyword, e,
+            )
+
+        if (jobs is None or not jobs) and _scrapling_fallback_enabled():
+            fallback = _run_scrapling_fallback(task_id)
+            if fallback is not None:
+                jobs, pages_collected = fallback
+
+        if jobs is None:
+            # 主路径失败且回落未启用/不可用/也失败 → 维持原失败语义
+            if primary_error is not None:
+                raise primary_error
+            raise RuntimeError("采集未返回任何数据且回落不可用")
+
         _update(task_id, message="采集完成，正在写入市场数据库…")
 
         standard = [
