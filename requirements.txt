@@ -1,4 +1,4 @@
-fastapi>=0.110.0
+fastapi>=0.142.2
 uvicorn[standard]>=0.29.0
 python-dotenv>=1.0.0
 # <4 上限：SDK 跨 major 的 breaking 不在验证范围内，无上限时"装到什么版本"每天在漂
