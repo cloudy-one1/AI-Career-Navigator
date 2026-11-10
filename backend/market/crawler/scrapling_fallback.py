@@ -2,16 +2,24 @@
 [AI 求职领航] 51job 实时采集 Scrapling 回落引擎（v8.22）。
 
 Playwright 主路径（python_job_scraper.scrape_jobs）失败或整场空手而归时，
-用 Scrapling StealthySession（Camoufox 反指纹浏览器）过 WAF，并通过
-``record_requests`` 被动捕获页面自己发出的 search-pc JSON 响应——
-无需注入任何 JS（主路径的 JS_FETCH_API 注入串在此路径完全不需要维护）。
+用 Scrapling StealthySession（Camoufox 反指纹浏览器）过 WAF 取数：
+导航让 SPA 自己过 WAF 并发出 search-pc XHR，``record_requests`` 被动捕获
+响应 JSON；翻页用 ``page_action`` 点击分页器"下一页"，让 SPA 自己发出
+带 WAF 戳的 pageNum=N XHR 后同样被动捕获——全程无需注入任何 JS。
 
-实测记录（2026-11-11，single-run）:
-- 纯 HTTP 直调 search-pc 返回 ``_waf_bd8ce2ce37`` JS 挑战页 → 必须真实浏览器；
-- Camoufox 打开搜索页即可过 WAF（页面自身 XHR 被挑战一次后自动重试成功）；
-- 会话网络历史可取到完整 JSON（约 200KB/页、20 条），DOM 与 JSON 双通道可用；
-- StealthySession 暂无 cookie 导出口 → "浏览器预热一次、翻页走纯 HTTP"
-  的混合模式在本版本做不到，每页都由页面导航自身触发（每页约 3~6 秒）。
+取数通路的三次实测结论（2026-11-11，证据链见 CHANGELOG v8.22）：
+1. 纯 HTTP 直调 search-pc 返回 ``_waf_bd8ce2ce37`` JS 挑战页 → 必须真实浏览器；
+2. Camoufox 页内 evaluate 注入 fetch（主路径 JS_FETCH_API 同款）即使 DOM 已
+   渲染、轮询 20s 仍被 WAF 挑战 → 挑战是**指纹级**的：SPA 自己的 XHR 带
+   WAF JS 钩子盖的 ``decode__1048`` 戳所以放行，注入的裸 fetch 在 Firefox
+   指纹下不放行（主路径 Chromium 指纹下裸 fetch 可过，两引擎行为不同）；
+3. 点击 ``.el-pagination .btn-next`` 后 SPA 发出的 pageNum=2 XHR（带戳）
+   正常返回 174KB JSON → 翻页通路成立。
+
+为什么不能靠导航翻页（静态根因，bundle 逆向）：搜索页组件 SearchResult
+（chunk-419adfef）的 data() 把 ``pageNum:1`` 硬编码，URL query 只读
+jobArea/keyword/landmark/metro——全新导航携带 pageNum=2 时页面自身 XHR
+仍拉第 1 页（运行时诊断与静态证据一致）。
 
 依赖（可选，未安装时回落自动跳过、主路径语义不变）:
     pip install "scrapling[all]"
@@ -21,22 +29,17 @@ Playwright 主路径（python_job_scraper.scrape_jobs）失败或整场空手而
     scrape_jobs_scrapling(keyword, cities, pages_per_city=3, sort_type='0',
                           progress_callback=None, should_cancel=None)
         -> (jobs, pages_collected)
-取消: should_cancel 在页间检查点轮询，命中即抛主路径的 CrawlCancelled，
-由 tasks.py 统一落终态（回落路径不自定义取消类型）。
 
 已知取舍:
-- 【翻页限制】SPA 全新导航时忽略 URL 里的 pageNum（实测携带 pageNum=2 打开
-  搜索页，页面自身 XHR 仍拉 pageNum=1，2026-11-11 诊断记录）——翻页需页面内
-  交互触发，本通道做不到。因此回落路径每城取第 1 页（20 条）；多页需求由
-  主路径满足。pages_per_city 循环保留：若 SPA 将来支持 pageNum 直达，自动生效。
-- sort_type 以 URL 参数追加透传，SPA 是否尊重未验证——回落路径排序可能
-  退化为默认综合排序（回落定位是应急通道，不为排序保真加复杂度）。
-- 每页数据靠"导航到搜索 URL → 页面自身 XHR → 网络历史捞取"，
-  页面结构再怎么改版，只要页面自己还调 search-pc 就能拿到数据。
+- 取消检查点为城市级：一城内的翻页点击序列（≤4 次 × 4s）不可中断，
+  取消最坏延迟 ≈ 单城总时长（约 25s），远小于主路径单页 60s 硬超时；
+- sort_type 不生效：SPA 既不读 URL 里的 sortType，注入 fetch 通道又已死，
+  回落路径固定综合排序（回落定位是应急通道，不为排序保真加复杂度）；
+- 翻页点击落在末页/无第 2 页时 element-ui 按钮禁用 → click 超时中断，
+  多余页在历史里不存在 → 引擎按"无数据即停"自然收口。
 """
 import json
 import logging
-import random
 import time
 from datetime import datetime, timezone
 from urllib.parse import parse_qs, urlparse
@@ -50,8 +53,11 @@ from .python_job_scraper import (
 
 _logger = logging.getLogger('market.crawler')
 
-_PAGE_TIMEOUT_MS = 60000  # 单页导航硬超时（与主路径 page.set_default_timeout 同量级）
-_MAX_NAV_ATTEMPTS = 2     # 单页导航重试次数：首次可能只留下 WAF 挑战响应
+_PAGE_TIMEOUT_MS = 60000     # 单次导航硬超时（与主路径 page.set_default_timeout 同量级）
+_NAV_ATTEMPTS = 2            # 城市级导航重试次数
+_CLICK_WAIT_MS = 4000        # 每次点"下一页"后等 SPA 发出并落好 XHR（实测 4s 足够）
+_CLICK_TIMEOUT_MS = 5000     # btn-next 不可点（末页/单页结果）时的 click 超时
+_NEXT_BTN = ".el-pagination .btn-next"  # element-ui 分页器"下一页"按钮
 
 
 class ScraplingNotAvailable(RuntimeError):
@@ -63,8 +69,9 @@ def scrape_jobs_scrapling(keyword, cities, pages_per_city=3, sort_type='0',
     """Scrapling(Camoufox) 回落采集：参数与返回值同 python_job_scraper.scrape_jobs。
 
     - cities 传空列表时默认全国范围搜索（与主路径一致）；
-    - should_cancel 在城市间/页间检查点轮询，命中即抛 CrawlCancelled；
-    - 未安装 scrapling 时抛 ScraplingNotAvailable（调用方决定是否降级）。
+    - should_cancel 在城市间检查点轮询，命中即抛 CrawlCancelled；
+    - 未安装 scrapling 时抛 ScraplingNotAvailable（调用方决定是否降级）；
+    - sort_type 仅保持签名兼容，本通道不生效（见模块 docstring 取舍）。
     """
     try:
         from scrapling.fetchers import StealthySession  # noqa: PLC0415
@@ -82,13 +89,6 @@ def scrape_jobs_scrapling(keyword, cities, pages_per_city=3, sort_type='0',
     if not valid_cities:
         valid_cities = [("全国", "000000")]
 
-    if pages_per_city > 1:
-        _logger.info(
-            '[Scrapling回落] pages_per_city=%d：本通道实测每城只能取第1页'
-            '（SPA 忽略 URL pageNum，见模块 docstring），多页由主路径满足',
-            pages_per_city,
-        )
-
     def _check_cancel():
         if should_cancel is not None and should_cancel():
             raise CrawlCancelled('采集被取消或超过硬超时（Scrapling 回落路径检查点）')
@@ -104,12 +104,9 @@ def scrape_jobs_scrapling(keyword, cities, pages_per_city=3, sort_type='0',
             _logger.info('[Scrapling回落] 开始采集: %s', city)
             pages_collected[city] = 0
             try:
+                page_datas = _fetch_city_pages(session, keyword, code, pages_per_city)
                 for pg in range(1, pages_per_city + 1):
-                    _check_cancel()
-                    # 页间轻节流：回落是应急通道，宁可慢一点也别加重风控
-                    time.sleep(random.uniform(0.2, 0.5))
-                    data = _fetch_page_json(session, keyword, code, pg, sort_type)
-                    items = _extract_items(data)
+                    items = _extract_items(page_datas.get(pg))
                     if not items:
                         _logger.info('[Scrapling回落][%s] 第%d页无数据, 跳过后续页', city, pg)
                         break
@@ -141,28 +138,41 @@ def scrape_jobs_scrapling(keyword, cities, pages_per_city=3, sort_type='0',
     return all_jobs, pages_collected
 
 
-def _fetch_page_json(session, keyword, code, pg, sort_type='0'):
-    """导航到第 pg 页搜索页，从会话网络历史里捞出对应 search-pc JSON。
+def _fetch_city_pages(session, keyword, code, pages_per_city):
+    """一城一次导航：过 WAF 后点击"下一页"驱动 SPA 翻页，从网络历史回收各页 JSON。
 
-    页面自身 XHR 首次会被 WAF 挑战、随后自动重试，历史里可能残留挑战响应；
-    所以按 jobArea+pageNum 过滤并取含 resultbody 的最新一条。拿不到返回 None。
+    返回 {pg: data_dict}（缺失页无键）。SPA 的 XHR 带 WAF 钩子盖的
+    ``decode__1048`` 戳所以放行（见模块 docstring），本函数绝不自己发请求。
     """
-    url = build_search_url(keyword, code, pg)
-    if sort_type and sort_type != '0':
-        url += f'&sortType={sort_type}'
-    for attempt in range(1, _MAX_NAV_ATTEMPTS + 1):
+    url = build_search_url(keyword, code, 1)
+
+    def _action(page):
+        # page_action 在导航+load_dom+network_idle 之后执行（_stealth.py:298），
+        # 此时第 1 页已由 SPA 自己拉好。逐次点"下一页"，每次等 XHR 落地。
+        for _ in range(max(0, pages_per_city - 1)):
+            page.locator(_NEXT_BTN).first.click(timeout=_CLICK_TIMEOUT_MS)
+            page.wait_for_timeout(_CLICK_WAIT_MS)
+
+    for attempt in range(1, _NAV_ATTEMPTS + 1):
         try:
-            session.fetch(url, timeout=_PAGE_TIMEOUT_MS, network_idle=True)
+            # 点击序列的异常（末页按钮禁用等）被 Scrapling 吞掉只记日志
+            # （_stealth.py:302），不影响 fetch 返回；已点出的页仍可从历史回收
+            session.fetch(url, timeout=_PAGE_TIMEOUT_MS, network_idle=True,
+                          page_action=_action)
         except Exception as e:
-            _logger.warning('[Scrapling回落] 第%d页导航失败(尝试%d/%d): %s',
-                            pg, attempt, _MAX_NAV_ATTEMPTS, e)
+            _logger.warning('[Scrapling回落] 导航失败(尝试%d/%d): %s',
+                            attempt, _NAV_ATTEMPTS, e)
             time.sleep(1.5)
             continue
-        data = _find_api_response(session, code, pg)
-        if data is not None:
-            return data
+        out = {}
+        for pg in range(1, pages_per_city + 1):
+            data = _find_api_response(session, code, pg)
+            if data is not None:
+                out[pg] = data
+        if out:
+            return out
         time.sleep(1.5)  # WAF 挑战自动重试可能稍晚才落进历史，稍候再试一轮
-    return None
+    return {}
 
 
 def _find_api_response(session, code, pg):

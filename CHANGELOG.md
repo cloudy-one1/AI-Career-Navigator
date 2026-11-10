@@ -15,30 +15,33 @@
 > 主路径失败时用另一套反指纹引擎（Scrapling StealthySession/Camoufox）重采一次，
 > 把单点故障变成双保险。
 
-### 实测侦察（验证先行，2026-11-11 single-run）
+### 实测侦察（验证先行，2026-11-11，多轮真机 + bundle 逆向）
 
 - 纯 HTTP 直调 search-pc 返回 `_waf_bd8ce2ce37` JS 挑战页（200 包挑战体）→ 必须真实浏览器，解释了主路径选 Playwright 的原因；
-- Camoufox 打开搜索页即过 WAF，`record_requests=True` 被动捕获页面自身 search-pc XHR 可拿到完整 JSON（约 200KB/页 20 条）——回落通道无需维护页内注入 JS；
-- 速度与主路径相当（10.4s vs 12.5s，各单次），瓶颈同在浏览器启动+WAF 求解。
+- Camoufox 打开搜索页即过 WAF，`record_requests=True` 被动捕获页面自身 search-pc XHR 可拿到完整 JSON（约 200KB/页 20 条）；
+- 速度与主路径相当（10.4s vs 12.5s，各单次），瓶颈同在浏览器启动+WAF 求解；
+- **翻页静态根因**（bundle 逆向，chunk-419adfef）：搜索页组件 `SearchResult` 的 `data()` 把 `pageNum:1` 硬编码，URL query 只读 jobArea/keyword/landmark/metro——全新导航携带 pageNum=2 时页面自身 XHR 仍拉第 1 页（运行时诊断与静态证据一致）；SPA 自己翻页会带上一页响应的 `requestId` 游标，但 API 无 requestId 也放行（主路径两页 38 条去重实测）；
+- **注入 fetch 通道指纹级阵亡**：Camoufox 页内 evaluate 主路径同款 fetch，DOM 已渲染（20 条岗位）仍 10 次轮询 100% 被挑战——SPA 自己的 XHR 带 WAF JS 钩子盖的 `decode__1048` 戳（生成器在 alicdn WAF 组件里，纯 HTTP 拿不到），裸 fetch 在 Firefox 指纹下不放行；主路径 Chromium 指纹下裸 fetch 可过，两引擎行为不同；
+- **翻页通路成立**：`page_action` 点击 `.el-pagination .btn-next` 驱动 SPA 自己发出带戳的 pageNum=2 XHR（174KB JSON）→ 被动捕获即可。
 
 ### 改动
 
-- 新增 `market/crawler/scrapling_fallback.py`：契约与 `scrape_jobs` 对齐（同参数/同返回/同 CrawlCancelled），复用主路径纯函数做字段映射；响应筛选按 (jobArea, pageNum) 匹配网络历史并取含 resultbody 的最新一条，SPA 结构变更时只要页面还调 search-pc 就能拿到数据；
+- 新增 `market/crawler/scrapling_fallback.py`：契约与 `scrape_jobs` 对齐（同参数/同返回/同 CrawlCancelled），复用主路径纯函数做字段映射。取数架构：一城一次导航 → `page_action` 逐次点击"下一页"（每次等 4s 让 SPA 落好 XHR）→ 按 (jobArea, pageNum) 从网络历史回收含 resultbody 的最新一条，SPA 结构变更时只要页面还调 search-pc 就能拿到数据；
 - `tasks._run_crawl` 回落派发：主路径异常或整场 0 条（WAF 静默拦截形态）触发；部分城市有数据视为成功不重采；取消/硬超时穿透不触发；回落失败不掩盖主路径错误。开关 `MARKET_CRAWL_SCRAPLING_FALLBACK`（默认开）；
 - `python_job_scraper` 的 playwright 顶层导入改函数内延迟导入——纯函数（to_job_record 等）可脱离 playwright 引用，回落引擎才能借用；也是"playwright 未装但 scrapling 装了"组合下回落可用的前提；
 - scrapling 进 requirements/constraints（test_dependencies 依赖门禁要求：backend 内 import 必须声明）。
 
 ### 已知取舍（如实记录）
 
-- 回落通道每城只能取第 1 页（20 条）：SPA 全新导航忽略 URL 里的 pageNum（诊断实测携带 pageNum=2 打开仍拉第 1 页），翻页需页面内交互触发；多页需求由主路径满足。多页支持留待将来逆向 SPA 初始状态参数（可用 REA 分析 SPA bundle）再补；
-- sort_type 透传未验证，回落路径排序可能退化为默认综合排序。
+- 取消检查点为城市级：一城内的翻页点击序列（≤4 次 × 4s）不可中断，取消最坏延迟 ≈ 单城总时长（约 25s），远小于主路径单页 60s 硬超时；
+- sort_type 在回落路径不生效：SPA 既不读 URL 里的 sortType，注入 fetch 通道又已阵亡，回落固定综合排序（回落定位是应急通道，不为排序保真加复杂度）；
+- 翻页点击落在末页/单页结果时 element-ui 按钮禁用 → click 超时中断，多余页在历史里不存在 → 引擎按"无数据即停"自然收口。
 
 ### 验证（2026-11-11，本机）
 
 - pytest 全量回归 1219 passed / 1 skipped；新增 `tests/test_market_crawler_fallback.py` 14 例：响应筛选纯逻辑 / scrapling 缺失降级 / 派发状态机（成功跳过回落、空结果触发、异常触发、回落关闭维持原错误、取消穿透）；
 - `run.py lint` 分层契约 KEPT（71 files / 179 deps）；
-- 回落引擎真机冒烟：杭州 1 页 20 条真实岗位入库字段完整、job_url 全去重；
-- 主路径回归：`scrape_jobs` 原样可用（延迟导入改动后基线复跑通过）。
+- 回落引擎真机冒烟：杭州 2 页 40 条真实岗位、`pages={'杭州': 2}`、job_url 全去重、20.8s（点击驱动翻页与被动捕获双验证）；主路径回归 `scrape_jobs` 原样可用（延迟导入改动后基线复跑两页 38 条通过）。
 
 ---
 
