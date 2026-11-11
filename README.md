@@ -54,7 +54,9 @@ AI 求职领航把求职拆成五步主线，每一步都有数据支撑与产�
   <em>静音自动播放 · 完整 150s 横屏/竖屏版见项目根目录交付物</em>
 </p>
 
-![AI 求职领航 · 60 秒产品介绍：从职业定位到拿 Offer 的全流程 AI 陪跑](.github/assets/intro-60s.mp4)
+<p align="center">
+  <video src=".github/assets/intro-60s.mp4" controls muted autoplay loop width="900"></video>
+</p>
 
 ## 核心特性
 
