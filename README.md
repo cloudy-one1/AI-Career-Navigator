@@ -48,6 +48,18 @@ AI 求职领航把求职拆成五步主线，每一步都有数据支撑与产�
   <br><sub>模拟面试：三步准备向导 + 右侧本场配置（模式 / 风格 / 题型配比 / 公司 / 语音）</sub>
 </p>
 
+## 🎬 产品介绍视频（60 秒）
+
+<p align="center">
+  <em>点击封面播放 · 完整 150s 横屏/竖屏版见项目根目录交付物</em>
+</p>
+
+<p align="center">
+  <a href="https://github.com/cloudy-one1/AI-Career-Navigator/blob/master/.github/assets/intro-60s.mp4">
+    <img src=".github/assets/intro-60s-cover.png" width="720" alt="AI 求职领航 · 60 秒产品介绍：从职业定位到拿 Offer 的全流程 AI 陪跑（点击播放）">
+  </a>
+</p>
+
 ## 核心特性
 
 **诊断内核**
