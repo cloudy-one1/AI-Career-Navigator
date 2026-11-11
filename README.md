@@ -51,13 +51,11 @@ AI 求职领航把求职拆成五步主线，每一步都有数据支撑与产�
 ## 🎬 产品介绍视频（60 秒）
 
 <p align="center">
-  <em>点击封面播放 · 完整 150s 横屏/竖屏版见项目根目录交付物</em>
+  <img src=".github/assets/intro-60s.gif" width="720" alt="AI 求职领航 · 60 秒产品介绍：从职业定位到拿 Offer 的全流程 AI 陪跑（自动循环播放，静音）">
 </p>
 
 <p align="center">
-  <a href="https://github.com/cloudy-one1/AI-Career-Navigator/blob/master/.github/assets/intro-60s.mp4">
-    <img src=".github/assets/intro-60s-cover.png" width="720" alt="AI 求职领航 · 60 秒产品介绍：从职业定位到拿 Offer 的全流程 AI 陪跑（点击播放）">
-  </a>
+  <sub>GIF 静音自动循环 · <a href="https://github.com/cloudy-one1/AI-Career-Navigator/blob/master/.github/assets/intro-60s.mp4">有声高清版（mp4）</a></sub>
 </p>
 
 ## 核心特性
