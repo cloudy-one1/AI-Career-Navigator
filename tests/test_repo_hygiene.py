@@ -56,6 +56,7 @@ ALLOWED_ROOT_FILES: set[str] = {
     "docker-compose.yml",
     "requirements.txt",
     "run.py",             # 一键启动 + lint 子命令
+    "视频发布物料.md",     # [v8.22] 产品介绍视频的发布物料包（各平台文案/署名义务/嵌入代码）
 }
 ALLOWED_ROOT_DIRS: set[str] = {
     ".github",    # CI 工作流 / dependabot / 社区健康文件 / README 截图资源
