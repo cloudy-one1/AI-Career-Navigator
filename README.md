@@ -58,6 +58,8 @@ AI 求职领航把求职拆成五步主线，每一步都有数据支撑与产�
   <sub>GIF 静音自动循环 · <a href="https://github.com/cloudy-one1/AI-Career-Navigator/blob/master/.github/assets/intro-60s.mp4">有声高清版（mp4）</a></sub>
 </p>
 
+> 各平台发布文案、封面与音乐署名义务（Fluidscape — Kevin MacLeod, CC BY 4.0）见 [视频发布物料.md](视频发布物料.md)。
+
 ## 核心特性
 
 **诊断内核**
