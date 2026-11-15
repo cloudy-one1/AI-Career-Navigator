@@ -15,7 +15,7 @@ import { cityCoord } from './cityCoords.js';
 import {
   startMarketCrawl, getCrawlStatus, cancelMarketCrawl, getCityMap, getMarketJob,
   getMarketJobs, getMarketStats, runGapAnalysis, crossJobCompare,
-  getMarketCharts, getMarketInsight,
+  getMarketCharts, getMarketInsight, importRemoteJobs,
   addMarketJobToPosition, uploadResumeToLibrary, getResume,
 } from './api.js';
 
@@ -36,6 +36,7 @@ const state = {
   crawlTaskId: null,
   crawling: false,
   lastKeyword: '',     // 最近一次采集的关键词（用于结果摘要）
+  stats: null,         // [v8.23] /api/market/stats 最新响应（overview 卡「来源构成」行数据源）
   // ── [v8.2] 数据分析视图 ──
   charts: null,        // /api/market/charts 的聚合数据
   chartInstances: {},  // section → Chart 实例（主题切换/重绘时销毁）
@@ -179,7 +180,14 @@ function buildCollectView() {
       el('button', { type: 'button', id: 'mkt-query-btn', className: 'btn btn-default', style: 'flex:1; padding:12px; font-size:15px;', textContent: '查询已有数据', onClick: queryExisting }),
       el('button', { type: 'button', id: 'mkt-crawl-btn', className: 'btn btn-info', style: 'flex:1; padding:12px; font-size:15px;', textContent: '立即实时采集', onClick: startCrawl }),
     ),
-    el('p', { className: 'form-hint', textContent: '查询已有数据：浏览已收录的岗位信息；实时采集：获取 51job 最新招聘数据（更新前会清空旧记录）。' }),
+    el('div', { style: 'display:flex; gap:10px; margin-top:10px;' },
+      el('button', {
+        type: 'button', id: 'mkt-remote-btn', className: 'btn btn-default',
+        style: 'flex:1; padding:10px; font-size:14px;',
+        textContent: '🌍 导入国际远程岗位（Remotive）', onClick: importRemote,
+      }),
+    ),
+    el('p', { className: 'form-hint', textContent: '查询已有数据：浏览已收录的岗位信息；实时采集：获取 51job 最新招聘数据（更新前会清空旧记录）；国际远程：从 Remotive 免费接口拉取全球远程岗位，与国内数据分开源统计（岗位描述为英文）。' }),
 
     // 增强：采集进度轮询条
     el('div', { className: 'mkt-progress', id: 'mkt-progress' },
@@ -445,6 +453,57 @@ function setCrawlFailed(error) {
   refreshJobsAndStats();
 }
 
+/* ─────────────────── [v8.23] 国际远程岗位（Remotive） ───────────────────
+   第二采集源：免 key 免注册的公开 API。与国内管道共用 market.db，
+   source='remotive'、city 统一「海外远程」；外币薪资只存 salary_raw，
+   不进国内薪资分档统计（口径见 backend/market/remote_source.py）。 */
+
+async function importRemote() {
+  const input = $('#mkt-keyword');
+  const keyword = (input?.value || '').trim();
+  if (!keyword) {
+    showError('请先在上方输入岗位关键词（如 python、devops），远程源按关键词检索');
+    input?.focus();
+    return;
+  }
+
+  const btn = $('#mkt-remote-btn');
+  btn.disabled = true;
+  btn.textContent = '⏳ 正在拉取国际远程岗位…';
+  hideError();
+  hideCollectResult();
+  state.lastKeyword = keyword;
+
+  try {
+    const res = await importRemoteJobs({ keyword, limit: 50 });
+    showRemoteResult(res.imported, keyword);
+    refreshJobsAndStats();
+  } catch (e) {
+    showError(`国际远程岗位拉取失败：${e.message}`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🌍 导入国际远程岗位（Remotive）';
+  }
+}
+
+/** 远程导入结果摘要（复用采集结果提示条；与国内采集提示并列复用同一 box） */
+function showRemoteResult(imported, keyword) {
+  const box = $('#mkt-collect-result');
+  if (!box) return;
+  box.innerHTML = '';
+  box.appendChild(el('div', {},
+    '🌍 国际远程岗位导入完成：关键词「', el('b', { textContent: keyword }),
+    '」，本次写入 ', el('span', { className: 'mono', textContent: String(imported) }),
+    ' 条（来源标记 remotive，城市归入「海外远程」）。',
+  ));
+  box.appendChild(el('a', {
+    href: '#',
+    textContent: '查看刚导入的数据 →',
+    onClick: e => { e.preventDefault(); switchView('jobs'); },
+  }));
+  box.classList.add('visible');
+}
+
 function showProgress(msg, pct, sub) {
   const bar = $('#mkt-progress');
   bar.classList.add('visible');
@@ -609,6 +668,7 @@ async function refreshJobsAndStats() {
 async function loadStats() {
   try {
     const s = await getMarketStats(state.filters.keyword || undefined);
+    state.stats = s;   // [v8.23] overview 卡的「来源构成」行读取此缓存
     $('#mkt-stat-total').textContent = s.total ?? '—';
     const avg = s.avg_salary?.avg_k;
     $('#mkt-stat-salary').innerHTML = avg != null
@@ -676,6 +736,12 @@ function renderTable() {
       ),
       el('td', {},
         el('a', { className: 'job-link', textContent: job.title || '—', onClick: e => { e.stopPropagation(); openDetail(job.id); } }),
+        // [v8.23] 来源徽章：remotive 岗位以「🌍 远程」区分国内 51job 数据（默认不标）
+        job.source === 'remotive' ? el('span', {
+          className: 'mkt-src-badge',
+          title: `国际远程岗位（Remotive）\n原始薪资：${job.salary_raw || '面议'}`,
+          textContent: '🌍 远程',
+        }) : null,
       ),
       el('td', { textContent: job.company || '-' }),
       el('td', { textContent: job.city || '—' }),
@@ -1314,11 +1380,22 @@ function renderOverviewText(section) {
     ['主流年资', topOf(d.experience, 'label')],
     ['最高频词汇', topOf(d.skill, 'skill')],
   ];
+  // [v8.23] 来源构成（51job=国内采集 / remotive=国际远程）——有远程数据才显示
+  const sources = (state.stats && state.stats.sources) || [];
+  if (sources.length > 1) {
+    const text = sources.map(s => `${sourceLabel(s.source)} ${s.cnt}`).join(' · ');
+    rows.splice(1, 0, ['来源构成', text]);
+  }
   rows.forEach(([k, v]) => host.appendChild(
     el('div', { className: 'mkt-chart-text-row' },
       el('span', { className: 'k', textContent: k }),
       el('span', { className: 'v', textContent: v })),
   ));
+}
+
+/** 采集源 → 展示名（与 remote_source.py 的 source 标记同源） */
+function sourceLabel(source) {
+  return { '51job': '国内(51job)', remotive: '国际远程(Remotive)' }[source] || source;
 }
 
 /**

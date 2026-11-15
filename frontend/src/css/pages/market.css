@@ -908,6 +908,20 @@ html.theme-dark #market-data-panel .home-feature-card .fc-arrow { color: var(--s
 
 .mkt-skill-tag:nth-child(1) { border-color: var(--mkt-stamp); color: var(--mkt-stamp-deep); background: var(--mkt-stamp-soft); }
 
+/* [v8.23] 来源徽章：国际远程岗位（remotive）在职位名后的小标记 */
+.mkt-src-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 8px;
+  font-size: 11px;
+  border-radius: 999px;
+  border: 1px solid var(--mkt-teal, #3A7A6A);
+  color: var(--mkt-teal, #3A7A6A);
+  background: transparent;
+  vertical-align: 1px;
+  cursor: help;
+}
+
 /* 筛选区：两行布局——主搜索（高频）+ 高级筛选（低频紧凑） */
 .mkt-filters {
   display: flex;

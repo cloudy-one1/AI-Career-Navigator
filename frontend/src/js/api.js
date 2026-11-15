@@ -281,6 +281,18 @@ export async function getMarketInsight({ section, keyword = '', fresh = false })
 }
 
 /**
+ * [v8.23] 拉取国际远程岗位（Remotive 免 key API）并写入 market.db。
+ * 与国内管道共用 store：source='remotive'、city 统一「海外远程」；
+ * 外币薪资只留在 salary_raw，不进国内薪资分档统计。
+ */
+export async function importRemoteJobs({ keyword, limit = 50 }) {
+  const form = new URLSearchParams();
+  form.append('keyword', keyword);
+  form.append('limit', String(limit));
+  return request('POST', '/api/market/import/remote', form, true);
+}
+
+/**
  * [v8.0] 求职档案（能力档案首屏数据源）。
  * 失败返回 null 而非抛出——档案是首屏，取不到就降级渲染，绝不能挡住其他功能。
  */
