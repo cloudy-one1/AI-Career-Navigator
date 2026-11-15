@@ -8,6 +8,39 @@
 
 ---
 
+## v8.23 国际远程岗位采集源：Remotive 免 key API（2026-11-15）
+
+> 市场洞察此前只有 51job 一条数据管道——国内市场覆盖充分，但「远程工作 / 海外
+> 机会」这个求职定位维度天然缺席（51job 无此类目，爬虫也拿不到）。本版接入
+> Remotive 公开 API（免 key 免注册、限流友好）作为**第二个采集源**，与国内管道
+> 共用同一条 import → store 链路，零新增依赖。
+
+### 改动
+
+- 新增 `market/remote_source.py`：拉取 → 字段映射 → 落库三段，口径与
+  `importer._map_*_row` 一致。HTTP 走标准库 urllib + `asyncio.to_thread`
+  （与 `web_research` 同款），transport 可注入，测试全程无网络；
+- **货币口径**：Remotive 的 salary 是自由文本（多为美元/欧元）。刻意不解析进
+  `salary_min/salary_max` 数值列——market.db 薪资分档统计口径是"月薪千元
+  （人民币）"，混入外币会污染国内薪资分布；原文保留在 `salary_raw` 供展示；
+- **地点口径**：远程岗位地点五花八门（Worldwide/EMEA/USA），`city` 统一落
+  「海外远程」做单一统计桶，原始地点以 `[地点: ...]` 前缀进 description；
+- `store.get_stats()` 新增 `sources` 分布（`[{source, cnt}]`），前端可分源展示
+  国内 vs 国际（契约测试 EXPECTED_KEYS 已同步）；
+- 新端点 `POST /api/market/import/remote`（`5/minute` 限流，同 DB 导入口径）：
+  keyword 必填（1~50 字符）、limit 上限 200；上游失败返回 502 可读错误，
+  导入成功后与 DB 导入同款作废 AI 解读缓存；
+- `service.import_remote_and_store()`：网络异常向上抛而非静默吞错——本地库
+  缺失是"无数据"，网络失败是"本次没采到"，语义不同必须让路由层感知；
+- 测试 `tests/test_market_remote.py` 14 例：映射/坏结构宽容/网络异常传播/
+  路由端到端（monkeypatch 注入，零网络）。
+
+### 范围
+
+- 前端导入按钮与分源展示尚未接线（`sources` 数据已就位）；
+- Remotive 是英文远程岗位源，岗位描述为英文——JD 关键词命中与 Gap 分析
+  链路对英文 JD 的效果未做专项评估。
+
 ## v8.22 采集层回落链：Scrapling/Camoufox 备胎引擎（2026-11-11）
 
 > 实时采集此前是单引擎：51job 升级 WAF 或改版 → Playwright 路径失败/静默空手而归

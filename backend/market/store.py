@@ -216,6 +216,14 @@ async def _keyword_counts(db) -> list[dict]:
         return [dict(r) for r in await cur.fetchall()]
 
 
+async def _source_counts(db) -> list[dict]:
+    """按采集源分布（51job=国内 / remotive=国际远程），供前端分源展示。"""
+    async with db.execute(
+        "SELECT source, COUNT(*) AS cnt FROM job_postings GROUP BY source ORDER BY cnt DESC"
+    ) as cur:
+        return [dict(r) for r in await cur.fetchall()]
+
+
 async def get_stats(keyword: Optional[str] = None) -> dict:
     """
     市场统计概览：总量、城市分布、薪资分布、学历分布、平均薪资、热门技能。
@@ -235,7 +243,8 @@ async def get_stats(keyword: Optional[str] = None) -> dict:
             return {"total": 0, "keyword": keyword, "cities": [],
                     "salary_distribution": [], "education_distribution": [],
                     "avg_salary": None, "top_skills": [],
-                    "keywords": await _keyword_counts(db)}
+                    "keywords": await _keyword_counts(db),
+                    "sources": await _source_counts(db)}
 
         # 城市分布：city 列存的是完整地址（如 '上海-徐汇区'），必须先归一化再聚合。
         # 否则同一城市按行政区被拆成多行，统计碎片化、地图散点大面积匹配失败。
@@ -299,6 +308,7 @@ async def get_stats(keyword: Optional[str] = None) -> dict:
             "avg_salary": avg_salary,
             "top_skills": top_skills,
             "keywords": await _keyword_counts(db),
+            "sources": await _source_counts(db),
         }
     finally:
         await db.close()

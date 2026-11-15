@@ -10,6 +10,7 @@ from .. import db
 from ..config import config
 from ..market import store as market_store, service as market_service
 from ..market import analytics as market_analytics, insight as market_insight
+from ..market import remote_source
 from ..market.crawler import tasks as crawler_tasks
 from ..market.crawler.adapters import build_jd_text
 from ..web_research import enrich_jd_with_research
@@ -104,6 +105,33 @@ async def market_import(
         city=city.strip() if city else None,
         limit=max(1, min(limit, 10000)),
     )
+    # 数据已变化，此前生成的 AI 解读结论全部作废
+    market_insight.invalidate()
+    return {"status": "ok", **result}
+
+
+@router.post("/api/market/import/remote")
+@state.limiter.limit("5/minute")
+async def market_import_remote(
+    request: Request,
+    keyword: str = Form(..., min_length=1, max_length=50),
+    limit: int = Form(50),
+):
+    """拉取国际远程岗位（Remotive 公开 API，免 key）并写入 market.db。
+
+    与国内管道共用 store：source='remotive'、city 统一「海外远程」；
+    外币薪资刻意不入数值列，国内薪资分档统计保持纯净（口径见
+    backend/market/remote_source.py 模块说明）。网络失败返回 502。
+    """
+    kw = keyword.strip()
+    try:
+        result = await market_service.import_remote_and_store(
+            keyword=kw,
+            limit=remote_source.clamp_limit(limit),
+        )
+    except Exception as e:
+        logger.error("远程岗位导入失败: %s", e)
+        raise HTTPException(502, f"远程数据源请求失败: {e}") from e
     # 数据已变化，此前生成的 AI 解读结论全部作废
     market_insight.invalidate()
     return {"status": "ok", **result}

@@ -196,6 +196,7 @@ class TestGetStatsContract:
     EXPECTED_KEYS = {
         "total", "keyword", "cities", "salary_distribution",
         "education_distribution", "avg_salary", "top_skills", "keywords",
+        "sources",
     }
 
     @pytest.mark.asyncio
@@ -221,6 +222,9 @@ class TestGetStatsContract:
         assert set(stats["education_distribution"][0]) == {"education", "cnt"}
         assert stats["salary_distribution"]
         assert set(stats["salary_distribution"][0]) == {"bucket", "cnt"}
+
+        # v8.23: 按采集源分布（51job / remotive）——前端据此分源展示
+        assert stats["sources"] and set(stats["sources"][0]) == {"source", "cnt"}
 
     @pytest.mark.asyncio
     async def test_dirty_tags_skipped_in_top_skills(self):

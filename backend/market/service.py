@@ -1,12 +1,13 @@
 """
 [v3.0] 市场数据服务层：从 job-crawler 导入 + 岗位画像集成。
 导入管道：job-crawler data.db → importer (字段映射) → store (upsert 到 market.db)。
+[v8.23] 新增第二采集源：Remotive 国际远程岗位（免 key），同一 store 管道。
 """
 
 import logging
 from typing import Optional
 
-from . import importer, store
+from . import importer, remote_source, store
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +38,31 @@ async def import_and_store(
         "total_read": len(jobs),
         "keyword": keyword,
         "city": city,
+    }
+
+
+async def import_remote_and_store(
+    keyword: str,
+    limit: int = 50,
+    transport=None,
+) -> dict:
+    """
+    拉取国际远程岗位（Remotive，免 key）并写入 market.db。
+
+    与国内管道共用 store.upsert_jobs：source='remotive'、city 统一「海外远程」，
+    外币薪资刻意不入数值列（防污染国内薪资分档，见 remote_source 模块说明）。
+    网络异常向上抛，路由层归约为 502。
+    返回: {source, imported, keyword}
+    """
+    await store.init_market_db()
+
+    jobs = await remote_source.import_remote(keyword, limit, transport=transport)
+    saved = await store.upsert_jobs(jobs) if jobs else 0
+    logger.info(f"远程岗位导入完成: {keyword} 读取 {len(jobs)} 条, 写入 {saved} 条")
+    return {
+        "source": "remotive",
+        "imported": saved,
+        "keyword": keyword,
     }
 
 
