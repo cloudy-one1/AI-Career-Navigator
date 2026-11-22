@@ -653,54 +653,6 @@ class LLMClient:
         logger.warning(f"LLM 返回内容四级容错后仍无法解析为 JSON 对象: {str(raw)[:200]}")
         return {"error": "JSON 解析失败", "raw": str(raw)[:1000]}
 
-    def chat_stream(self, system_prompt: str, user_prompt: str,
-                    temperature: float = 0.7, max_tokens: int = 2048,
-                    task: str | None = None):
-        """
-        同步流式聊天请求，返回一个生成器，逐 chunk yield 文本（内部自动 fallback 降级）。
-        保留用于非异步上下文；WebSocket 主流程改用 chat_stream_async。
-        v6.2: task 指定任务名时按 LLM_TASK_MODELS 绑定模型，并对实时链路禁推理模型。
-        """
-        issue = _api_key_issue(self.api_key)
-        if issue:
-            logger.warning(f"LLM {issue}，请在 .env 中设置 {self._api_key_env}")
-            yield json.dumps({"error": f"{issue}，请在 .env 中设置 {self._api_key_env}"})
-            return
-
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ]
-
-        pool = self.task_candidates(task)
-        timeout = self.resolve_task_timeout(task)
-        last_err = None
-        for idx, cand in enumerate(pool):
-            yielded = False
-            try:
-                stream = cand.client.chat.completions.create(
-                    model=cand.model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    stream=True,
-                    timeout=timeout,
-                )
-                for chunk in stream:
-                    delta = chunk.choices[0].delta
-                    if delta and delta.content:
-                        yielded = True
-                        yield delta.content
-                return
-            except Exception as e:  # noqa: BLE001
-                logger.error(f"同步流式候选 {idx} ({cand.provider}:{cand.model}) 失败: {e}")
-                last_err = e
-                if not yielded:
-                    continue
-                yield json.dumps({"error": f"流式中途失败: {last_err}"})
-                return
-        yield json.dumps({"error": f"所有模型流式调用均失败: {last_err}"})
-
     async def chat_stream_async(self, system_prompt: str, user_prompt: str,
                                 temperature: float = 0.7, max_tokens: int = 2048,
                                 task: str | None = None):
@@ -709,6 +661,8 @@ class LLMClient:
         v3.2: 取代原"同步 chat_stream + 线程池 + asyncio.Queue 桥接"方案，
         无阻塞、无跨线程桥接，彻底消除 worker 线程 .result() 在队列满时的泄漏风险。
         v6.2: task 指定任务名时按 LLM_TASK_MODELS 绑定模型，并对实时链路禁推理模型。
+        v8.24: 同步版 chat_stream 已删——全仓零调用方，docstring 所称"非异步上下文"
+        不存在，流式消费方全部走本方法。
         """
         issue = _api_key_issue(self.api_key)
         if issue:

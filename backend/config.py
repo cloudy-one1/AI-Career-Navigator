@@ -328,10 +328,11 @@ class Config:
             }
         return result
 
-    # ===== 兼容旧版（通过 provider 统一读取）=====
-    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-    DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
-    DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
+    # ===== 兼容旧版（v8.24 已删）=====
+    # 原 DEEPSEEK_API_KEY/DEEPSEEK_BASE_URL/DEEPSEEK_MODEL 三个兼容类属性已删除：
+    # 全仓零消费方（provider 统一读取路径为 LLMClient._init_client →
+    # provider_info["api_key_env"] → os.getenv），且 API_KEY 是 import 时固化的
+    # 快照值——同一文件里其余 40+ 项全是 property 现读，改 .env 后表现不一致。
 
     # SQLite 数据库路径
     DB_PATH = os.path.join(BASE_DIR, "data", "interview.db")

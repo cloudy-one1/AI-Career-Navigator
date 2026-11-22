@@ -730,7 +730,7 @@ async def ws_interview(websocket: WebSocket, session_id: str):
                 "type": "round_summary",
                 "data": {
                     "round_name": info["name"],
-                    "avg_score": session._current_round_avg_score(),
+                    "avg_score": session.current_round_avg_score(),
                     "quality": session.check_round_quality(),
                     "extra_questions_added": session.extra_questions_added,
                 }

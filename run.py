@@ -88,20 +88,18 @@ def main():
     # 所有网卡——v8.11 的发布面收口只落在 docker-compose，此处补齐裸机路径。
     env_path = os.path.join(root, ".env")
     if os.path.exists(env_path):
+        # v8.24: 改用 python-dotenv（正式依赖，backend/config.py 同款解析）——
+        # 此前手搓的逐行 partition("=") 解析器不认 export 前缀/引号转义，
+        # 与 load_dotenv 的语义不一致，属重复实现。
         try:
-            with open(env_path, "r", encoding="utf-8") as fh:
-                for line in fh:
-                    line = line.strip()
-                    if not line or line.startswith("#") or "=" not in line:
-                        continue
-                    key, _, value = line.partition("=")
-                    key = key.strip()
-                    value = value.split(" #", 1)[0].strip().strip('"').strip("'")
-                    if key == "HOST" and host is None and value:
-                        host = value
-                    elif key == "PORT" and port is None and value:
-                        port = value
-        except OSError as exc:
+            from dotenv import dotenv_values  # noqa: PLC0415
+
+            for key, value in dotenv_values(env_path).items():
+                if key == "HOST" and host is None and value:
+                    host = value
+                elif key == "PORT" and port is None and value:
+                    port = value
+        except (OSError, ValueError) as exc:
             log.warning("读取 .env 的 HOST/PORT 失败（不影响启动）: %s", exc)
     host = host or "127.0.0.1"
     port = port or "8000"

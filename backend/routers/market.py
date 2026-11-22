@@ -15,6 +15,7 @@ from ..market.crawler import tasks as crawler_tasks
 from ..market.crawler.adapters import build_jd_text
 from ..web_research import enrich_jd_with_research
 from . import state
+from .deps import internal_error
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -61,8 +62,8 @@ async def research_position(jd_text: str = Form(""), position: str = Form(""),
         )
         return {"status": "ok", "data": result}
     except Exception as e:
-        logger.error(f"岗位研究失败: {e}")
-        raise HTTPException(500, str(e))
+        # v8.24: 收口到统一出口——此前 str(e) 直接回传客户端
+        raise internal_error(e, "岗位研究")
 
 
 @router.post("/api/market/import")

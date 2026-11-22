@@ -164,7 +164,7 @@ class TestSnapshotRoundtrip:
         # 快照往返后必须重建这一别名关系
         assert r.round_diagnoses[-1] is r.all_diagnoses[-1]
         assert r.all_diagnoses[-1]["overall_score"] == 3.6
-        assert r._current_round_avg_score() == s._current_round_avg_score()
+        assert r.current_round_avg_score() == s.current_round_avg_score()  # v8.24: 私有转公开
 
     def test_follow_up_state(self, pair):
         s, r = pair

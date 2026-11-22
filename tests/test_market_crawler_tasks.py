@@ -75,6 +75,43 @@ class TestStartCrawl:
         assert task is None
         assert err
 
+    def test_zombie_running_task_does_not_block_new_crawl(self, monkeypatch):
+        """v8.24: 僵尸 running 任务（线程僵死且前端已停止轮询）不再永久占用
+        唯一采集槽——start_crawl 抢槽前先清扫，超时僵尸被就地置败放行新任务。"""
+        zombie = CrawlTask(id="zombie", keyword="python", cities=["北京"], pages=5, sort_type="0")
+        zombie.status = "running"
+        zombie.created_at = time.time() - (tasks._HARD_DEADLINE + 120)
+        tasks._tasks[zombie.id] = zombie
+
+        monkeypatch.setattr("threading.Thread", _FakeThread)
+        task, err = tasks.start_crawl("java", ["上海"], 2)
+        assert task is not None and err == ""
+        assert tasks._tasks["zombie"].status == "failed"
+
+    def test_sweep_purges_expired_terminal_tasks(self):
+        """v8.24: start_crawl 顺带出表过期终态任务——回收不再依赖有人轮询 get_status。"""
+        dead = CrawlTask(id="dead", keyword="python", cities=["北京"], pages=2, sort_type="0")
+        dead.status = "done"
+        dead.finished_at = time.time() - 700  # 超过 TTL(600s)
+        tasks._tasks[dead.id] = dead
+
+        tasks._sweep_locked()
+        assert "dead" not in tasks._tasks
+
+    def test_sweep_keeps_fresh_tasks(self):
+        """v8.24: 未超时的 running 任务与 TTL 内的终态任务不被误清（v8.18 语义保持）。"""
+        running = CrawlTask(id="fresh-run", keyword="python", cities=["北京"], pages=2, sort_type="0")
+        running.created_at = time.time() - 60
+        tasks._tasks[running.id] = running
+        done = CrawlTask(id="fresh-done", keyword="java", cities=["上海"], pages=2, sort_type="0")
+        done.status = "done"
+        done.finished_at = time.time() - 60
+        tasks._tasks[done.id] = done
+
+        tasks._sweep_locked()
+        assert tasks._tasks["fresh-run"].status == "running"
+        assert tasks._tasks["fresh-done"].status == "done"
+
 
 class TestGetStatus:
     """get_status() 状态查询与 TTL 清理"""

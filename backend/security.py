@@ -110,17 +110,23 @@ _INJECTION_RE_HARD = [re.compile(p, re.IGNORECASE | re.DOTALL) for p in INJECTIO
 _INJECTION_RE_SOFT = [re.compile(p, re.IGNORECASE | re.DOTALL) for p in INJECTION_PATTERNS_SOFT]
 
 
+# 输入长度上限的唯一权威值：full_check 先经 sanitize_input 截断到该长度，
+# 再做注入检测（v8.24 之前检测层曾有一个永远打不着的 10000 闸门，与截断
+# 层的 5000 自相矛盾——两道门卫互不知情）。
+MAX_INPUT_CHARS = 5000
+
+
 def check_input(text: str) -> tuple[bool, list[str]]:
     """
     启发式检查用户输入是否命中高置信注入模式。
     ⚠️ 非安全边界：可被换说法 / 编码 / 同义绕过。仅拦截最幼稚尝试。
+    空输入视为"无注入"（is_safe=True）——空与过短的处置归质量校验
+    （check_answer_quality 的"回答为空"），不归注入检测，避免误报原因。
+    长度截断由 sanitize_input 统一执行（MAX_INPUT_CHARS），本函数不再重复设闸。
     Returns: (is_safe, matched_hard_patterns)
     """
     if not text:
-        return False, ["输入为空"]
-
-    if len(text) > 10000:
-        return False, ["输入过长"]
+        return True, []
 
     matched = []
     for i, pattern in enumerate(_INJECTION_RE_HARD):
@@ -359,12 +365,12 @@ def full_check(
 
 
 def sanitize_input(text: str) -> str:
-    """轻量级输入清洗：截断过长输入，移除零宽字符。"""
+    """轻量级输入清洗：截断过长输入（MAX_INPUT_CHARS，唯一权威闸门），移除零宽字符。"""
     if not text:
         return text
 
     # 限制长度
-    text = text[:5000]
+    text = text[:MAX_INPUT_CHARS]
 
     # 移除零宽度字符（可能用于绕过检测）
     text = re.sub(r'[\u200b\u200c\u200d\u200e\u200f\ufeff]', '', text)

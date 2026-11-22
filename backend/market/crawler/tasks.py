@@ -73,6 +73,27 @@ def validate(keyword: str, cities: list, pages: int) -> Optional[str]:
     return None
 
 
+def _sweep_locked(now: Optional[float] = None) -> None:
+    """持锁清扫（v8.24）：僵尸 running 任务强制置败 + 过期终态任务出表。
+
+    此前两类回收都只发生在有人轮询 get_status 时——用户关掉进度条后，
+    僵尸 running 任务永远占着唯一采集槽、终态任务永远留在内存。
+    现在挂到 start_crawl 入口（抢槽之前），让"再来一场"本身成为回收触发器，
+    不再依赖前端是否还开着轮询。
+    """
+    now = now if now is not None else time.time()
+    for tid, t in list(_tasks.items()):
+        if t.status == "running":
+            if now - t.created_at > _HARD_DEADLINE + 60.0:
+                t.status = "failed"
+                t.error = f"任务超过硬超时（{_HARD_DEADLINE:.0f}秒）仍未结束，已强制置为失败"
+                t.message = "采集失败（超时）"
+                t.finished_at = now
+                logger.error("采集任务硬超时（清扫） id=%s keyword=%s", tid, t.keyword)
+        elif t.finished_at is not None and now - t.finished_at > _TASK_TTL:
+            _tasks.pop(tid, None)
+
+
 def start_crawl(keyword: str, cities: list, pages: int, sort_type: str = "0") -> tuple:
     """
     注册并启动采集任务。
@@ -86,6 +107,9 @@ def start_crawl(keyword: str, cities: list, pages: int, sort_type: str = "0") ->
         return None, error
 
     with _lock:
+        # v8.24: 抢槽前先清扫——僵尸任务（线程僵死在 page.evaluate 且前端已停止
+        # 轮询）不再永久占用唯一采集槽，过期终态任务也顺带出表
+        _sweep_locked()
         for existing in _tasks.values():
             if existing.status == "running":
                 return None, "已有采集任务进行中，请等待完成后再试"

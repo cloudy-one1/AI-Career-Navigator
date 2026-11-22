@@ -851,8 +851,12 @@ class InterviewSession:
 
     # ===== 评分统计（v2.6 全部改为加权） =====
 
-    def _current_round_avg_score(self) -> float:
-        """本轮加权平均分。"""
+    def current_round_avg_score(self) -> float:
+        """本轮加权平均分。
+
+        v8.24: 转公开——routers/interview_ws.py 的 round_summary 需要它，
+        此前 L4 路由直掏 L3 下划线私有方法，与分层契约精神相悖。
+        """
         if not self.round_diagnoses:
             return 0.0
         scores = [d.get("overall_score", 0) for d in self.round_diagnoses]
@@ -912,7 +916,7 @@ class InterviewSession:
         """
         cfg = self.current_round_info()
         threshold = cfg.get("advance_threshold", 3.0)
-        avg = self._current_round_avg_score()
+        avg = self.current_round_avg_score()
         weak_key, weak_evidence = self.round_weak_dimension()
         return {
             "round": self.current_round,
@@ -957,7 +961,7 @@ class InterviewSession:
         return {
             "round": self.current_round,
             "round_name": cfg["name"],
-            "avg_score": self._current_round_avg_score(),
+            "avg_score": self.current_round_avg_score(),
             "question_count": len(self.round_answers),
             "weak_dimension": weak_key,
             "weak_dimension_name": DIM_NAMES.get(weak_key, ""),

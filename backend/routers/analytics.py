@@ -15,6 +15,7 @@ from .. import career_planner
 from .. import profile_service
 from ..db import get_resume, get_session, mark_journey_step
 from . import state
+from .deps import internal_error
 
 
 logger = logging.getLogger(__name__)
@@ -39,8 +40,8 @@ async def gap_analysis(req: GapAnalysisRequest, request: Request = None):
         )
         return result
     except Exception as e:
-        logger.error(f"Gap分析失败: {e}")
-        raise HTTPException(500, str(e))
+        # v8.24: 收口到统一出口——此前 str(e) 把内部路径/库错误细节直接回传客户端
+        raise internal_error(e, "Gap分析")
 
 
 @router.get("/api/gap-analysis/{session_id}")
@@ -71,8 +72,8 @@ async def gap_analysis_by_session(session_id: str):
         )
         return result
     except Exception as e:
-        logger.error(f"Gap分析失败(session={session_id}): {e}")
-        raise HTTPException(500, str(e))
+        # v8.24: 同上收口（此前 str(e) 直接回传）
+        raise internal_error(e, f"Gap分析(session={session_id})")
 
 
 def _sorted_gap_dims(gap: dict) -> list:

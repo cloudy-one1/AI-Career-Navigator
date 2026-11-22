@@ -197,7 +197,8 @@ class FakeSession:
     def is_closing_round(self):
         return False
 
-    def _current_round_avg_score(self):
+    def current_round_avg_score(self):
+        # v8.24: 该方法由私有转公开（路由层 round_summary 直调），契约成员同步更名
         return 3.5
 
     def advance_round(self):

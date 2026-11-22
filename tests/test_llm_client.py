@@ -49,16 +49,6 @@ class TestChatShortCircuit:
         assert "API Key" in data["error"]
         assert "DEEPSEEK_API_KEY" in data["error"]
 
-    def test_chat_stream_short_circuit(self):
-        client = self._client_with_bad_key()
-        with patch.object(client.client.chat.completions, "create") as mock_create:
-            chunks = list(client.chat_stream("system", "user"))
-        mock_create.assert_not_called()
-        assert len(chunks) == 1
-        data = json.loads(chunks[0])
-        assert "error" in data
-        assert "DEEPSEEK_API_KEY" in data["error"]
-
     @pytest.mark.asyncio
     async def test_chat_stream_async_short_circuit(self):
         client = self._client_with_bad_key()
