@@ -1,7 +1,7 @@
 # API 参考
 
 > 后端 FastAPI 服务的完整接口清单。路由按域拆分在 `backend/routers/*.py`，由 `backend/main.py` 统一注册。
-> 生成方式：从各 router 的装饰器逐条提取（`system` / `voice` / `sessions` / `assets` / `reports` / `question_bank` / `diagnostics` / `market` / `analytics` / `profile` / `interview_ws`），共 **59 个 HTTP 端点 + 1 个 WebSocket 端点**（口径：只计 11 个 router 注册的路由；`main.py` 直接注册的 `GET /` 产品落地页不在其内）。
+> 生成方式：从各 router 的装饰器逐条提取（`system` / `voice` / `sessions` / `assets` / `reports` / `question_bank` / `diagnostics` / `market` / `analytics` / `profile` / `knowledge` / `interview_ws`），共 **63 个 HTTP 端点 + 1 个 WebSocket 端点**（口径：只计 12 个 router 注册的路由；`main.py` 直接注册的 `GET /` 产品落地页不在其内。数字由 `tests/test_doc_numbers.py` 对代码 AST 现数钉住）。
 
 ## 通用约定
 
@@ -10,7 +10,7 @@
 | Base URL | `http://localhost:8000`（开发态；生产由 Docker 映射） |
 | 认证 | **无**——v8.3 起全站免登录（CHARTER DC-10，单用户本地工具）。所有接口均不含身份概念 |
 | 请求体上限 | 普通请求 **1MB**；上传类路径 **10MB**（`/api/sessions/upload`、`/api/resumes/upload`、`/api/upload-jd`、`/api/market/import`、`/api/voice/asr`）。超限返回 `413` |
-| 限流 | slowapi 按 IP 计数，超限返回 `429 {"detail": "请求过于频繁，请稍后再试。限制：<规则>"}` |
+| 限流 | slowapi 按 IP 计数：全局 `default_limits` 经 SlowAPIMiddleware 对全部路由生效（v8.24 前 46 条未显式装饰的路由实际不受限），显式装饰路由走各自档位；超限返回 `429 {"detail": "请求过于频繁，请稍后再试（<实际命中的限额>）"}` |
 | 错误格式 | FastAPI 默认 `{"detail": "<原因>"}`；业务错误同样走 detail 字段 |
 | 交互文档 | 服务启动后访问 `/docs`（Swagger UI）与 `/redoc`——由 Pydantic Schema 自动生成，字段级结构以它为准 |
 
@@ -101,6 +101,7 @@
 | POST | `/api/market/jobs/{job_id}/interest` | 切换「感兴趣」收藏（落库，重新采集不清空） | 全局 |
 | POST | `/api/market/jobs/{job_id}/to-position` | 市场岗位导入岗位库（幂等，返回 `{position, created}`） | 全局 |
 | POST | `/api/market/import` | 从 job-crawler 的 `data.db` 导入存量数据 | 5/minute |
+| POST | `/api/market/import/remote` | 拉取国际远程岗位（Remotive 公开 API，免 key）写入 market.db；`keyword` 必填（1~50 字）、`limit` ≤200；上游失败 502。v8.23 | 5/minute |
 | POST | `/api/research-position` | 岗位画像研究（DuckDuckGo 检索 + LLM 分析） | 10/minute |
 
 ## 8. 分析：Gap / 对比 / 职业规划 `analytics.py`

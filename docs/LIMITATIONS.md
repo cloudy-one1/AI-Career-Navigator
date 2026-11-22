@@ -27,6 +27,7 @@
 | **~~参考答案背诵面板未渲染~~（v8.16 已修）** | `detailed_qa`（逐题改写答案/背诵材料）此前仅进 Markdown 复盘导出，报告 Tab 只有「✍️ 含改写示范」徽标没有答案正文。v8.16 在报告 Tab 每题卡片新增可展开的"📖 参考答案（背诵材料）"（`<details>` 默认收起：改写答案 + 改写要点，按题干从 `detailed_qa` 映射，同题干取首条） | 学习材料仅存在于本人报告视图（v7.5 分享页已删除，无对外输出路径）；Markdown 导出渲染不变 |
 | **市场基准数据来源（学术诚信披露）** | Gap 分析的"市场基准参照"数据来自本人此前已完成并提交的采集项目（job-crawler）的 `data.db`，经 importer + store 导入 `market.db`，**本次仅做管道整合、不含数据采集工作量** | 若评审基于"本次周期实际产出"，可评估替换为小样本人工整理/公开数据集 |
 | **权重注入 prompt 因果未验证** | Diagnostician prompt 中的权重真正生效处在 `weighted_score()` 加权平均；prompt 是否改变模型打分分布未经 A/B 验证（已有 prompt 已改为中性诚实表述） | 做"有无权重说明文字"的 A/B 对照实验，量化影响 |
+| **实时采集的合规边界（v8.24 登记）** | 内嵌采集器（`market/crawler/`）以 Playwright + stealth 指纹伪造、浏览器内 fetch 直调 51job 内部 search-pc 接口、Camoufox 回落再过 WAF——**未获得目标站点授权，未解析 robots.txt**（51job 无公开 API）。代码里每个环节都是在对抗目标站的反爬措施，这一事实应当被披露而不是被"技术侦察"话术盖住。现收窄为：仅限**本机个人学习/研究**用途的低频采集（任务级限流 3/minute + 页间随机延时 + 单实例互斥），**不得商用、不得大规模/高频抓取、不得分发采集所得数据**；站点改版或提出异议时应立即停用该功能 | 长期正解是替换数据源：招聘平台开放 API / 公开数据集 / 本地 db 导入（importer 路径无需对抗任何站点） |
 | **LLM 权重稳定性未测** | `analyze_jd_weights()` 用 LLM 判 JD 权重，`temperature=0.2` 非完全确定，"千岗千面"卖点的同-JD 权重方差从未测过 | 固定 JD 反复采样统计权重方差，给出稳定性区间 |
 | **输出检测仅监控不阻断** | `security.check_output()` 检测到泄漏仅记日志、不拦截、不脱敏，泄漏内容原样返回前端，属可观测性而非输出安全边界 | 需要时做输出脱敏/阻断（产品化阶段事项） |
 | **职业规划路径未经验证** | v3.2 的路径推理为单次 LLM 生成，阶段划分/顺序/里程碑合理性未做 A/B 或专家校验；LLM 失败时走启发式三段式兜底 | 用真实职业样本做专家评审；将"路径可行性"纳入黄金样本回归评测 |
@@ -38,6 +39,6 @@
 | **~~WS 突然断开会泄漏一条 SQLite 连接~~（v8.11 定位 → v8.12 已修）** | 根因比 v8.11 的假设更深一层：anyio 的 CancelScope 取消后，作用域内任务的**每个 await 都会被立即再次取消**，取消路径上 `finally: await db.close()` 永远完不成——连接带着在途 future 被遗留，测试 portal 循环一关，aiosqlite worker 线程向已关闭 loop 调度回调 → 线程未捕获异常（即那条 ~1/4 全量的 flaky；落点随时序漂移，v8.11 记的 TestPingPong 只是巧合）。v8.12 以取消安全的连接子类修复（`Task.cancelling() > 0` 时同步 `stop()+join`，机制详见 CHANGELOG v8.12）；同根的"异常分支不落终态"（现以 status=error 落库）与"`active_sessions` 无 TTL"（register/unregister/sweep 三件套）一并解决 | `_CancelSafeConnection` 的 join 依赖 aiosqlite 的 `_thread` 内部属性（已做 getattr 防御，缺失时退化为仅 stop()）；aiosqlite 跨版本升级后应回归：`pytest -q -W error::pytest.PytestUnhandledThreadExceptionWarning`（CI 已固化此门禁） |
 | **~~依赖"冻结"只挡 PR，不挡首次安装~~（v8.10.1 发现 → v8.12/v8.13 已修）** | v8.8 以 `dependabot.ignore: semver-major` 冻结 openai 跨 major，但 requirements 只写下限本身允许任意高版本——实测干净环境解析到 openai 3.x 而本机 dev 2.x，"装到什么版本"每天在漂。v8.12 给 openai 加显式上限（`>=1.109.1,<4`）；v8.13 引入 `constraints.txt`（62 项 `==` 钉版含全部传递依赖）+ CI 安装步带 `-c` 并 `pip freeze` 记录实际解析 + 两条门禁（声明的包必须被钉住 / 必须精确钉版，删除钉版即红已实测）；dev 环境已对齐锁定版本，"本机绿"与"干净环境绿"自此是同一版本组合的绿 | 升级依赖走 constraints.txt 文件头的五步流程（改下限 → 重解析 → 重生成 → 干净环境全量 → CHANGELOG 记录）；前端已有 package-lock.json 无需此套；跨 major 仍由 dependabot PR + 人工评审 |
 
-> **关键结论**："1134 个用例通过（另有 1 条真实模型抽检默认跳过，共 1135 条）"不等于"核心功能被验证"。核心诊断质量依赖 LLM，测试套件验证的是**工程正确性**；v7.0.3 起新增**黄金样本回归**与 **live-LLM 抽检**（`tests/test_diagnosis_golden.py`），首次把**诊断有效性**纳入可观测范围。
+> **关键结论**："1243 个用例通过（另有 1 条真实模型抽检默认跳过，共 1244 条，2026-11-22 实测）"不等于"核心功能被验证"。核心诊断质量依赖 LLM，测试套件验证的是**工程正确性**；v7.0.3 起新增**黄金样本回归**与 **live-LLM 抽检**（`tests/test_diagnosis_golden.py`），首次把**诊断有效性**纳入可观测范围。
 >
 > 还有一条 v8.10 学到的：**门禁的绿也要能被证伪**。v3.2~v8.9 期间 `run.py lint` 从不执行检查（详见 CHARTER DC-11），所以"契约通过"当时不携带信息；现在 `tests/test_layering_gate.py` 会先用一个故意越层的样本证明门禁会变红。

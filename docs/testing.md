@@ -18,8 +18,9 @@
 > 测试已从"锁死 prompt 文案"重构为"从配置取追问链 / 收尾指令做行为断言"，因此
 > **频繁改写提示词不会误红**。
 
-当前规模：**1098 个 pytest 用例**（`pytest tests/ --collect-only -q` 实测，2026-09-22，
-v8.10 起含门禁自证层）+ 前端 3 个 vitest 套件。
+当前规模：**1244 个 pytest 用例**（`pytest tests/ --collect-only -q` 实测，2026-11-22，
+v8.10 起含门禁自证层）+ 前端 4 个 vitest 套件。该数字由
+`tests/test_doc_numbers.py` 与实测收集数对账，新增用例后请同步本行。
 
 ## 常用命令
 
@@ -35,6 +36,16 @@ pytest tests/test_diagnosis_golden.py -v
 
 # 黄金样本 + 真实 LLM 抽检（需 GOLDEN_LIVE_LLM=1 + 真实 Key，烧 token，仅手动触发）
 GOLDEN_LIVE_LLM=1 pytest tests/test_diagnosis_golden.py -v
+
+# Windows PowerShell 等价写法（bash 的 VAR=1 cmd 前缀在 PowerShell/cmd 下无效）：
+#   $env:GOLDEN_LIVE_LLM="1"; $env:GOLDEN_LIVE_LLM_API_KEY="sk-..."; pytest tests/test_diagnosis_golden.py -v
+#
+# live 抽检的基线补齐流程（v8.24 口径）：
+#   1. 20 条样本中仅 4 条有 baseline；其余 16 条 live 运行时**自动跳过基线守护**，只跑结构软断言；
+#   2. 跑完一轮 live 后，把日志里打印的 overall / weakest 逐条回填进
+#      tests/fixtures/generate_golden_samples.py 所生成 fixture 的 `baseline` 字段
+#      （golden_answers.json，区间建议 ±0.4），基线守护才会真正覆盖全部样本；
+#   3. 该流程是手动的、按需的——本工具没有定时烧 token 的机制，也不该有。
 
 # 覆盖率报告
 pytest tests/ --cov=backend --cov-report=term-missing
@@ -74,8 +85,8 @@ npm run build   # 构建冒烟：导入/语法错误即红灯
 
 | Job | 步骤 |
 |---|---|
-| `backend` | `pip install -r requirements.txt` → `python run.py lint`（分层契约） → `pytest tests -q`（全量） |
-| `frontend` | `npm ci` → `npm run test`（vitest） → `npm run build`（构建冒烟） |
+| `backend` | `pip install -r requirements.txt -c constraints.txt` → `pip freeze`（记录解析结果） → `python run.py lint`（分层契约） → `pytest tests -q -W error::pytest.PytestUnhandledThreadExceptionWarning`（全量） |
+| `frontend` | `npm ci` → `npm run lint`（eslint，v8.18 起进 CI） → `npm run test`（vitest） → `npm run build`（构建冒烟） |
 
 **干净环境可直接跑通**，无需真实 LLM Key、无需 `playwright install chromium`：
 
@@ -94,6 +105,7 @@ npm run build   # 构建冒烟：导入/语法错误即红灯
 - 前端更新 PR 会同时改 `package.json` 与 lockfile，两者不同步会让 `npm ci` 红灯；
 - `openai`（后端调用入口）与 `vite` / `vitest`（构建与测试链）的 **major 升级已冻结**，
   需人工在本机 + CI 双验证后再手动抬下限。
-- **但"冻结"只挡 PR，不挡首次安装**：`requirements.txt` 只有下限（`>=`）本身就允许任意高
-  版本，实测干净环境今天装到 openai 3.18.0。要真正锁住版本需要上限（`<4`）或锁定文件，
-  已登记为局限（见 [LIMITATIONS.md](LIMITATIONS.md) 的"依赖冻结只挡 PR"条）。
+- **"冻结只挡 PR 不挡首次安装"的历史缺口已收口**（v8.12/v8.13）：`openai` 已加显式上限
+  （`>=1.109.1,<4`），并引入 `constraints.txt`（62 项 `==` 钉版）+ CI 安装步带 `-c` +
+  `pip freeze` 记录 + 两条依赖声明门禁（`tests/test_dependencies.py`）——"本机绿"与
+  "干净环境绿"自此是同一版本组合的绿。升级流程见 `constraints.txt` 文件头。

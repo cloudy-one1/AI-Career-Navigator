@@ -102,6 +102,9 @@ pip install -r requirements.txt -c constraints.txt   # constraints 锁定"被验
 
 python -m playwright install chromium   # 可选：市场数据实时采集需要
 pip install "scrapling[all]" && scrapling install --force   # 可选：采集回落引擎（未装则主路径失败直接报错，不影响其余功能）
+# ⚠️ 实时采集对 51job 为无授权的对抗式抓取（stealth 指纹 + WAF 回落，详见 docs/LIMITATIONS.md
+#    「实时采集的合规边界」）：仅限本机个人学习用途的低频采集，请勿商用、勿大规模抓取、勿分发数据。
+#    长期替代路径是本地 db 导入（/api/market/import），无需对抗任何站点。
 cp .env.example .env                    # 填入至少一个 AI 后端的 Key
 
 python run.py                    # → http://localhost:8000（API 文档 /docs）
@@ -175,7 +178,7 @@ DEEPSEEK_API_KEY=sk-xxx
 |---|---|
 | [docs/architecture.md](docs/architecture.md) | 技术栈、L1–L4 分层契约、全量代码地图、诊断体系与面试模式 |
 | [docs/testing.md](docs/testing.md) | 测试五层分工、常用命令、CI 与 dependabot 口径 |
-| [docs/API.md](docs/API.md) | 59 个 HTTP 端点 + 1 个 WebSocket 的逐条清单与限流档位 |
+| [docs/API.md](docs/API.md) | 63 个 HTTP 端点 + 1 个 WebSocket 的逐条清单与限流档位 |
 | [docs/LIMITATIONS.md](docs/LIMITATIONS.md) | 已知局限与架构取舍（含可选演进方向） |
 | [CHARTER.md](CHARTER.md) | 项目宪章：产品命题、架构约束、决策记录卡 DC-01 ~ DC-12 |
 | [CHANGELOG.md](CHANGELOG.md) | 版本迭代叙事（v8.0 起；更早见 [docs/changelog-archive.md](docs/changelog-archive.md)） |

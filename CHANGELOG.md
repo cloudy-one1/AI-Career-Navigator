@@ -1,12 +1,90 @@
 # 变更日志（CHANGELOG）
 
-> 记录 **v8.0 → v8.22** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
+> 记录 **v8.0 → v8.24** 的版本迭代叙事（新增 / 推翻 / 修复 / 范围）。v7.5.0 及更早的完整
 > 历史见 [docs/changelog-archive.md](docs/changelog-archive.md)。不变的架构约束与决策记录见
 > [CHARTER.md](CHARTER.md)，贡献流程见 [.github/CONTRIBUTING.md](.github/CONTRIBUTING.md)。
 >
 > **品牌现名：AI 求职领航（曾用名 AI 求职陪跑平台，v8.3 更名）。旧版本章节中的“AI 求职陪跑”为历史名称，保留不删。**
 
 ---
+
+## v8.24 批判式审查整改：安全真生效 + 口径收口（2026-11-22）
+
+> 一轮全面批判式审查（三路深挖：后端 20.4k 行 / 测试 13.6k 行 / 前端与全部文档）后的整改
+> 批次，只修可复核的代码与台账问题。审查定性（"限流剧场 / 数字口径系统性漂移 / 抄作业式
+> 整改"）逐条对照源码二次核实后才动手；初判不成立的（conftest fixture"零引用"、前端
+> reason"漏转义"、CHARTER"残留模板卡"）经核实为误报，原样保留并记录在案。
+
+### 改动
+
+- **全局限流真生效**：`main.py` 补挂 `SlowAPIMiddleware`——slowapi 的 `default_limits`
+  只在中间件/显式装饰器路径执行，此前 `RATE_LIMIT_GLOBAL` 对 63 条路由里 46 条
+  未装饰路由**从未生效**（"全局限流"长期是装饰品）。429 文案改为携带实际命中的限额
+  （此前统一回填全局配置值，在 10/min 接口被拦时谎报 100/minute）；畸形
+  Content-Length 头不再 `int()` 裸崩 500。测试侧：conftest 放宽全局限流 + 每用例
+  清空限流水位；新增 `test_rate_limit_middleware.py` 反向证伪（缺中间件 = 配置空转，
+  在位 = 429 回来）。
+- **AI_PROVIDER=auto 雷**：`/api/providers` 改用 `AI_PROVIDER_RESOLVED`——此前
+  auto 直接 `config.AI_PROVIDERS["auto"]` KeyError 500，且 `is_current` 永远匹配不上；
+  `/api/switch-provider` 接受 auto（注册表就地探测，与 `LLMClient.switch_provider`
+  语义对齐，不用把 auto 塞回 env 解析路径）；`/api/health` 上报 resolved。
+  `tests/test_provider_registry.py` 补 4 例 API 级回归。
+- **内部异常收口**：analytics.py 两处、market.py 一处 `HTTPException(500, str(e))`
+  改走 `deps.internal_error`——deps.py:16 的 v8.19 整改声明与这三处现状自相矛盾
+  （"修过的恰是最不危险的文件"）。跨岗位对比的 `_fallback_gap_result(str(e))` 保留：
+  那是刻意向 UI 展示失败类型的降级路径，属产品设计非泄漏面。
+- **护栏语义收口**：`check_input` 空输入不再判为"不安全"（空/过短归质量校验的
+  "回答为空"，注入口径不再背锅）；删除与 `sanitize_input` 截断 5000 自相矛盾的
+  死 10000 闸门，`MAX_INPUT_CHARS` 成为唯一权威。`test_security.py` 补 4 例语义回归。
+- **分层卫生**：`session._current_round_avg_score` 转公开 `current_round_avg_score`
+  ——L4 路由的 round_summary 直调私有方法，与自家 import-linter 分层精神相悖；
+  FakeSession 契约与快照往返测试同步更名。
+- **采集健壮性**：`tasks.start_crawl` 抢槽前先清扫——僵尸 running 任务（线程僵死
+  在 page.evaluate 且前端已停止轮询）此前永久占用唯一采集槽；过期终态任务顺带出表。
+  `test_market_crawler_tasks.py` 补 3 例。
+- **配置卫生**：删除零消费方的 `config.DEEPSEEK_API_KEY/BASE_URL/MODEL` 兼容类属性
+  （API_KEY 是 import 时固化快照，与同文件 40+ 个 property 现读口径不一致）；
+  `run.py` 手写逐行 .env 解析器换成 python-dotenv（正式依赖，与 config 同款语义，
+  此前两套解析互不认识）。
+- **死代码**：删除全仓零引用的 `data_support.py`（90 行，唯一消费方是它自己的测试）
+  与 `llm_client.chat_stream` 同步流式生成器（47 行，docstring 所称"非异步上下文"
+  不存在）；`.importlinter` / CHARTER / architecture.md 同步。**conftest 的
+  app/client fixture 经核实被 8 个测试文件消费，保留**（审查初判"5 个死 fixture"
+  中 3 个确为误报）。
+- **台账门禁**：新增 `tests/test_doc_numbers.py`——README / API.md / architecture.md
+  的端点数与 router 数对 `backend/routers` AST 现数对账，testing.md 用例数对
+  `--collect-only` 实测对账。历史事故：端点数三处齐声写 59（实际 63+1WS/12 router），
+  用例数四个文档四个口径（1098/1134/1219/1234）。CHANGELOG 头部 v8.0→v8.24 补齐；
+  ci.yml 注释去数字化（"约 1100 用例"这类必然漂移的表述改为指向台账）。
+- **文档修正**：SECURITY.md"公开 Issue 报告漏洞"与"请在公开前给处理时间"的自相矛盾
+  改为私下报告（Private vulnerability reporting）优先；testing.md 的 CI 步骤表补齐
+  `-c constraints.txt` / `pip freeze` / eslint 三处漂移、"依赖冻结只挡 PR"局限标记
+  为已收口（与 LIMITATIONS 对齐）；architecture.md 补 knowledge.py 路由与
+  report.test.js；**LIMITATIONS 登记"实时采集合规边界"**——stealth 指纹伪造 + WAF
+  对抗 + 内部接口直调的事实此前在 30 条诚实清单里恰好缺席，现明确"仅限本机个人学习
+  用途、不得商用/大规模抓取/分发数据"，README 安装步骤同步警示；testing.md live-LLM
+  补 PowerShell 写法与 16 条 baseline 的手动回填流程。
+
+### 已知取舍（如实记录）
+
+- `market.py` 的 502（"远程数据源请求失败: {e}"）保留：v8.23 设计的可读上游错误，
+  urllib 异常文本不含凭据。
+- 前端 reason 渲染经逐点核实（interview.js :965 toast=textContent、:1675
+  textContent、:1989/:2009 escHtml、数字强转）全部安全，审查初判"漏网之鱼"为误报，
+  未做无意义改动。
+- 黄金样本 16 条 baseline 未标定、诊断有效性未验证：本轮只登记流程，不烧 token
+  （代价见 LIMITATIONS"测试偏纯函数"条）。
+- 18.4MB 视频资产保留在 git 历史：README 引用中，重写历史需 force push，留待
+  仓库自然瘦身。
+
+### 验证（2026-11-22，本机）
+
+- 全量 `pytest tests/ -q -W error::pytest.PytestUnhandledThreadExceptionWarning`：
+  **1243 passed / 1 skipped**（skipped 为默认关闭的 live-LLM 抽检；--collect-only
+  计 1244，与 testing.md 台账一致）；
+- `python run.py lint` 分层契约 KEPT（data_support 出表后 71 文件 182 依赖重算）；
+- `tests/test_doc_numbers.py` 5 例全绿（端点 63+1WS / 12 router 对 AST 现数）；
+- 前端无改动，未重跑 vitest/build（本轮零 js/css 变更）。
 
 ## v8.23 国际远程岗位采集源：Remotive 免 key API（2026-11-15）
 

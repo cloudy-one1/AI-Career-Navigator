@@ -5,9 +5,11 @@
 
 ## 报告漏洞
 
-- 通过 [Issue](https://github.com/cloudy-one1/AI-Career-Navigator/issues/new?labels=security)
-  公开报告，或发邮件到仓库所有者 GitHub 账号的公开邮箱。
-- 请在公开前给我们一点处理时间；这是个人作品仓库，响应可能慢，但会认真看。
+- **敏感漏洞请先私下报告**：用 GitHub 的 "Report a vulnerability"（Security 标签页 →
+  Private vulnerability reporting）或发邮件到仓库所有者 GitHub 账号的公开邮箱，
+  不要直接开公开 Issue——公开 Issue 即即时披露，等于放弃了修复窗口。
+- 修复后（或内容不敏感、仅为行为疑问）再开 [Issue](https://github.com/cloudy-one1/AI-Career-Navigator/issues/new?labels=security)
+  留档。这是个人作品仓库，响应可能慢，但会认真看。
 
 ## 内容护栏的真实边界
 
@@ -16,7 +18,7 @@
 
 | 层级 | 内容 | 性质 |
 |------|------|------|
-| 频率限制 | slowapi 全局限流 + 高敏感端点独立限流 | 降低滥用 |
+| 频率限制 | slowapi 全局限流（v8.24 起经 SlowAPIMiddleware 真实生效）+ 高敏感端点独立限流 | 降低滥用 |
 | 输入检查（硬） | 角色逃逸 / Prompt 盗取 / 越狱 / 特殊 token 等**高置信**模式 | 正则拦截，可被绕过 |
 | 输入检查（软） | "从现在开始""你必须输出"等易误伤句式 | 仅告警，不阻断 |
 | 输出检查 | System Prompt 片段泄漏 | 仅记录，不阻断 |

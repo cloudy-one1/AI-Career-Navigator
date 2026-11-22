@@ -36,7 +36,7 @@ jobs:
       - name: 分层依赖契约检查（import-linter）
         run: python run.py lint
 
-      - name: 全量测试（约 1100 用例，live-LLM 抽检默认跳过）
+      - name: 全量测试（live-LLM 抽检默认跳过；规模台账见 docs/testing.md，由 test_doc_numbers 对账）
         # -W error 把线程未捕获异常（aiosqlite 连接被取消路径遗留的标志性症状）
         # 从偶发噪声升级为门禁：v8.12 已在取消路径上保证连接必关，这里钉住不复发
         run: python -m pytest tests -q -W error::pytest.PytestUnhandledThreadExceptionWarning

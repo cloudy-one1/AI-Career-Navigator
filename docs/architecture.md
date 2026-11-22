@@ -58,8 +58,8 @@ AI求职领航/
 │   ├── main.py                   # FastAPI 应用装配（中间件/限流/启动/静态挂载）
 │   ├── routers/                  # HTTP/WS 路由域拆分（system / voice / sessions /
 │   │                             #   assets / reports / question_bank / diagnostics /
-│   │                             #   market / analytics / profile / interview_ws
-│   │                             #   + state 单例 + deps 依赖）
+│   │                             #   market / analytics / profile / knowledge /
+│   │                             #   interview_ws + state 单例 + deps 依赖）
 │   ├── config.py                 # 配置 + 面试官风格 + 轮次定义
 │   ├── logger.py                 # 集中日志配置（RotatingFileHandler）
 │   ├── llm_client.py             # 多 AI 后端客户端（含流式）
@@ -79,7 +79,6 @@ AI求职领航/
 │   ├── question_bank.py          # 题库 CRUD 管理
 │   ├── resume_parser.py          # 简历解析（PDF/DOCX/TXT）
 │   ├── web_research.py           # 岗位画像研究（DuckDuckGo）
-│   ├── data_support.py           # 技能匹配数据
 │   ├── skills_data.json          # 岗位技能静态数据
 │   ├── knowledge_store.py        # 命名空间知识库（rag:interview / career / resume）
 │   ├── voice_service.py          # MiMo 云端语音代理（TTS 合成 + ASR 识别）
@@ -153,6 +152,7 @@ AI求职领航/
 │   └── tests/
 │       ├── voice.test.js         # 语音模块单测（世代号守卫/熔断韧性/VAD）
 │       ├── interview.test.js     # 面试主循环 WS 消息派发契约
+│       ├── report.test.js        # 报告页渲染纯函数
 │       └── landing.test.js       # 落地页动效纯函数（逐字拆分/磁性偏移/倾斜角）
 │
 ├── docs/                         # 公开文档（本目录）；过程性资料仅本地保留
@@ -206,8 +206,9 @@ AI求职领航/
 
 ## API 概览
 
-共 **59 个 `/api` HTTP 端点 + 1 个 WebSocket 端点**（口径：只计 11 个 router 注册的路由，
-`main.py` 直接注册的 `GET /` 产品落地页不在其内）。
+共 **63 个 `/api` HTTP 端点 + 1 个 WebSocket 端点**（口径：只计 12 个 router 注册的路由，
+`main.py` 直接注册的 `GET /` 产品落地页不在其内；数字由 `tests/test_doc_numbers.py`
+对 `backend/routers/` AST 现数钉住，漂移即红）。
 
 面试主循环走 WebSocket（`/ws/interview/{session_id}`），HTTP 端点负责准备素材与取结果。
 服务启动后访问 **`/docs`（Swagger UI）**，字段级结构以它为准；逐条清单与限流档位见
