@@ -99,6 +99,64 @@ class TestLLMClientAuto:
             assert any("API Key" in r.message for r in caplog.records)
 
 
+class TestProviderApiAuto:
+    """v8.24 回归：AI_PROVIDER=auto 时管理面板不能 500，switch-provider 接受 auto。
+
+    事故背景：config.py 与 .env.example 都宣称支持 auto，但
+    list_providers 直接 config.AI_PROVIDERS[config.AI_PROVIDER] 下标 →
+    KeyError 500；switch_provider 又拒绝 auto——"auto" 在管理面板上是半接线状态。
+    """
+
+    def test_list_providers_with_auto(self, monkeypatch):
+        from fastapi.testclient import TestClient
+        from backend.main import app
+
+        monkeypatch.setattr(config, "AI_PROVIDER", "auto")
+        resp = TestClient(app).get("/api/providers")
+        assert resp.status_code == 200, f"auto 下 /api/providers 不得 500: {resp.status_code}"
+        body = resp.json()
+        assert body["current"]["id"] == config.AI_PROVIDER_RESOLVED
+        assert sum(1 for p in body["providers"] if p["is_current"]) == 1
+
+    def test_health_reports_resolved_provider(self, monkeypatch):
+        from fastapi.testclient import TestClient
+        from backend.main import app
+
+        monkeypatch.setattr(config, "AI_PROVIDER", "auto")
+        resp = TestClient(app).get("/api/health")
+        assert resp.status_code == 200
+        assert resp.json()["provider"] == config.AI_PROVIDER_RESOLVED
+
+    def test_switch_provider_accepts_auto(self, monkeypatch):
+        from fastapi.testclient import TestClient
+        from backend.main import app
+        from backend.routers import state
+
+        monkeypatch.setattr(config, "AI_PROVIDER", "deepseek")
+        monkeypatch.setenv("DEEPSEEK_API_KEY", "test-key")
+        old_client, old_engine = state.llm_client, state.diagnosis_engine
+        try:
+            resp = TestClient(app).post("/api/switch-provider", json={"provider": "auto"})
+            assert resp.status_code == 200, resp.text
+            # 就地探测的结果是显式后端，而非把 "auto" 原样塞回 config
+            assert resp.json()["provider"] == "deepseek"
+            assert config.AI_PROVIDER == "deepseek"
+        finally:
+            state.llm_client, state.diagnosis_engine = old_client, old_engine
+
+    def test_switch_provider_auto_without_any_key_rejected(self, monkeypatch):
+        from fastapi.testclient import TestClient
+        from backend.main import app
+
+        monkeypatch.setattr(config, "AI_PROVIDER", "deepseek")
+        for env in ("LLM_API_KEY", "DEEPSEEK_API_KEY", "QWEN_API_KEY",
+                    "ZHIPU_API_KEY", "OPENAI_API_KEY"):
+            monkeypatch.delenv(env, raising=False)
+        resp = TestClient(app).post("/api/switch-provider", json={"provider": "auto"})
+        assert resp.status_code == 400
+        assert "auto" in resp.json()["detail"]
+
+
 class TestChatJsonTolerant:
     """chat_json 应借四级容错就地修复轻微畸形输出，不再浪费候选降级。
 

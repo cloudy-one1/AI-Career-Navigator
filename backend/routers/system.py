@@ -41,25 +41,30 @@ async def health():
         }
     return {
         "status": "ok",
-        "provider": config.AI_PROVIDER,
+        # v8.24: 上报实际生效的后端（AI_PROVIDER 可能是未解析的 "auto"）
+        "provider": config.AI_PROVIDER_RESOLVED,
         "quote_stats": {**quote_stats(), "all_time": all_time},
     }
 
 
 @router.get("/api/providers", response_model=ProviderListResponse)
 async def list_providers():
+    # v8.24: 当前生效后端一律取 AI_PROVIDER_RESOLVED——AI_PROVIDER 原始值可以是
+    # "auto"（config 与 .env.example 均宣称支持），它不在 AI_PROVIDERS 字典里，
+    # 此前在这里直接下标 → KeyError 500；is_current 也永远匹配不上。
+    resolved = config.AI_PROVIDER_RESOLVED
     providers = []
     for k, v in config.AI_PROVIDERS.items():
         providers.append(ProviderInfo(
             id=k,
             name=v["name"],
             models=v.get("models", []),
-            is_current=(k == config.AI_PROVIDER),
+            is_current=(k == resolved),
         ))
     current = ProviderInfo(
-        id=config.AI_PROVIDER,
-        name=config.AI_PROVIDERS[config.AI_PROVIDER]["name"],
-        models=config.AI_PROVIDERS[config.AI_PROVIDER].get("models", []),
+        id=resolved,
+        name=config.AI_PROVIDERS[resolved]["name"],
+        models=config.AI_PROVIDERS[resolved].get("models", []),
         is_current=True,
     )
     return ProviderListResponse(providers=providers, current=current)
@@ -67,9 +72,21 @@ async def list_providers():
 
 @router.post("/api/switch-provider")
 async def switch_provider(req: ProviderSwitchRequest):
+    # v8.24: 接受 "auto"——与 LLMClient.switch_provider 的语义对齐（注册表就地探测）。
+    # 就地探测而非把 "auto" 塞回 config：AI_PROVIDER_RESOLVED 解析的是环境变量，
+    # env 为显式值时"切到 auto"会静默变回 env 指定的后端，注册表探测从未发生
+    # （v8.18 在 llm_client 侧修过同款问题）。
+    if req.provider == "auto":
+        detected = next((pid for pid in config.AI_PROVIDERS
+                         if not config.provider_key_issue(pid)), None)
+        if detected is None:
+            raise HTTPException(
+                status_code=400,
+                detail="auto 探测失败：没有任何已配置后端的 Key 有效，请先设置 DEEPSEEK_API_KEY 等环境变量")
+        req.provider = detected
     if req.provider not in config.AI_PROVIDERS:
         raise HTTPException(status_code=400,
-                            detail=f"不支持的后端: {req.provider}。可用: {list(config.AI_PROVIDERS.keys())}")
+                            detail=f"不支持的后端: {req.provider}。可用: {list(config.AI_PROVIDERS.keys())} / auto")
 
     provider_info = config.AI_PROVIDERS[req.provider]
     api_key_env = provider_info.get("api_key_env", "")

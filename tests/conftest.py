@@ -25,6 +25,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 os.environ["AI_PROVIDER"] = "deepseek"
 os.environ["DEEPSEEK_API_KEY"] = "test-key"
 os.environ["JOB_CRAWLER_DB_PATH"] = ""
+# v8.24: SlowAPIMiddleware 启用后 default_limits 真生效——全量套件内同 (路由, IP)
+# 的累计请求数会跨测试撞上全局 429，测试口径放宽（限流行为本身由
+# test_rate_limit_middleware.py 用独立小应用验证）
+os.environ["RATE_LIMIT_GLOBAL"] = "100000/minute"
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiter():
+    """每个测试前后清空限流计数，保证用例间互不携带对方的水位。"""
+    from backend.routers import state as app_state
+
+    app_state.limiter.reset()
+    yield
+    app_state.limiter.reset()
 
 
 @pytest.fixture(scope="session")

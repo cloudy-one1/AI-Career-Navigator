@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse
 from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from . import logger as app_logger
@@ -70,7 +71,9 @@ class RequestSizeLimitMiddleware(BaseHTTPMiddleware):
         path = request.url.path
         limit = config.MAX_UPLOAD_BYTES if any(path.startswith(p) for p in self._UPLOAD_PATHS) else config.MAX_REQUEST_BYTES
         content_length = request.headers.get("content-length")
-        if content_length and int(content_length) > limit:
+        # v8.24: 畸形 Content-Length 头（非数字）此前直接 int() → 500；按"无法预判大小"放行，
+        # 真实大小由读取 body 的路径兜底。
+        if content_length and content_length.isdigit() and int(content_length) > limit:
             return JSONResponse(
                 status_code=413,
                 content={"detail": f"请求体过大，上限 {limit // 1024 // 1024}MB" if limit >= 1024 * 1024 else f"请求体过大，上限 {limit // 1024}KB"},
@@ -88,7 +91,7 @@ async def lifespan(app: FastAPI):
     await market_store.init_market_db()  # v3.0: 市场岗位库（幂等）
     # v6.5: 清理 30 天未再加重的历史薄弱点（启动即跑一次，失败不影响启动）
     await weakness_memory.prune_expired()
-    logger.info(f"AI 求职领航 启动完成，当前后端: {config.AI_PROVIDER}")
+    logger.info(f"AI 求职领航 启动完成，当前后端: {config.AI_PROVIDER_RESOLVED}")
     yield
 
 
@@ -114,12 +117,26 @@ app.add_middleware(SecurityHeadersMiddleware)
 # 请求体大小限制（在路由匹配前生效）
 app.add_middleware(RequestSizeLimitMiddleware)
 
-# 注册 slowapi 限流异常处理器
+# 注册 slowapi 限流异常处理器 + 中间件
+# v8.24: 此前只挂了 limiter 与异常处理器、不挂 SlowAPIMiddleware——slowapi 的
+# default_limits 只在中间件（或显式装饰器）下才执行，于是 RATE_LIMIT_GLOBAL 对
+# 63 条路由里未显式装饰的 46 条从未生效（"全局限流"长期是装饰品）。
+# 中间件按 (路由, IP) 计数，静态文件 Mount 无 endpoint 自动豁免；WS 握手非
+# http scope，同样不经过本中间件。显式 @limiter.limit 的 17 条路由仍走装饰器口径。
 app.state.limiter = state.limiter
-app.add_exception_handler(RateLimitExceeded, lambda req, exc: JSONResponse(
-    status_code=429,
-    content={"detail": f"请求过于频繁，请稍后再试。限制：{config.RATE_LIMIT_GLOBAL}"},
-))
+
+
+def _rate_limit_exceeded_json(req: Request, exc: RateLimitExceeded) -> JSONResponse:
+    # v8.24: 文案带实际命中的限额（exc.detail 形如 "10 per 1 minute"）——
+    # 此前统一回填全局配置值，在 10/min 的上传接口被拦时会谎报 100/minute。
+    return JSONResponse(
+        status_code=429,
+        content={"detail": f"请求过于频繁，请稍后再试（{exc.detail}）"},
+    )
+
+
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_json)
+app.add_middleware(SlowAPIMiddleware)
 
 
 # ─── 路由注册（保持与拆分前 main.py 一致的域顺序）───
